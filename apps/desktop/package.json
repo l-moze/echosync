@@ -9,9 +9,9 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "dev": "npm run build:main && concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
-    "dev:electron": "wait-on http://127.0.0.1:6001 && cross-env ECHOSYNC_DESKTOP_RENDERER_URL=http://127.0.0.1:6001 electron .",
+    "dev:electron": "wait-on http://127.0.0.1:6001 && node scripts/run-electron.cjs --dev",
     "dev:renderer": "vite --host 127.0.0.1",
-    "start": "electron .",
+    "start": "node scripts/run-electron.cjs",
     "test": "vitest run --config vitest.config.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
