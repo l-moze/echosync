@@ -2,9 +2,11 @@
 
 ## 技术选型与原则映射
 
-### 1. React/Vite Web 工作台
+### 1. Next 15 Web 工作台
 
-选型：`apps/web` 使用 React + Vite，后续接 `@livekit/components-react` 获取麦克风、标签页音频或文件音频。研究报告建议 React 或 Next.js；这里选 Vite 是为了减少实时控制台 MVP 的框架复杂度。
+选型：`apps/web` 使用 Next 15 + React，后续接 `@livekit/components-react` 获取麦克风、标签页音频或文件音频。页面放在 `src/app`，避开旧 F 盘 exFAT 环境下根级 `app/` 目录的权限锁。
+
+构建约束：Next 15 必须在 NTFS 路径下构建。本机 F/E 盘为 exFAT，会让 Node 的 `fs.readlink` 对普通文件返回异常的 `EISDIR`；`D:\code\echosync` 位于 NTFS，已验证 Next 15 构建通过。
 
 原则落实：
 
@@ -77,8 +79,7 @@ echosync/
         transport/           # LiveKit bridge 占位
       tests/
     web/
-      index.html             # Vite 入口
-      src/App.tsx            # React 工作台页面
+      src/app/               # Next 15 App Router 工作台页面
       src/lib/protocol.ts    # 前端字幕事件协议
   doc/
     deep-research-report.md
@@ -105,7 +106,7 @@ AudioFrame stream
 
 - 建立 monorepo。
 - 建立 Python agent 抽象接口、DTO、管道和 fake 链路。
-- 建立 React/Vite 字幕工作台骨架。
+- 建立 Next 15 字幕工作台骨架。
 - 建立事件协议和修正窗口接口。
 
 ### Phase 1: 音频通道

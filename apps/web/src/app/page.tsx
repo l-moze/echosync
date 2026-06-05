@@ -1,3 +1,5 @@
+"use client";
+
 import { useMemo, useState } from "react";
 
 import type { SubtitleEvent } from "@/lib/protocol";
@@ -33,7 +35,7 @@ const demoEvents: SubtitleEvent[] = [
   }
 ];
 
-export function App() {
+export default function Home() {
   const [audioSource, setAudioSource] = useState("tab");
   const committed = useMemo(
     () => demoEvents.filter((event) => event.status === "committed"),

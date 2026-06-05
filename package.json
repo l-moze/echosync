@@ -11,7 +11,7 @@
     "demo:agent": "cd apps/agent && python -m echosync_agent.main"
   },
   "engines": {
-    "node": ">=20",
+    "node": ">=20.19.0 <25",
     "python": ">=3.11"
   }
 }

@@ -9,7 +9,6 @@ dist/
 build/
 out/
 .next/
-apps/web/app/
 
 # Logs
 *.log

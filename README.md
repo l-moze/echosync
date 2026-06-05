@@ -6,7 +6,7 @@
 
 EchoSync 当前初始化为一个小型 monorepo：
 
-- `apps/web`：React/Vite 听译工作台，用于音频采集入口和字幕渲染。
+- `apps/web`：Next 15 听译工作台，用于音频采集入口和字幕渲染。
 - `apps/agent`：Python 实时 Agent，用于 ASR、翻译、修正、字幕事件和可选 TTS。
 - `doc/architecture-mvp.md`：MVP 架构、模块边界与开发路线图。
 
@@ -22,4 +22,9 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 ## 当前状态
 
-项目仓库已初始化，并完成 React/Vite + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和 fake 链路测试骨架。
+项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和 fake 链路测试骨架。
+
+## 本地开发
+
+- 推荐路径：`D:\code\echosync`，该目录位于 NTFS 分区，支持 Next/Node 构建所需的正常 `readlink` 行为。
+- 推荐 Node：`20.19.0`，可通过 `nvm use` 读取 `.nvmrc` 切换。
