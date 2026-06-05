@@ -1,4 +1,4 @@
-export type OverlayLayer = "default" | "controls" | "pinned";
+export type OverlayLayer = "default" | "controls" | "settings" | "pinned";
 export type OverlayPointerMode = "pass_through" | "interactive" | "dragging";
 
 export type OverlayInteractionState = {
@@ -18,6 +18,8 @@ export type OverlayInteractionEvent =
   | { type: "pointer.left"; atMs: number }
   | { type: "hover.timer.elapsed"; atMs: number }
   | { type: "collapse.timer.elapsed"; atMs: number }
+  | { type: "settings.opened" }
+  | { type: "settings.closed" }
   | { type: "pin.enabled" }
   | { type: "pin.disabled" }
   | { type: "fallback.wake" }
@@ -65,7 +67,7 @@ export function reduceOverlayInteraction(
   }
 
   if (event.type === "hover.timer.elapsed") {
-    if (state.hoverStartedAtMs === null || state.layer === "pinned") {
+    if (state.hoverStartedAtMs === null || state.layer === "settings" || state.layer === "pinned") {
       return state;
     }
     if (event.atMs - state.hoverStartedAtMs < state.hoverIntentDelayMs) {
@@ -75,7 +77,7 @@ export function reduceOverlayInteraction(
   }
 
   if (event.type === "pointer.left") {
-    if (state.layer === "pinned" || state.pointerMode === "dragging") {
+    if (state.layer === "settings" || state.layer === "pinned" || state.pointerMode === "dragging") {
       return state;
     }
     if (state.layer === "controls") {
@@ -85,7 +87,7 @@ export function reduceOverlayInteraction(
   }
 
   if (event.type === "collapse.timer.elapsed") {
-    if (state.collapseStartedAtMs === null || state.layer === "pinned") {
+    if (state.collapseStartedAtMs === null || state.layer === "settings" || state.layer === "pinned") {
       return state;
     }
     if (event.atMs - state.collapseStartedAtMs < state.collapseDelayMs) {
@@ -96,6 +98,14 @@ export function reduceOverlayInteraction(
 
   if (event.type === "pin.enabled") {
     return { ...state, layer: "pinned", pointerMode: "interactive", hoverStartedAtMs: null, collapseStartedAtMs: null };
+  }
+
+  if (event.type === "settings.opened") {
+    return { ...state, layer: "settings", pointerMode: "interactive", hoverStartedAtMs: null, collapseStartedAtMs: null };
+  }
+
+  if (event.type === "settings.closed") {
+    return { ...state, layer: "controls", pointerMode: "interactive", hoverStartedAtMs: null, collapseStartedAtMs: null };
   }
 
   if (event.type === "pin.disabled") {
@@ -155,5 +165,8 @@ export function getSafeExpandedBounds({
 }
 
 function clamp(value: number, min: number, max: number) {
+  if (max < min) {
+    return min;
+  }
   return Math.min(Math.max(value, min), max);
 }

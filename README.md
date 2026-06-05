@@ -10,10 +10,15 @@ EchoSync 当前初始化为一个小型 monorepo：
 - `apps/web`：Next 15 听译工作台，用于音频采集入口、字幕渲染和后续会话 token 接口。
 - `apps/agent`：Python 实时 Agent，用于 ASR、翻译、修正、字幕事件和可选 TTS。
 - `doc/architecture-mvp.md`：MVP 架构、模块边界与开发路线图。
+- `doc/AI同声传译助手需求分析与调研.md`：面向题目的产品需求、竞品调研、MVP 范围和非目标。
+- `doc/技术路线与库调研.md`：当前代码状态、库选择和下一步技术风险。
+
+文档口径以 `README.md`、`doc/architecture-mvp.md` 和 `doc/AI同声传译助手需求分析与调研.md` 为当前事实源。`doc/补充文档.md` 保留早期 LiveKit 优先方案背景，`doc/realtime-audio-streaming-research.md` 保留音频传输改造前后的调研记录；其中旧链路描述用于解释为什么要改，不代表当前 Desktop 主链路。
 
 后端核心采用依赖倒置：
 
 - 级联链路依赖 `Transcriber`、`Translator`、`CorrectionEngine`、`SubtitleSink` 等小接口，而不是依赖 FunASR、DeepSeek、edge-tts 或 LiveKit 的具体 SDK。
+- 翻译器最小契约是 `Translator.translate()`，DeepL 这类非流式 API 可以直接接入；支持 token stream 的 DeepSeek / OpenAI-compatible 适配器再额外实现 `StreamingTranslator.stream_translate()`。
 - 端到端链路依赖 `InterpretationEngine`，可以直接输出字幕事件、修订补丁、提交事件和译文音频块。
 - 字幕输出和译文音频输出分离为 `SubtitleSink` 与 `TranslatedAudioSink`，避免一个接口承担无关职责。
 
@@ -29,12 +34,14 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和模拟链路测试骨架。当前地基同时支持 ASR→翻译→修正的级联模型，以及未来 OpenAI Realtime、Qwen LiveTranslate、Azure Speech Translation 等端到端模型适配。
 
+ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。Desktop 会在 `audio.start` 中声明本次会话的 `asr_provider` 与 `asr_latency_mode`，Agent 以 `.env` 作为默认值并允许会话级覆盖；API key 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
+
 当前 Web 工作台已按 `doc/UI设计调研.md` 的 MVP 方向实现：
 
 - 三栏工作台、剧场、阅读、紧凑悬浮四种模式。
 - `interim`、`stable`、`revised`、`locked` 字幕状态展示。
-- 实时字幕采用 interim hypothesis 策略：ASR 源文先持续吐字，约 1 秒形成一次翻译 checkpoint，DeepSeek 译文通过流式 token 增量更新，同一字幕行允许尾部修订。
-- 模拟 `translation.partial`、`translation.patch`、`segment.commit` 事件流。
+- 实时字幕采用 interim hypothesis 策略：ASR 源文先通过 `transcript.partial` 持续吐字，约 1 秒形成一次翻译 checkpoint；DeepSeek 译文通过流式 `translation.partial` 增量更新，同一字幕行允许尾部修订。
+- 模拟 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit` 事件流。
 - 源文、术语、笔记、历史时间线和延迟指标面板。
 
 当前 Desktop 地基已按 `doc/原型图.html` 的悬浮字幕方向升级：
@@ -42,7 +49,8 @@ EchoSync 当前初始化为一个小型 monorepo：
 - Electron 主控窗口使用无边框标题栏，负责音频源选择、字幕事件调试和悬浮窗控制。
 - 独立悬浮字幕窗使用透明、无边框、置顶窗口，渲染毛玻璃字幕卡。
 - 桌面音频源目录包含麦克风、Windows 系统声音、混音和文件回放。
-- Windows 系统声音先声明为 `electron-display-media-loopback` 边界；稳定生产方案会在该边界后接 WASAPI loopback 原生适配器或独立采集 sidecar。
+- Windows 系统声音已通过 Electron `getDisplayMedia` loopback 接入 renderer Web Audio，转为 16k mono PCM16 后送到 Python Agent。
+- Python Agent 的 `8766` 端口同时提供 `/v1/realtime/sessions/{session_id}` 音频输入和 `/v1/caption/events` 字幕输出，真实链路为“识别 -> 翻译 -> 字幕显示”。
 
 当前 Desktop UI 已按 Stateful Hybrid 主页控制中心推进：
 
@@ -50,10 +58,11 @@ EchoSync 当前初始化为一个小型 monorepo：
 - `Active`：主页切换为会话驾驶舱，展示最近转写、健康度、术语快加和自动滚动锁入口。
 - `Finished`：会话结束后停留在复盘态，提供导出前快速清理、摘要指标和最近记录。
 - 字幕弹窗采用 Layer A/B/C：默认穿透极简、Hover 轻控制、Pin 小型双语舞台，并支持快捷唤醒和召回居中。
+- 会话结束后会保留本次原始音频 Blob，并在复盘页提供双栏原文/译文、片段级播放高亮和点击片段 seek。当前归档只在本次进程内可回放，下一阶段落盘到 `userData/sessions/{sessionId}/`。
 
 ## 文档与备注规范
 
-所有 Markdown 文档、代码注释、Python docstring、配置样例说明都使用中文。技术标识、包名、类名、事件名、配置键名可保留英文，例如 `Next.js`、`LiveKit`、`AudioFrame`、`translation.patch`。
+人工维护的 Markdown 文档、业务代码注释、Python docstring、配置样例说明都使用中文。技术标识、包名、类名、事件名、配置键名、日志 key、自动生成文件和测试英文语料可保留英文，例如 `Next.js`、`LiveKit`、`AudioFrame`、`translation.patch`。
 
 ## 本地开发
 
@@ -63,6 +72,50 @@ EchoSync 当前初始化为一个小型 monorepo：
 - Web 工作台：`npm run dev:web`
 - Windows 桌面端：`npm run dev:desktop`
 - 桌面端测试：`npm run test:desktop`
+
+### 本地真实链路测试
+
+1. 在一个终端启动 Python Agent：
+
+```powershell
+cd apps/agent
+python -m echosync_agent.transport.caption_ws
+```
+
+2. 在另一个终端启动桌面端：
+
+```powershell
+npm run dev:desktop
+```
+
+3. 打开视频或网课音频，桌面端选择“Windows 系统声音”，点击“开始同传”。
+
+真实识别前请在 `.env` 中设置：
+
+```powershell
+ECHOSYNC_ASR_PROVIDER=funasr
+FUNASR_DEVICE=auto
+```
+
+也可以在 Desktop 会话启动时通过 `audio.start.asr_provider` 覆盖默认 ASR provider。当前 renderer 默认真实采集使用 `funasr + balanced`；如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
+
+如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
+
+4. 观察 Python 日志：
+
+- `audio_stream_started`：桌面端已开始送系统音频。
+- `audio_chunk_received`：实时 PCM chunk 已进入 Agent。
+- `caption_event_published`：ASR/翻译后的字幕事件已推给桌面端；`transcript.partial` 是源文草稿，`translation.partial` 是译文更新。
+
+当前 MVP 的采集节点使用 `ScriptProcessorNode` 做快速验证；后续会替换为 `AudioWorklet` 或 WASAPI loopback，以降低抖动和长期运行风险。
+
+当前 renderer 已加轻量门控：低于响度阈值时不发送音频块，连续静音后自动把上一块活跃音频标记为 `is_final=true`，避免静音时持续打满 ASR。字幕弹窗会显示当前片段时间范围。
+
+实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 按 `segment_id` 合并待处理项，降低模型慢响应时的队列积压。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
+
+实时控制事件语义：`realtime.error` 表示本次会话启动失败或 pipeline 失败，客户端应进入错误态；`realtime.done` 只表示正常完成。用户主动停止时，如果 pipeline 已经失败，Agent 会优先上报错误；如果仍在处理队列，则取消未完成的 pipeline，避免停止后继续推送晚到字幕。
+
+原始音频录制与 ASR 发送是两条链路：`MediaRecorder` 连续保存原始 `MediaStream`，ASR 发送链路继续使用音频门控。这样复盘页能回放完整音频，而实时识别不会被静音流拖慢。
 
 ## 术语表（Glossary）
 

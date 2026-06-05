@@ -33,3 +33,6 @@ Thumbs.db
 *.whl
 *.tsbuildinfo
 coverage/
+
+# Local media fixtures for manual ASR evaluation
+vido/

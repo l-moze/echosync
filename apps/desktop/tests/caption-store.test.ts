@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { applyRealtimeEvent } from "../src/shared/caption-store";
+import {
+  applyRealtimeEvent,
+  isRealtimeEventForActiveSession,
+  selectActiveCaptionLine,
+  selectOverlayHistoryLines
+} from "../src/shared/caption-store";
 import type { CaptionLine } from "../src/shared/caption-store";
 
 describe("桌面字幕状态机", () => {
@@ -95,5 +100,452 @@ describe("桌面字幕状态机", () => {
     expect(lines[0].sourceText).toBe("This model supports real time");
     expect(lines[0].targetText).toBe("这个模型");
     expect(lines[0].state).toBe("interim");
+  });
+
+  it("独立 transcript partial 只更新源文并保留已有译文", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_live",
+        rev: 2,
+        state: "stable",
+        sourceText: "This model",
+        targetText: "这个模型",
+        stability: 0.86,
+        startMs: 0,
+        endMs: 1000,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "transcript.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_live",
+      rev: 3,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "This model supports batch translation",
+      target_text: "",
+      status: "stable",
+      stability: 0.76,
+      start_ms: 0,
+      end_ms: 1800
+    });
+
+    expect(lines[0].sourceText).toBe("This model supports batch translation");
+    expect(lines[0].targetText).toBe("这个模型");
+  });
+
+  it("独立 transcript partial 达到可读长度时创建源文草稿，避免字幕窗空白", () => {
+    const lines = applyRealtimeEvent([], {
+      type: "transcript.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_source",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "Waiting for model response",
+      target_text: "",
+      status: "partial",
+      stability: 0.64,
+      start_ms: 0,
+      end_ms: 900
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].sourceText).toBe("Waiting for model response");
+    expect(lines[0].targetText).toBe("");
+    expect(selectActiveCaptionLine(lines)?.id).toBe("seg_source");
+  });
+
+  it("独立 transcript partial 过短时先暂存，避免字幕窗逐字显示", () => {
+    const lines = applyRealtimeEvent([], {
+      type: "transcript.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_short_source",
+      rev: 1,
+      source_lang: "zh",
+      target_lang: "zh-CN",
+      source_text: "等",
+      target_text: "",
+      status: "partial",
+      stability: 0.42,
+      start_ms: 0,
+      end_ms: 160
+    });
+
+    expect(lines).toEqual([]);
+  });
+
+  it("不创建只有源文草稿的短 partial 行，避免字幕窗逐词闪烁", () => {
+    const lines = applyRealtimeEvent([], {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_draft",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "Royal10",
+      target_text: "",
+      status: "partial",
+      stability: 0.41,
+      start_ms: 0,
+      end_ms: 320
+    });
+
+    expect(lines).toEqual([]);
+  });
+
+  it("即使前序 partial 被暂存，segment commit 也必须创建最终字幕行", () => {
+    const lines = applyRealtimeEvent([], {
+      type: "segment.commit",
+      session_id: "sess_demo",
+      segment_id: "seg_committed",
+      rev: 2,
+      start_ms: 0,
+      end_ms: 1800,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The final caption should still appear.",
+      target_text: "最终字幕仍然应该显示。",
+      final: true
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].id).toBe("seg_committed");
+    expect(lines[0].state).toBe("locked");
+    expect(lines[0].targetText).toBe("最终字幕仍然应该显示。");
+  });
+
+  it("保留已有行上的源文 partial 更新，避免隐藏当前段进展", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_live",
+        rev: 1,
+        state: "stable",
+        sourceText: "This model is fast",
+        targetText: "这个模型很快",
+        stability: 0.86,
+        startMs: 0,
+        endMs: 1000,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_live",
+      rev: 2,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "This model is fast enough for live captions",
+      target_text: "",
+      status: "partial",
+      stability: 0.72,
+      start_ms: 0,
+      end_ms: 1500
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0].sourceText).toBe("This model is fast enough for live captions");
+    expect(lines[0].targetText).toBe("这个模型很快");
+  });
+
+  it("store 保留过短译文 token，由显示缓冲决定何时展示", () => {
+    const oneChar = applyRealtimeEvent([], {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_token",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "Hello everyone",
+      target_text: "大",
+      status: "stable",
+      stability: 0.8,
+      start_ms: 0,
+      end_ms: 1000
+    });
+
+    const shortUpdate = applyRealtimeEvent(oneChar, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_token",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "Hello everyone",
+      target_text: "大家",
+      status: "stable",
+      stability: 0.84,
+      start_ms: 0,
+      end_ms: 1000
+    });
+
+    expect(oneChar).toHaveLength(1);
+    expect(oneChar[0].targetText).toBe("大");
+    expect(shortUpdate).toHaveLength(1);
+    expect(shortUpdate[0].targetText).toBe("大家");
+  });
+
+  it("store 不按短语阈值丢弃译文更新", () => {
+    const fourChars = applyRealtimeEvent([], {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_phrase",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The model starts",
+      target_text: "模型开始",
+      status: "stable",
+      stability: 0.8,
+      start_ms: 0,
+      end_ms: 1000
+    });
+    const shortAppend = applyRealtimeEvent(fourChars, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_phrase",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The model starts",
+      target_text: "模型开始了",
+      status: "stable",
+      stability: 0.86,
+      start_ms: 0,
+      end_ms: 1000
+    });
+
+    expect(fourChars).toHaveLength(1);
+    expect(fourChars[0].targetText).toBe("模型开始");
+    expect(shortAppend).toHaveLength(1);
+    expect(shortAppend[0].targetText).toBe("模型开始了");
+  });
+
+  it("已有译文的短增量也要保存到 desired 状态", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_token",
+        rev: 1,
+        state: "stable",
+        sourceText: "Hello everyone",
+        targetText: "大家好",
+        stability: 0.84,
+        startMs: 0,
+        endMs: 1000,
+        patchCount: 0
+      }
+    ];
+
+    const held = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_token",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "Hello everyone",
+      target_text: "大家好呀",
+      status: "stable",
+      stability: 0.86,
+      start_ms: 0,
+      end_ms: 1000
+    });
+
+    expect(held).not.toBe(initialLines);
+    expect(held[0].targetText).toBe("大家好呀");
+  });
+
+  it("忽略晚到的旧 revision，避免并发翻译回退字幕", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_live",
+        rev: 3,
+        state: "interim",
+        sourceText: "My name is Evie",
+        targetText: "",
+        stability: 0.7,
+        startMs: 0,
+        endMs: 1800,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_live",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "My",
+      target_text: "我的",
+      status: "stable",
+      stability: 0.86,
+      start_ms: 0,
+      end_ms: 1000
+    });
+
+    expect(lines[0].rev).toBe(3);
+    expect(lines[0].sourceText).toBe("My name is Evie");
+    expect(lines[0].targetText).toBe("");
+  });
+
+  it("忽略 realtime 控制事件，避免错误消息污染字幕列表", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_live",
+        rev: 1,
+        state: "interim",
+        sourceText: "Hello",
+        targetText: "你好",
+        stability: 0.7,
+        startMs: 0,
+        endMs: 1000,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "realtime.error",
+      session_id: "sess_demo",
+      message: "Voxtral failed"
+    });
+
+    expect(lines).toEqual(initialLines);
+  });
+
+  it("优先显示最新字幕，而不是被旧的 stable 种子行卡住", () => {
+    const lines: CaptionLine[] = [
+      {
+        id: "seg_seed",
+        rev: 1,
+        state: "stable",
+        sourceText: "The assistant keeps subtitles above any Windows app.",
+        targetText: "助手会把字幕保持在任意 Windows 应用上方。",
+        stability: 0.9,
+        startMs: 1900,
+        endMs: 3900,
+        patchCount: 0
+      },
+      {
+        id: "seg_live",
+        rev: 1,
+        state: "locked",
+        sourceText: "The overlay should receive live subtitle events now.",
+        targetText: "[zh] The overlay should receive live subtitle events now.",
+        stability: 1,
+        startMs: 1800,
+        endMs: 3600,
+        patchCount: 0
+      }
+    ];
+
+    expect(selectActiveCaptionLine(lines)?.id).toBe("seg_live");
+  });
+
+  it("悬浮字幕优先显示最新有译文的行，避免源文草稿抢走译文焦点", () => {
+    const lines: CaptionLine[] = [
+      {
+        id: "seg_translated",
+        rev: 3,
+        state: "stable",
+        sourceText: "The model follows the dynamic prompt.",
+        targetText: "模型会遵循动态提示词。",
+        stability: 0.88,
+        startMs: 1000,
+        endMs: 2600,
+        patchCount: 0
+      },
+      {
+        id: "seg_source_draft",
+        rev: 1,
+        state: "stable",
+        sourceText: "then another model",
+        targetText: "",
+        stability: 0.72,
+        startMs: 2700,
+        endMs: 3300,
+        patchCount: 0
+      }
+    ];
+
+    expect(selectActiveCaptionLine(lines)?.id).toBe("seg_translated");
+  });
+
+  it("默认字幕只显示当前双语，聚焦和驻留态显示可回看的历史字幕", () => {
+    const lines: CaptionLine[] = Array.from({ length: 8 }, (_, index) => ({
+      id: `seg_${index + 1}`,
+      rev: 1,
+      state: index === 7 ? "stable" : "locked",
+      sourceText: `source ${index + 1}`,
+      targetText: `target ${index + 1}`,
+      stability: 1,
+      startMs: index * 1000,
+      endMs: index * 1000 + 800,
+      patchCount: 0
+    }));
+
+    expect(selectOverlayHistoryLines("default", lines)).toEqual([]);
+    expect(selectOverlayHistoryLines("controls", lines).map((line) => line.id)).toEqual([
+      "seg_3",
+      "seg_4",
+      "seg_5",
+      "seg_6",
+      "seg_7",
+      "seg_8"
+    ]);
+    expect(selectOverlayHistoryLines("pinned", lines).map((line) => line.id)).toEqual([
+      "seg_3",
+      "seg_4",
+      "seg_5",
+      "seg_6",
+      "seg_7",
+      "seg_8"
+    ]);
+  });
+
+  it("只接收当前活跃会话的实时事件，停止后忽略晚到字幕", () => {
+    const event = {
+      type: "translation.partial" as const,
+      session_id: "sess_active",
+      segment_id: "seg_1",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "Hello",
+      target_text: "你好",
+      status: "stable" as const,
+      stability: 0.82,
+      start_ms: 0,
+      end_ms: 1000
+    };
+
+    expect(isRealtimeEventForActiveSession("sess_active", event)).toBe(true);
+    expect(isRealtimeEventForActiveSession("sess_old", event)).toBe(false);
+    expect(isRealtimeEventForActiveSession(null, event)).toBe(false);
+  });
+
+  it("字幕弹窗可用主进程广播的 sessionId 接收同一会话事件", () => {
+    const event = {
+      type: "translation.partial" as const,
+      session_id: "sess_shared",
+      segment_id: "seg_1",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "Hello",
+      target_text: "你好",
+      status: "stable" as const,
+      stability: 0.82,
+      start_ms: 0,
+      end_ms: 1000
+    };
+
+    expect(isRealtimeEventForActiveSession(null, event, "sess_shared")).toBe(true);
+    expect(isRealtimeEventForActiveSession(null, event, "sess_other")).toBe(false);
   });
 });

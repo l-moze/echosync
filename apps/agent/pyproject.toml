@@ -19,6 +19,7 @@ dependencies = [
 echosync-agent-demo = "echosync_agent.main:run"
 echosync-asr-demo = "echosync_agent.asr_demo:main"
 echosync-asr-server = "echosync_agent.transport.asr_websocket:run"
+echosync-caption-server = "echosync_agent.transport.caption_ws:run_caption_server"
 
 [project.optional-dependencies]
 funasr = [

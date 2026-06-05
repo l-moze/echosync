@@ -154,6 +154,119 @@ def test_funasr_streaming_transcriber_recognizes_frame_before_requesting_next() 
     assert segments[1].status == SegmentStatus.COMMITTED
 
 
+def test_funasr_transcriber_aggregates_small_transport_frames_before_inference() -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModel:
+        def generate(self, **kwargs: object) -> list[dict[str, str]]:
+            calls.append(kwargs)
+            return [{"text": f"chunk-{len(calls)}"}]
+
+    async def frames() -> AsyncIterator[AudioFrame]:
+        for seq in range(6):
+            yield AudioFrame(
+                session_id="sess_small_frames",
+                seq=seq + 1,
+                pcm=b"\x01\x00" * 1600,
+                sample_rate=16_000,
+                channels=1,
+                start_ms=seq * 100,
+                end_ms=(seq + 1) * 100,
+                source_lang="zh",
+                is_final=False,
+            )
+
+    transcriber = FunAsrTranscriber(
+        model_factory=lambda: FakeModel(),
+        config=FunAsrStreamingConfig(chunk_ms=300),
+    )
+
+    segments = asyncio.run(_collect(transcriber.stream(frames())))
+
+    assert len(calls) == 2
+    assert [len(call["input"]) for call in calls] == [4800, 4800]
+    assert [segment.text for segment in segments] == ["chunk-1", "chunk-2"]
+    assert segments[0].start_ms == 0
+    assert segments[0].end_ms == 300
+    assert segments[1].start_ms == 300
+    assert segments[1].end_ms == 600
+
+
+def test_funasr_transcriber_flushes_final_remainder() -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModel:
+        def generate(self, **kwargs: object) -> list[dict[str, str]]:
+            calls.append(kwargs)
+            return [{"text": "final-remainder"}]
+
+    async def frames() -> AsyncIterator[AudioFrame]:
+        for seq in range(2):
+            yield AudioFrame(
+                session_id="sess_final_remainder",
+                seq=seq + 1,
+                pcm=b"\x01\x00" * 1600,
+                sample_rate=16_000,
+                channels=1,
+                start_ms=seq * 100,
+                end_ms=(seq + 1) * 100,
+                source_lang="zh",
+                is_final=seq == 1,
+            )
+
+    transcriber = FunAsrTranscriber(
+        model_factory=lambda: FakeModel(),
+        config=FunAsrStreamingConfig(chunk_ms=300),
+    )
+
+    segments = asyncio.run(_collect(transcriber.stream(frames())))
+
+    assert len(calls) == 1
+    assert len(calls[0]["input"]) == 3200
+    assert calls[0]["is_final"] is True
+    assert segments[0].text == "final-remainder"
+    assert segments[0].status == SegmentStatus.COMMITTED
+    assert segments[0].start_ms == 0
+    assert segments[0].end_ms == 200
+
+
+def test_funasr_transcriber_uses_frame_sample_rate_for_aggregation_window() -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModel:
+        def generate(self, **kwargs: object) -> list[dict[str, str]]:
+            calls.append(kwargs)
+            return [{"text": "eight-k-window"}]
+
+    async def frames() -> AsyncIterator[AudioFrame]:
+        for seq in range(6):
+            yield AudioFrame(
+                session_id="sess_8k",
+                seq=seq + 1,
+                pcm=b"\x01\x00" * 800,
+                sample_rate=8_000,
+                channels=1,
+                start_ms=seq * 100,
+                end_ms=(seq + 1) * 100,
+                source_lang="en",
+                is_final=False,
+            )
+
+    transcriber = FunAsrTranscriber(
+        model_factory=lambda: FakeModel(),
+        config=FunAsrStreamingConfig(chunk_ms=300),
+    )
+
+    segments = asyncio.run(_collect(transcriber.stream(frames())))
+
+    assert len(calls) == 2
+    assert [len(call["input"]) for call in calls] == [2400, 2400]
+    assert segments[0].start_ms == 0
+    assert segments[0].end_ms == 300
+    assert segments[1].start_ms == 300
+    assert segments[1].end_ms == 600
+
+
 def test_funasr_device_auto_prefers_cuda_when_available() -> None:
     assert resolve_funasr_device("auto", cuda_is_available=lambda: True) == "cuda"
 

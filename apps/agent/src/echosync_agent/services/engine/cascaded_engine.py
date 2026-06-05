@@ -75,33 +75,43 @@ class CascadedInterpretationEngine(InterpretationEngine):
 
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[InterpretationEvent]:
         event_queue: asyncio.Queue[InterpretationEvent | BaseException | object] = asyncio.Queue()
-        translation_queue: asyncio.Queue[TranscriptSegment | object] = asyncio.Queue()
         done = object()
-        latest_queued_rev: dict[str, int] = {}
+        pending_checkpoints: dict[str, TranscriptSegment] = {}
+        pending_order: deque[str] = deque()
+        checkpoint_available = asyncio.Event()
+        producer_done = False
         assembled_transcripts = self.transcript_assembler.stream(self.transcriber.stream(frames))
 
         async def produce_transcripts() -> None:
+            nonlocal producer_done
             try:
                 async for transcript in assembled_transcripts:
                     await event_queue.put(self._source_only_translation(transcript))
                     if transcript.status != SegmentStatus.PARTIAL:
-                        latest_queued_rev[transcript.segment_id] = transcript.rev
-                        await translation_queue.put(transcript)
+                        if transcript.segment_id not in pending_checkpoints:
+                            pending_order.append(transcript.segment_id)
+                        pending_checkpoints[transcript.segment_id] = transcript
+                        checkpoint_available.set()
             except BaseException as exc:
                 await event_queue.put(exc)
             finally:
-                await translation_queue.put(done)
+                producer_done = True
+                checkpoint_available.set()
 
         async def translate_checkpoints() -> None:
             try:
                 while True:
-                    item = await translation_queue.get()
-                    if item is done:
+                    await checkpoint_available.wait()
+                    while pending_order:
+                        segment_id = pending_order.popleft()
+                        item = pending_checkpoints.pop(segment_id, None)
+                        if item is None:
+                            continue
+                        async for event in self._translate_checkpoint(item):
+                            await event_queue.put(event)
+                    if producer_done:
                         break
-                    if self._is_stale_checkpoint(item, latest_queued_rev):
-                        continue
-                    async for event in self._translate_checkpoint(item):
-                        await event_queue.put(event)
+                    checkpoint_available.clear()
             except BaseException as exc:
                 await event_queue.put(exc)
             finally:

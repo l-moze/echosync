@@ -1,7 +1,6 @@
 export type SegmentStatus = "partial" | "stable" | "committed";
 
-export type SubtitleEvent = {
-  type: "translation.partial";
+export type CaptionTextEvent = {
   session_id: string;
   segment_id: string;
   rev: number;
@@ -14,6 +13,14 @@ export type SubtitleEvent = {
   start_ms: number;
   end_ms: number;
   speaker?: string | null;
+};
+
+export type SubtitleEvent = CaptionTextEvent & {
+  type: "translation.partial";
+};
+
+export type TranscriptEvent = CaptionTextEvent & {
+  type: "transcript.partial";
 };
 
 export type SubtitlePatchOperation =
@@ -61,4 +68,21 @@ export type SubtitleCommitEvent = {
   final: boolean;
 };
 
-export type RealtimeEvent = SubtitleEvent | SubtitlePatchEvent | SubtitleCommitEvent;
+export type RealtimeErrorEvent = {
+  type: "realtime.error";
+  session_id: string;
+  message: string;
+};
+
+export type RealtimeDoneEvent = {
+  type: "realtime.done";
+  session_id: string;
+};
+
+export type RealtimeEvent =
+  | TranscriptEvent
+  | SubtitleEvent
+  | SubtitlePatchEvent
+  | SubtitleCommitEvent
+  | RealtimeErrorEvent
+  | RealtimeDoneEvent;

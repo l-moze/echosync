@@ -48,9 +48,46 @@ class FunAsrTranscriber(Transcriber):
 
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         cache: dict[str, Any] = {}
+        pending: _PendingAudioBuffer | None = None
 
         async for frame in frames:
-            segment = self._recognize_frame(frame, cache=cache, is_final=frame.is_final)
+            if pending is None:
+                pending = _PendingAudioBuffer(
+                    sample_rate=frame.sample_rate,
+                    chunk_ms=self.config.chunk_ms,
+                )
+            pending.push(frame)
+            while not frame.is_final and pending.ready():
+                segment = self._recognize_frame(
+                    pending.take_chunk(is_final=False),
+                    cache=cache,
+                    is_final=False,
+                )
+                if segment is not None:
+                    yield segment
+            if frame.is_final and pending.has_audio():
+                while pending.has_more_than_one_chunk():
+                    segment = self._recognize_frame(
+                        pending.take_chunk(is_final=False),
+                        cache=cache,
+                        is_final=False,
+                    )
+                    if segment is not None:
+                        yield segment
+                segment = self._recognize_frame(
+                    pending.take_all(is_final=True),
+                    cache=cache,
+                    is_final=True,
+                )
+                if segment is not None:
+                    yield segment
+
+        if pending is not None and pending.has_audio():
+            segment = self._recognize_frame(
+                pending.take_all(is_final=True),
+                cache=cache,
+                is_final=True,
+            )
             if segment is not None:
                 yield segment
 
@@ -155,3 +192,75 @@ def _pcm16le_to_float32(pcm: bytes) -> np.ndarray:
         return np.array([], dtype=np.float32)
     samples = np.frombuffer(pcm, dtype="<i2")
     return (samples.astype(np.float32) / 32768.0).copy()
+
+
+class _PendingAudioBuffer:
+    def __init__(self, *, sample_rate: int, chunk_ms: int) -> None:
+        self._sample_rate = sample_rate
+        self._target_bytes = max(1, int(sample_rate * chunk_ms / 1000) * 2)
+        self._first_frame: AudioFrame | None = None
+        self._last_frame: AudioFrame | None = None
+        self._next_start_ms: int | None = None
+        self._pcm = bytearray()
+
+    def push(self, frame: AudioFrame) -> None:
+        if not frame.pcm:
+            return
+        if self._first_frame is None:
+            self._first_frame = frame
+            self._next_start_ms = frame.start_ms
+        self._last_frame = frame
+        self._pcm.extend(frame.pcm)
+
+    def ready(self) -> bool:
+        return len(self._pcm) >= self._target_bytes
+
+    def has_more_than_one_chunk(self) -> bool:
+        return len(self._pcm) > self._target_bytes
+
+    def has_audio(self) -> bool:
+        return bool(self._pcm and self._first_frame is not None and self._last_frame is not None)
+
+    def take_chunk(self, *, is_final: bool) -> AudioFrame:
+        return self._take(self._target_bytes, is_final=is_final)
+
+    def take_all(self, *, is_final: bool) -> AudioFrame:
+        return self._take(len(self._pcm), is_final=is_final)
+
+    def _take(self, byte_count: int, *, is_final: bool) -> AudioFrame:
+        if self._first_frame is None or self._last_frame is None or self._next_start_ms is None:
+            raise RuntimeError("FunASR audio buffer is empty.")
+
+        pcm = bytes(self._pcm[:byte_count])
+        del self._pcm[:byte_count]
+
+        first = self._first_frame
+        last = self._last_frame
+        start_ms = self._next_start_ms
+        end_ms = last.end_ms if is_final and not self._pcm else start_ms + _pcm_duration_ms(
+            pcm,
+            self._sample_rate,
+        )
+        self._next_start_ms = end_ms
+        if not self._pcm:
+            self._first_frame = None
+            self._last_frame = None
+            self._next_start_ms = None
+        return AudioFrame(
+            session_id=first.session_id,
+            seq=last.seq,
+            pcm=pcm,
+            sample_rate=first.sample_rate,
+            channels=first.channels,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            source_lang=first.source_lang,
+            source_kind=first.source_kind,
+            device_id=first.device_id,
+            is_final=is_final,
+        )
+
+
+def _pcm_duration_ms(pcm: bytes, sample_rate: int) -> int:
+    sample_count = len(pcm) // 2
+    return int(round((sample_count / sample_rate) * 1000))

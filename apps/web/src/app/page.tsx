@@ -1,113 +1,369 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 
-import type { SubtitleEvent } from "@/lib/protocol";
+import {
+  applyRealtimeEvent,
+  demoEvents,
+  glossaryTerms,
+  initialCaptionLines,
+  modeDescriptions,
+  modeLabels,
+  noteCards,
+  sessionMetrics,
+  type AudioSource,
+  type CaptureState,
+  type WorkstationMode
+} from "@/lib/demo-session";
+import type { CaptionLineModel } from "@/lib/protocol";
 
-const demoEvents: SubtitleEvent[] = [
-  {
-    type: "translation.partial",
-    session_id: "sess_demo",
-    segment_id: "seg_1",
-    rev: 1,
-    source_lang: "en",
-    target_lang: "zh-CN",
-    source_text: "Today we will talk about vector databases.",
-    target_text: "今天我们来谈谈向量数据库。",
-    status: "committed",
-    stability: 0.96,
-    start_ms: 0,
-    end_ms: 2200
-  },
-  {
-    type: "translation.partial",
-    session_id: "sess_demo",
-    segment_id: "seg_2",
-    rev: 1,
-    source_lang: "en",
-    target_lang: "zh-CN",
-    source_text: "CUDA kernels make the pipeline faster.",
-    target_text: "CUDA 内核让这条管道更快。",
-    status: "partial",
-    stability: 0.74,
-    start_ms: 2300,
-    end_ms: 4300
-  }
-];
+const audioSourceLabels: Record<AudioSource, string> = {
+  mic: "麦克风",
+  tab: "标签页音频",
+  file: "文件"
+};
+
+const sourceOptions: AudioSource[] = ["tab", "mic", "file"];
+const modeOptions: WorkstationMode[] = ["workstation", "theater", "reading", "compact"];
 
 export default function Home() {
-  const [audioSource, setAudioSource] = useState("tab");
-  const committed = useMemo(
-    () => demoEvents.filter((event) => event.status === "committed"),
-    []
+  const [mode, setMode] = useState<WorkstationMode>("workstation");
+  const [audioSource, setAudioSource] = useState<AudioSource>("tab");
+  const [captureState, setCaptureState] = useState<CaptureState>("listening");
+  const [fontScale, setFontScale] = useState(1);
+  const [showSource, setShowSource] = useState(true);
+  const [translatedAudioEnabled, setTranslatedAudioEnabled] = useState(false);
+  const [lines, setLines] = useState<CaptionLineModel[]>(initialCaptionLines);
+  const [eventIndex, setEventIndex] = useState(0);
+
+  const activeLine = useMemo(
+    () => [...lines].reverse().find((line) => line.state !== "locked") ?? lines.at(-1),
+    [lines]
   );
-  const active = demoEvents.find((event) => event.status !== "committed");
+
+  const statusText = captureState === "listening" ? "正在听译" : "等待音频";
+
+  function toggleCapture() {
+    setCaptureState((current) => (current === "listening" ? "idle" : "listening"));
+  }
+
+  function playNextEvent() {
+    const event = demoEvents[eventIndex % demoEvents.length];
+    setLines((current) => applyRealtimeEvent(current, event, Date.now()));
+    setEventIndex((current) => current + 1);
+  }
 
   return (
-    <main className="workspace">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">EchoSync</p>
-          <h1>AI 同声传译工作台</h1>
-        </div>
-        <div className="transport" aria-label="音频来源">
-          <button
-            className={audioSource === "mic" ? "selected" : ""}
-            onClick={() => setAudioSource("mic")}
-          >
-            麦克风
-          </button>
-          <button
-            className={audioSource === "tab" ? "selected" : ""}
-            onClick={() => setAudioSource("tab")}
-          >
-            标签页音频
-          </button>
-          <button
-            className={audioSource === "file" ? "selected" : ""}
-            onClick={() => setAudioSource("file")}
-          >
-            文件
-          </button>
-        </div>
-      </header>
+    <main className={`workspace mode-${mode}`}>
+      <SessionBar
+        audioSource={audioSource}
+        captureState={captureState}
+        fontScale={fontScale}
+        mode={mode}
+        showSource={showSource}
+        translatedAudioEnabled={translatedAudioEnabled}
+        onAudioSourceChange={setAudioSource}
+        onCaptureToggle={toggleCapture}
+        onFontScaleChange={setFontScale}
+        onModeChange={setMode}
+        onShowSourceChange={setShowSource}
+        onTranslatedAudioToggle={() => setTranslatedAudioEnabled((value) => !value)}
+      />
 
-      <section className="console">
-        <div className="subtitlePane">
-          <p className="label">中文字幕</p>
-          {committed.map((event) => (
-            <p className="subtitle committed" key={event.segment_id}>
-              {event.target_text}
-            </p>
-          ))}
-          {active ? (
-            <p className="subtitle partial" key={active.segment_id}>
-              {active.target_text}
-            </p>
-          ) : null}
-        </div>
-
-        <aside className="sideRail">
-          <div className="metric">
-            <span>模式</span>
-            <strong>Tech</strong>
+      <section className="shell" aria-label="同传工作区">
+        <aside className="sessionRail">
+          <PanelTitle title="会话" subtitle="LiveKit / 级联模拟" />
+          <button className="primaryAction" onClick={toggleCapture}>
+            {captureState === "listening" ? "暂停听译" : "开始听译"}
+          </button>
+          <button className="secondaryAction" onClick={playNextEvent}>
+            推进模拟事件
+          </button>
+          <div className="sourceGrid" aria-label="输入源">
+            {sourceOptions.map((source) => (
+              <button
+                className={audioSource === source ? "selected" : ""}
+                key={source}
+                onClick={() => setAudioSource(source)}
+              >
+                {audioSourceLabels[source]}
+              </button>
+            ))}
           </div>
-          <div className="metric">
-            <span>目标语言</span>
-            <strong>中文</strong>
-          </div>
-          <div className="metric">
-            <span>稳定度</span>
-            <strong>{active ? Math.round(active.stability * 100) : 100}%</strong>
-          </div>
-          <div className="glossary">
-            <p>术语表</p>
-            <span>CUDA</span>
-            <span>vector database</span>
-            <span>pipeline</span>
+          <div className="metricStack">
+            {sessionMetrics.map((metric) => (
+              <div className={`metric tone-${metric.tone ?? "muted"}`} key={metric.label}>
+                <span>{metric.label}</span>
+                <strong>{metric.value}</strong>
+              </div>
+            ))}
           </div>
         </aside>
+
+        <SubtitleStage
+          activeLine={activeLine}
+          fontScale={fontScale}
+          lines={lines}
+          mode={mode}
+          showSource={showSource}
+        />
+
+        <ContextRail lines={lines} mode={mode} />
       </section>
+
+      <HistoryTimeline lines={lines} />
+      <CompactOverlay activeLine={activeLine} mode={mode} />
+
+      <div aria-live="polite" className="srOnly" role="status">
+        {statusText}，当前模式：{modeLabels[mode]}。
+      </div>
     </main>
   );
+}
+
+function SessionBar({
+  audioSource,
+  captureState,
+  fontScale,
+  mode,
+  showSource,
+  translatedAudioEnabled,
+  onAudioSourceChange,
+  onCaptureToggle,
+  onFontScaleChange,
+  onModeChange,
+  onShowSourceChange,
+  onTranslatedAudioToggle
+}: {
+  audioSource: AudioSource;
+  captureState: CaptureState;
+  fontScale: number;
+  mode: WorkstationMode;
+  showSource: boolean;
+  translatedAudioEnabled: boolean;
+  onAudioSourceChange: (source: AudioSource) => void;
+  onCaptureToggle: () => void;
+  onFontScaleChange: (scale: number) => void;
+  onModeChange: (mode: WorkstationMode) => void;
+  onShowSourceChange: (visible: boolean) => void;
+  onTranslatedAudioToggle: () => void;
+}) {
+  return (
+    <header className="sessionBar">
+      <div className="brandBlock">
+        <span className="brandMark">ES</span>
+        <div>
+          <p>EchoSync</p>
+          <h1>AI 同声传译工作台</h1>
+        </div>
+      </div>
+
+      <ModeSwitcher mode={mode} onModeChange={onModeChange} />
+
+      <div className="topControls">
+        <label>
+          输入
+          <select value={audioSource} onChange={(event) => onAudioSourceChange(event.target.value as AudioSource)}>
+            {sourceOptions.map((source) => (
+              <option key={source} value={source}>
+                {audioSourceLabels[source]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          字号
+          <input
+            max="1.25"
+            min="0.85"
+            step="0.05"
+            type="range"
+            value={fontScale}
+            onChange={(event) => onFontScaleChange(Number(event.target.value))}
+          />
+        </label>
+        <button className={showSource ? "selected" : ""} onClick={() => onShowSourceChange(!showSource)}>
+          双语
+        </button>
+        <button className={translatedAudioEnabled ? "selected" : ""} onClick={onTranslatedAudioToggle}>
+          译音
+        </button>
+        <button className="listenButton" onClick={onCaptureToggle}>
+          {captureState === "listening" ? "停止" : "开始"}
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function ModeSwitcher({
+  mode,
+  onModeChange
+}: {
+  mode: WorkstationMode;
+  onModeChange: (mode: WorkstationMode) => void;
+}) {
+  return (
+    <nav className="modeSwitcher" aria-label="显示模式">
+      {modeOptions.map((option) => (
+        <button
+          className={mode === option ? "selected" : ""}
+          key={option}
+          title={modeDescriptions[option]}
+          onClick={() => onModeChange(option)}
+        >
+          {modeLabels[option]}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function SubtitleStage({
+  activeLine,
+  fontScale,
+  lines,
+  mode,
+  showSource
+}: {
+  activeLine?: CaptionLineModel;
+  fontScale: number;
+  lines: CaptionLineModel[];
+  mode: WorkstationMode;
+  showSource: boolean;
+}) {
+  const visibleLines = mode === "reading" ? lines : lines.slice(-3);
+
+  return (
+    <section className="subtitleStage" style={{ "--caption-scale": fontScale } as CSSProperties}>
+      <div className="stageHeader">
+        <PanelTitle title="实时字幕" subtitle={activeLine ? `${Math.round((activeLine.confidence ?? 0) * 100)}% 稳定度` : "等待音频"} />
+        <div className="waveform" aria-hidden="true">
+          {Array.from({ length: 18 }).map((_, index) => (
+            <span key={index} style={{ "--bar": `${24 + ((index * 17) % 46)}%` } as CSSProperties} />
+          ))}
+        </div>
+      </div>
+      <div className="captionStack">
+        {visibleLines.map((line) => (
+          <CaptionLine key={line.id} line={line} showSource={showSource} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CaptionLine({ line, showSource }: { line: CaptionLineModel; showSource: boolean }) {
+  const latestPatch = line.patches.at(-1);
+
+  return (
+    <article className={`captionLine state-${line.state}`}>
+      {showSource ? <p className="sourceText">{line.sourceText}</p> : null}
+      <p className="targetText">{line.targetText}</p>
+      <div className="lineMeta">
+        <span>{captionStateLabel(line.state)}</span>
+        <span>{formatTime(line.startedAtMs)} - {formatTime(line.endedAtMs ?? line.startedAtMs)}</span>
+        {latestPatch ? (
+          <span className="patchChip">
+            修订：{latestPatch.prev || "插入"} → {latestPatch.next || "删除"}
+          </span>
+        ) : null}
+      </div>
+    </article>
+  );
+}
+
+function ContextRail({ lines, mode }: { lines: CaptionLineModel[]; mode: WorkstationMode }) {
+  return (
+    <aside className="contextRail" data-mode={mode}>
+      <PanelTitle title="上下文" subtitle="源文 / 术语 / 笔记" />
+      <section className="railSection">
+        <h2>源文流</h2>
+        {lines.slice(-3).map((line) => (
+          <p className="sourceSnippet" key={line.id}>
+            {line.sourceText}
+          </p>
+        ))}
+      </section>
+      <section className="railSection">
+        <h2>术语表</h2>
+        <div className="termList">
+          {glossaryTerms.map((term) => (
+            <div className="termItem" key={term.source}>
+              <strong>{term.source}</strong>
+              <span>{term.target}</span>
+              <p>{term.note}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="railSection">
+        <h2>笔记</h2>
+        {noteCards.map((note) => (
+          <article className="noteCard" key={note.id}>
+            <span>{formatTime(note.atMs)}</span>
+            <strong>{note.title}</strong>
+            <p>{note.body}</p>
+          </article>
+        ))}
+      </section>
+    </aside>
+  );
+}
+
+function HistoryTimeline({ lines }: { lines: CaptionLineModel[] }) {
+  return (
+    <section className="historyTimeline" aria-label="历史时间线">
+      {lines.map((line) => (
+        <button className={`timelineItem state-${line.state}`} key={line.id}>
+          <span>{formatTime(line.startedAtMs)}</span>
+          <strong>{line.targetText}</strong>
+        </button>
+      ))}
+    </section>
+  );
+}
+
+function CompactOverlay({
+  activeLine,
+  mode
+}: {
+  activeLine?: CaptionLineModel;
+  mode: WorkstationMode;
+}) {
+  if (mode !== "compact" || !activeLine) {
+    return null;
+  }
+
+  return (
+    <aside className="compactOverlay">
+      <span>{captionStateLabel(activeLine.state)}</span>
+      <strong>{activeLine.targetText}</strong>
+    </aside>
+  );
+}
+
+function PanelTitle({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="panelTitle">
+      <p>{subtitle}</p>
+      <h2>{title}</h2>
+    </div>
+  );
+}
+
+function captionStateLabel(state: CaptionLineModel["state"]) {
+  const labels: Record<CaptionLineModel["state"], string> = {
+    interim: "识别中",
+    stable: "已稳定",
+    revised: "已修订",
+    locked: "已锁定"
+  };
+  return labels[state];
+}
+
+function formatTime(ms: number) {
+  const seconds = Math.floor(ms / 1000);
+  const tenths = Math.floor((ms % 1000) / 100);
+  return `${seconds}.${tenths}s`;
 }

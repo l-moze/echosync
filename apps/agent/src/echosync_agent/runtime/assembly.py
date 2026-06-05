@@ -17,14 +17,23 @@ logger = logging.getLogger(__name__)
 
 def build_demo_pipeline(
     settings: Settings | None = None,
+    caption_event_bus: object | None = None,
 ) -> tuple[RealtimeInterpretationPipeline, InMemoryEventBus]:
     """用供应商适配器组装管道。
 
     原则：依赖倒置。只有装配层知道具体供应商。
+
+    caption_event_bus: 可选的字幕事件推送中枢（CaptionEventHub），
+    用于向 Desktop 端实时推送字幕事件。
     """
 
     resolved = settings or Settings.from_env()
     event_bus = InMemoryEventBus()
+
+    # 订阅事件总线，推送事件到 Desktop
+    if caption_event_bus is not None:
+        _subscribe_caption_pusher(event_bus, caption_event_bus)
+
     glossary = _load_glossary(resolved)
     pipeline = RealtimeInterpretationPipeline(
         transcriber=_build_transcriber(resolved),
@@ -35,6 +44,21 @@ def build_demo_pipeline(
         glossary=glossary,
     )
     return pipeline, event_bus
+
+
+def _subscribe_caption_pusher(event_bus: InMemoryEventBus, caption_event_bus: object) -> None:
+    """将事件总线的字幕事件转发到 WebSocket 推送中枢。"""
+
+    async def _push(event_type: str, payload: object) -> None:
+        await caption_event_bus.publish(event_type, payload)  # type: ignore[attr-defined]
+
+    for event_type in (
+        "transcript.partial",
+        "translation.partial",
+        "translation.patch",
+        "segment.commit",
+    ):
+        event_bus.subscribe(event_type, _push)
 
 
 def _build_transcriber(settings: Settings):

@@ -12,6 +12,7 @@ describe("字幕弹窗分层交互状态机", () => {
 
     expect(state.layer).toBe("default");
     expect(state.pointerMode).toBe("pass_through");
+    expect(state.fallbackAwake).toBe(false);
   });
 
   it("快速划过不会唤醒 Hover 控制", () => {
@@ -113,6 +114,72 @@ describe("字幕弹窗分层交互状态机", () => {
     expect(awake.layer).toBe("controls");
     expect(awake.pointerMode).toBe("interactive");
     expect(awake.fallbackAwake).toBe(true);
+  });
+
+  it("兜底唤醒后离开字幕区会回到默认穿透态", () => {
+    const awake = reduceOverlayInteraction(createInitialOverlayInteractionState(), { type: "fallback.wake" });
+    const leaving = reduceOverlayInteraction(awake, { type: "pointer.left", atMs: 5000 });
+    const collapsed = reduceOverlayInteraction(leaving, { type: "collapse.timer.elapsed", atMs: 5400 });
+
+    expect(collapsed.layer).toBe("default");
+    expect(collapsed.pointerMode).toBe("pass_through");
+    expect(collapsed.fallbackAwake).toBe(false);
+  });
+
+  it("打开样式设置后保持可交互，不因离开字幕条而收起", () => {
+    const settings = reduceOverlayInteraction(createInitialOverlayInteractionState(), {
+      type: "settings.opened"
+    });
+    const left = reduceOverlayInteraction(settings, {
+      type: "pointer.left",
+      atMs: 2000
+    });
+    const elapsed = reduceOverlayInteraction(left, {
+      type: "collapse.timer.elapsed",
+      atMs: 2600
+    });
+
+    expect(settings.layer).toBe("settings");
+    expect(settings.pointerMode).toBe("interactive");
+    expect(elapsed.layer).toBe("settings");
+    expect(elapsed.pointerMode).toBe("interactive");
+  });
+
+  it("关闭样式设置后回到轻控制态", () => {
+    const controls = reduceOverlayInteraction(
+      {
+        ...createInitialOverlayInteractionState(),
+        layer: "settings",
+        pointerMode: "interactive"
+      },
+      {
+        type: "settings.closed"
+      }
+    );
+
+    expect(controls.layer).toBe("controls");
+    expect(controls.pointerMode).toBe("interactive");
+  });
+
+  it("样式设置打开后忽略后续 hover timer，不退回轻控制态", () => {
+    const entered = reduceOverlayInteraction(
+      {
+        ...createInitialOverlayInteractionState(),
+        layer: "settings",
+        pointerMode: "interactive"
+      },
+      {
+        type: "pointer.entered",
+        atMs: 3000
+      }
+    );
+    const elapsed = reduceOverlayInteraction(entered, {
+      type: "hover.timer.elapsed",
+      atMs: 3300
+    });
+
+    expect(elapsed.layer).toBe("settings");
+    expect(elapsed.pointerMode).toBe("interactive");
   });
 
   it("修订高亮在 2 秒后进入衰减", () => {

@@ -31,7 +31,13 @@ from echosync_agent.services.translation.terminology import (
 
 
 def _make_entry(source: str, target: str, **kwargs) -> GlossaryEntry:
-    defaults = dict(category="", priority=0, case_sensitive=False, match_mode="auto", constraint="required")
+    defaults = dict(
+        category="",
+        priority=0,
+        case_sensitive=False,
+        match_mode="auto",
+        constraint="required",
+    )
     defaults.update(kwargs)
     return GlossaryEntry(source=source, target=target, **defaults)
 
@@ -71,7 +77,8 @@ def test_word_boundary_case_insensitive() -> None:
 
     assert len(matcher.match("Kernel is fast", max_terms=12)) == 1
     assert len(matcher.match("KERNEL panic", max_terms=12)) == 1
-    assert len(matcher.match("kernels are fast", max_terms=12)) == 0  # word boundary: "kernels" has 's' after
+    # word boundary: "kernels" has 's' after
+    assert len(matcher.match("kernels are fast", max_terms=12)) == 0
 
 
 def test_word_boundary_case_sensitive() -> None:
@@ -180,7 +187,10 @@ def test_overlap_dedupe_openai_api() -> None:
 
 def test_max_terms_limit() -> None:
     """最多返回 max_terms 条。"""
-    entries = tuple(_make_entry(f"term{i}", f"译{i}", match_mode="word", priority=i) for i in range(20))
+    entries = tuple(
+        _make_entry(f"term{i}", f"译{i}", match_mode="word", priority=i)
+        for i in range(20)
+    )
     matcher = RegexGlossaryMatcher(entries)
 
     text = " ".join(f"term{i}" for i in range(20))
@@ -391,21 +401,46 @@ def test_pipeline_emits_translation_and_commit_events() -> None:
 
 
 async def _assert_pipeline_emits_translation_and_commit_events() -> None:
-    pipeline, event_bus = build_demo_pipeline()
+    pipeline, event_bus = build_demo_pipeline(_mock_settings())
 
     await pipeline.run(_frames())
 
     event_types = [event_type for event_type, _ in event_bus.events]
     assert event_types == [
-        "translation.partial",
+        "transcript.partial",
         "translation.partial",
         "translation.partial",
         "segment.commit",
     ]
+    assert event_bus.events[0][1]["source_text"] == "Vector database latency matters."
     assert event_bus.events[0][1]["target_text"] == ""
+    assert event_bus.events[1][1]["source_text"] == "Vector database latency matters."
     assert event_bus.events[1][1]["target_text"] == "[zh]"
-    assert event_bus.events[2][1]["target_text"].startswith("[zh]")
+    assert event_bus.events[2][1]["target_text"].startswith("[zh] Vector")
     assert event_bus.events[3][1]["final"] is True
+
+
+def _mock_settings() -> Settings:
+    return Settings(
+        asr_provider="mock",
+        translator_provider="mock",
+        tts_provider="disabled",
+        target_lang="zh-CN",
+        funasr_model="paraformer-zh-streaming",
+        funasr_device="auto",
+        funasr_chunk_ms=600,
+        asr_server_port=8765,
+        deepseek_api_key="",
+        deepseek_base_url="https://api.deepseek.com/v1",
+        deepseek_model="deepseek-chat",
+        edge_tts_voice="zh-CN-XiaoxiaoNeural",
+        mistral_api_key="",
+        voxtral_model="voxtral-mini-transcribe-realtime-2602",
+        voxtral_target_delay_ms=1000,
+        glossary_enabled=False,
+        glossary_domain="",
+        glossary_terms_dir="",
+    )
 
 
 # ── Empty glossary pipeline ──────────────────────────────
@@ -619,7 +654,9 @@ def test_current_overlap_window_filtering() -> None:
 
     glossary = Glossary.from_dict({"LiveKit": "LiveKit"})
 
-    # 模拟流式窗口：prefix = "LiveKit is used for media transport", current = "and the subtitle renders"
+    # 模拟流式窗口：
+    # prefix = "LiveKit is used for media transport"
+    # current = "and the subtitle renders"
     prefix = "LiveKit is used for media transport"
     current = "and the subtitle renders"
     source_window = f"{prefix} {current}".strip()

@@ -1,0 +1,850 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>声幕｜悬浮同传 UI Prototype</title>
+  <style>
+    :root {
+      --bg: #06070a;
+      --ink: #f7f8fb;
+      --ink-2: rgba(247, 248, 251, .76);
+      --muted: rgba(247, 248, 251, .48);
+      --panel: rgba(8, 9, 12, .72);
+      --panel-strong: rgba(8, 9, 12, .88);
+      --line: rgba(255,255,255,.13);
+      --line-soft: rgba(255,255,255,.075);
+      --mint: #8fe6d2;
+      --blue: #8cb2ff;
+      --violet: #bda7ff;
+      --amber: #ffd284;
+      --red: #ff8a8a;
+      --radius: 30px;
+      --shadow: 0 28px 90px rgba(0,0,0,.42);
+      --blur: blur(28px) saturate(1.25);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "SF Pro Display", "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #050608;
+      color: var(--ink);
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 18% 18%, rgba(91, 146, 255, .18), transparent 28%),
+        radial-gradient(circle at 82% 18%, rgba(143, 230, 210, .16), transparent 24%),
+        #050608;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .stage {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background:
+        linear-gradient(180deg, rgba(5,8,12,.1), rgba(5,8,12,.8)),
+        url("data:image/svg+xml,%3Csvg width='1600' height='900' viewBox='0 0 1600 900' xmlns='http://www.w3.org/2000/svg'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0' x2='0' y1='0' y2='1'%3E%3Cstop stop-color='%239ec9ff'/%3E%3Cstop offset='.52' stop-color='%23dce9f4'/%3E%3Cstop offset='1' stop-color='%23e5d1a8'/%3E%3C/linearGradient%3E%3ClinearGradient id='sea' x1='0' x2='1'%3E%3Cstop stop-color='%23186a86'/%3E%3Cstop offset='1' stop-color='%2339a7c6'/%3E%3C/linearGradient%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='table' tableValues='0 .05'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3C/defs%3E%3Crect width='1600' height='900' fill='url(%23sky)'/%3E%3Cpath d='M0 530 C180 480 270 560 420 520 C590 475 720 515 890 488 C1100 455 1270 520 1600 470 L1600 900 L0 900Z' fill='url(%23sea)' opacity='.88'/%3E%3Cpath d='M0 520 C150 475 330 465 500 520 C680 578 800 515 980 510 C1200 500 1330 545 1600 505' stroke='white' stroke-opacity='.42' stroke-width='8' fill='none'/%3E%3Cpath d='M0 618 C210 570 330 610 520 590 C730 565 820 615 1030 580 C1260 540 1420 590 1600 565 L1600 900 L0 900Z' fill='%23e7c990'/%3E%3Cpath d='M0 330 C180 300 250 350 390 310 C510 275 650 295 820 330 L0 500Z' fill='%2332462e' opacity='.8'/%3E%3Cpath d='M1170 320 C1240 285 1305 320 1370 300 C1460 270 1520 305 1600 275 L1600 470 C1510 510 1420 465 1330 488 C1250 508 1200 470 1140 495Z' fill='%23262c2f' opacity='.85'/%3E%3Crect width='1600' height='900' filter='url(%23grain)' opacity='.25'/%3E%3C/svg%3E");
+      background-size: cover;
+      background-position: center;
+    }
+
+    .stage::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 45% 38%, rgba(255,255,255,.15), transparent 16%),
+        linear-gradient(180deg, rgba(0,0,0,.05), rgba(0,0,0,.34) 70%, rgba(0,0,0,.62));
+      pointer-events: none;
+    }
+
+    .stage::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+      background-size: 4px 4px;
+      opacity: .12;
+      mix-blend-mode: soft-light;
+      pointer-events: none;
+    }
+
+    .top-float {
+      position: absolute;
+      left: 50%;
+      top: 28px;
+      transform: translateX(-50%);
+      width: min(1060px, calc(100vw - 72px));
+      height: 88px;
+      border-radius: 24px;
+      padding: 0 22px;
+      background: rgba(5, 6, 8, .86);
+      border: 1px solid rgba(255,255,255,.09);
+      box-shadow: 0 18px 80px rgba(0,0,0,.44);
+      backdrop-filter: blur(24px) saturate(1.2);
+      display: grid;
+      grid-template-columns: 220px 1fr 260px;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 13px;
+      background:
+        radial-gradient(circle at 32% 28%, rgba(255,255,255,.75), transparent 21%),
+        conic-gradient(from 230deg, var(--mint), var(--blue), var(--violet), var(--mint));
+      box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 12px 32px rgba(143,230,210,.22);
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 780;
+      letter-spacing: -.04em;
+    }
+
+    .brand-sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .mode-center {
+      justify-self: center;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .chip {
+      height: 34px;
+      border: 0;
+      border-radius: 999px;
+      padding: 0 14px;
+      color: rgba(255,255,255,.78);
+      background: rgba(255,255,255,.12);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.055);
+      font-size: 13px;
+      font-weight: 720;
+      cursor: pointer;
+      transition: transform .18s ease, background .18s ease, color .18s ease;
+    }
+
+    .chip:hover {
+      transform: translateY(-1px);
+      background: rgba(255,255,255,.17);
+      color: white;
+    }
+
+    .chip.active {
+      color: #07100f;
+      background: linear-gradient(135deg, var(--mint), var(--blue));
+      box-shadow: 0 12px 28px rgba(143,230,210,.18);
+    }
+
+    .top-actions {
+      justify-self: end;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .round {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 999px;
+      color: rgba(255,255,255,.78);
+      background: rgba(255,255,255,.12);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.06);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      transition: .18s ease;
+    }
+
+    .round:hover {
+      color: white;
+      background: rgba(255,255,255,.18);
+      transform: translateY(-1px);
+    }
+
+    .round.active {
+      color: #07100f;
+      background: linear-gradient(135deg, var(--mint), var(--blue));
+    }
+
+    .subtitle-card {
+      position: absolute;
+      left: 50%;
+      bottom: 78px;
+      transform: translateX(-50%);
+      width: min(960px, calc(100vw - 160px));
+      min-height: 180px;
+      padding: 30px 36px 26px;
+      border-radius: 24px;
+      background: rgba(28, 28, 30, .48);
+      border: 1px solid rgba(255,255,255,.16);
+      box-shadow: 0 24px 90px rgba(0,0,0,.32);
+      backdrop-filter: blur(22px) saturate(1.12);
+      z-index: 8;
+      cursor: pointer;
+      transition: transform .24s ease, background .24s ease, border-color .24s ease;
+    }
+
+    .subtitle-card:hover {
+      transform: translateX(-50%) translateY(-4px);
+      background: rgba(24, 24, 28, .56);
+      border-color: rgba(255,255,255,.24);
+    }
+
+    .source-line {
+      font-size: clamp(20px, 2.3vw, 30px);
+      line-height: 1.38;
+      font-weight: 650;
+      letter-spacing: -.025em;
+      color: rgba(255,255,255,.94);
+      text-shadow: 0 2px 20px rgba(0,0,0,.28);
+    }
+
+    .target-line {
+      margin-top: 16px;
+      font-size: clamp(18px, 2vw, 25px);
+      line-height: 1.55;
+      font-weight: 620;
+      color: rgba(255,255,255,.68);
+      text-shadow: 0 2px 20px rgba(0,0,0,.28);
+    }
+
+    .subtitle-meta {
+      margin-top: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: rgba(255,255,255,.46);
+      font-size: 12px;
+      font-weight: 720;
+    }
+
+    .state {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 26px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: rgba(143,230,210,.10);
+      color: var(--mint);
+      box-shadow: inset 0 0 0 1px rgba(143,230,210,.25);
+    }
+
+    .pulse {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 18px currentColor;
+      animation: pulse 1.4s ease infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(.9); opacity: .55; }
+      50% { transform: scale(1.25); opacity: 1; }
+    }
+
+    .mini-dock {
+      position: absolute;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      height: 40px;
+      padding: 0 8px;
+      border-radius: 999px;
+      background: rgba(5,6,8,.58);
+      border: 1px solid rgba(255,255,255,.12);
+      backdrop-filter: blur(18px);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      z-index: 9;
+    }
+
+    .dock-btn {
+      height: 30px;
+      min-width: 30px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(255,255,255,.65);
+      padding: 0 11px;
+      font-size: 12px;
+      font-weight: 730;
+      cursor: pointer;
+    }
+
+    .dock-btn:hover,
+    .dock-btn.active {
+      background: rgba(255,255,255,.14);
+      color: white;
+    }
+
+    .drawer {
+      position: absolute;
+      top: 136px;
+      right: 38px;
+      width: 430px;
+      max-height: calc(100vh - 206px);
+      border-radius: 30px;
+      background: rgba(9, 10, 14, .82);
+      border: 1px solid rgba(255,255,255,.12);
+      box-shadow: 0 30px 100px rgba(0,0,0,.46);
+      backdrop-filter: blur(30px) saturate(1.2);
+      z-index: 12;
+      overflow: hidden;
+      transform: translateX(28px) scale(.98);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .24s ease, transform .24s cubic-bezier(.2,.8,.2,1);
+    }
+
+    .drawer.open {
+      transform: none;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .drawer-head {
+      height: 74px;
+      padding: 20px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+
+    .drawer-title {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: -.035em;
+    }
+
+    .drawer-sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .drawer-body {
+      padding: 18px;
+      overflow-y: auto;
+      max-height: calc(100vh - 280px);
+    }
+
+    .panel-block {
+      border-radius: 22px;
+      padding: 16px;
+      background: rgba(255,255,255,.055);
+      border: 1px solid rgba(255,255,255,.08);
+      margin-bottom: 14px;
+    }
+
+    .panel-label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 780;
+      margin-bottom: 12px;
+    }
+
+    .mode-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .mode-card {
+      min-height: 86px;
+      border: 0;
+      border-radius: 18px;
+      padding: 14px;
+      text-align: left;
+      color: white;
+      background: rgba(255,255,255,.06);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+      cursor: pointer;
+      transition: .2s ease;
+    }
+
+    .mode-card:hover,
+    .mode-card.active {
+      transform: translateY(-2px);
+      background: rgba(143,230,210,.10);
+      box-shadow: inset 0 0 0 1px rgba(143,230,210,.34);
+    }
+
+    .mode-name {
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .mode-desc {
+      color: rgba(255,255,255,.55);
+      font-size: 12px;
+      line-height: 1.45;
+      font-weight: 600;
+    }
+
+    .term {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      min-height: 38px;
+      color: rgba(255,255,255,.74);
+      font-size: 13px;
+      border-bottom: 1px solid rgba(255,255,255,.07);
+    }
+
+    .term:last-child {
+      border-bottom: 0;
+    }
+
+    .term b {
+      color: white;
+    }
+
+    .term span {
+      color: var(--mint);
+      font-weight: 760;
+    }
+
+    .revision {
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(255, 210, 132, .08);
+      border: 1px solid rgba(255, 210, 132, .18);
+      color: rgba(255,255,255,.78);
+      font-size: 13px;
+      line-height: 1.6;
+      font-weight: 620;
+    }
+
+    .revision b {
+      color: var(--amber);
+    }
+
+    .bottom-sheet {
+      position: absolute;
+      left: 50%;
+      bottom: 70px;
+      transform: translateX(-50%) translateY(22px) scale(.985);
+      width: min(1080px, calc(100vw - 88px));
+      height: 320px;
+      border-radius: 30px;
+      background: rgba(8, 9, 12, .84);
+      border: 1px solid rgba(255,255,255,.13);
+      box-shadow: 0 30px 110px rgba(0,0,0,.48);
+      backdrop-filter: blur(32px) saturate(1.2);
+      z-index: 11;
+      opacity: 0;
+      pointer-events: none;
+      overflow: hidden;
+      transition: opacity .24s ease, transform .24s cubic-bezier(.2,.8,.2,1);
+    }
+
+    .bottom-sheet.open {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(-50%);
+    }
+
+    .sheet-layout {
+      display: grid;
+      grid-template-columns: 340px 1fr 280px;
+      gap: 1px;
+      height: 100%;
+      background: rgba(255,255,255,.08);
+    }
+
+    .sheet-col {
+      background: rgba(8,9,12,.74);
+      padding: 22px;
+      overflow: hidden;
+    }
+
+    .transcript-row {
+      padding: 13px 0;
+      border-bottom: 1px solid rgba(255,255,255,.075);
+    }
+
+    .transcript-time {
+      color: var(--mint);
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .transcript-en {
+      color: rgba(255,255,255,.52);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-bottom: 5px;
+    }
+
+    .transcript-cn {
+      color: rgba(255,255,255,.84);
+      font-size: 14px;
+      font-weight: 720;
+      line-height: 1.45;
+    }
+
+    .slider {
+      width: 100%;
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.12);
+      position: relative;
+      margin-top: 14px;
+    }
+
+    .slider::before {
+      content: "";
+      position: absolute;
+      inset: 0 42% 0 0;
+      background: linear-gradient(90deg, var(--mint), var(--blue));
+      border-radius: inherit;
+    }
+
+    .switch {
+      width: 46px;
+      height: 26px;
+      border-radius: 99px;
+      background: rgba(143,230,210,.18);
+      box-shadow: inset 0 0 0 1px rgba(143,230,210,.28);
+      position: relative;
+    }
+
+    .switch::after {
+      content: "";
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--mint);
+      position: absolute;
+      right: 3px;
+      top: 3px;
+      box-shadow: 0 0 18px rgba(143,230,210,.45);
+    }
+
+    .click-hint {
+      position: absolute;
+      left: 50%;
+      bottom: 278px;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,.55);
+      font-size: 12px;
+      font-weight: 680;
+      letter-spacing: .02em;
+      z-index: 9;
+      animation: hint 2.4s ease infinite;
+      pointer-events: none;
+    }
+
+    @keyframes hint {
+      0%, 100% { opacity: .38; transform: translateX(-50%) translateY(0); }
+      50% { opacity: .8; transform: translateX(-50%) translateY(-4px); }
+    }
+
+    @media (max-width: 900px) {
+      .top-float {
+        grid-template-columns: 1fr;
+        height: auto;
+        padding: 16px;
+        gap: 14px;
+      }
+      .mode-center, .top-actions {
+        justify-self: start;
+      }
+      .subtitle-card {
+        width: calc(100vw - 42px);
+        bottom: 86px;
+      }
+      .drawer {
+        left: 22px;
+        right: 22px;
+        width: auto;
+      }
+      .bottom-sheet {
+        width: calc(100vw - 42px);
+        height: 420px;
+      }
+      .sheet-layout {
+        grid-template-columns: 1fr;
+        overflow: auto;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="stage">
+    <section class="top-float">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div>
+          <div class="brand-title">声幕</div>
+          <div class="brand-sub">AI 悬浮同声传译</div>
+        </div>
+      </div>
+
+      <div class="mode-center">
+        <button class="chip active" data-mode="general">通用模型</button>
+        <button class="chip" data-mode="tech">技术分享</button>
+        <button class="chip" data-mode="course">网课精修</button>
+        <button class="chip" data-mode="meeting">国际会议</button>
+      </div>
+
+      <div class="top-actions">
+        <button class="round" title="麦克风">●</button>
+        <button class="round active" title="字幕">字</button>
+        <button class="round" id="panelBtn" title="打开面板">≡</button>
+        <button class="round" title="最小化">—</button>
+        <button class="round" title="关闭">×</button>
+      </div>
+    </section>
+
+    <section class="subtitle-card" id="subtitleCard">
+      <div class="source-line" id="sourceLine">
+        you can understand. So watch the whole thing and comment down below if you could understand me or not.
+      </div>
+      <div class="target-line" id="targetLine">
+        这将是我以本地速度发言的 8 分钟。我很想知道你能理解多少，所以请看完整段内容，并在下面评论你是否能理解我。
+      </div>
+      <div class="subtitle-meta">
+        <span class="state"><i class="pulse"></i><span id="stateText">Stable · 局部修正已开启</span></span>
+        <span>延迟 2.8s · 准确率 96.4%</span>
+      </div>
+    </section>
+
+    <div class="click-hint">点击字幕或右上角面板按钮，展开术语 / 修正 / 转写</div>
+
+    <nav class="mini-dock">
+      <button class="dock-btn active" id="subtitleBtn">字幕</button>
+      <button class="dock-btn" id="sheetBtn">转写</button>
+      <button class="dock-btn">术语</button>
+      <button class="dock-btn">总结</button>
+    </nav>
+
+    <aside class="drawer" id="drawer">
+      <div class="drawer-head">
+        <div>
+          <div class="drawer-title">同传控制面板</div>
+          <div class="drawer-sub">场景、术语、修正策略</div>
+        </div>
+        <button class="round" id="closeDrawer">×</button>
+      </div>
+
+      <div class="drawer-body">
+        <div class="panel-block">
+          <div class="panel-label">场景模式</div>
+          <div class="mode-grid">
+            <button class="mode-card active" data-preset="general">
+              <div class="mode-name">通用模型</div>
+              <div class="mode-desc">低延迟，适合普通演讲与视频。</div>
+            </button>
+            <button class="mode-card" data-preset="tech">
+              <div class="mode-name">技术分享</div>
+              <div class="mode-desc">术语优先，Agent / RAG 保持一致。</div>
+            </button>
+            <button class="mode-card" data-preset="course">
+              <div class="mode-name">网课精修</div>
+              <div class="mode-desc">允许 Look-ahead，生成学习笔记。</div>
+            </button>
+            <button class="mode-card" data-preset="meeting">
+              <div class="mode-name">国际会议</div>
+              <div class="mode-desc">多人发言，正式语气，议题分段。</div>
+            </button>
+          </div>
+        </div>
+
+        <div class="panel-block">
+          <div class="panel-label">显示设置</div>
+          <div class="term"><b>双语字幕</b><div class="switch"></div></div>
+          <div class="term"><b>字体大小</b><span>大</span></div>
+          <div class="slider"></div>
+          <div class="term" style="margin-top:14px"><b>字幕透明度</b><span>48%</span></div>
+          <div class="slider"></div>
+        </div>
+
+        <div class="panel-block">
+          <div class="panel-label">术语表</div>
+          <div class="term"><b>Agent</b><span>智能体</span></div>
+          <div class="term"><b>RAG</b><span>检索增强生成</span></div>
+          <div class="term"><b>latency</b><span>延迟</span></div>
+          <div class="term"><b>tool call</b><span>工具调用</span></div>
+        </div>
+
+        <div class="panel-block">
+          <div class="panel-label">最近修正</div>
+          <div class="revision">
+            <b>自动修正：</b><br/>
+            “代理可以处理计划” → “智能体可以处理规划”<br/>
+            原因：当前处于技术分享场景，Agent 统一译为智能体。
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="bottom-sheet" id="bottomSheet">
+      <div class="sheet-layout">
+        <div class="sheet-col">
+          <div class="drawer-title">实时转写</div>
+          <div class="drawer-sub">Interim → Stable → Revised → Locked</div>
+          <div class="transcript-row">
+            <div class="transcript-time">00:01:22 · LOCKED</div>
+            <div class="transcript-en">Before we dive into the demo, let me define latency.</div>
+            <div class="transcript-cn">在进入演示前，我们先定义延迟。</div>
+          </div>
+          <div class="transcript-row">
+            <div class="transcript-time">00:01:48 · REVISED</div>
+            <div class="transcript-en">Agents are not just proxies. They coordinate actions.</div>
+            <div class="transcript-cn">智能体不只是代理，它们会协调多步行动。</div>
+          </div>
+          <div class="transcript-row">
+            <div class="transcript-time">00:02:06 · STABLE</div>
+            <div class="transcript-en">We use agents to handle planning and tool calls.</div>
+            <div class="transcript-cn">我们使用智能体处理规划与工具调用。</div>
+          </div>
+        </div>
+
+        <div class="sheet-col">
+          <div class="drawer-title">智能总结</div>
+          <div class="drawer-sub">根据最近 90 秒内容生成</div>
+          <div class="panel-block" style="margin-top:18px">
+            <div class="panel-label">本段重点</div>
+            <div style="line-height:1.8;color:rgba(255,255,255,.78);font-size:14px">
+              本段主要讨论同声传译系统中的低延迟与稳定性权衡。系统采用悬浮字幕呈现核心信息，并通过局部修正窗口避免字幕大幅闪烁。
+            </div>
+          </div>
+          <div class="panel-block">
+            <div class="panel-label">可操作建议</div>
+            <div style="line-height:1.8;color:rgba(255,255,255,.78);font-size:14px">
+              技术分享模式下建议开启术语统一；网课模式下建议开启 Look-ahead 与课后总结。
+            </div>
+          </div>
+        </div>
+
+        <div class="sheet-col">
+          <div class="drawer-title">输出</div>
+          <div class="drawer-sub">字幕、笔记、导出</div>
+          <div class="panel-block" style="margin-top:18px">
+            <div class="term"><b>字幕样式</b><span>沉浸浮层</span></div>
+            <div class="term"><b>修正策略</b><span>最近 2 句</span></div>
+            <div class="term"><b>延迟策略</b><span>平衡</span></div>
+          </div>
+          <button class="chip active" style="width:100%;height:42px;margin-top:10px">导出双语笔记</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const drawer = document.getElementById('drawer');
+    const bottomSheet = document.getElementById('bottomSheet');
+    const panelBtn = document.getElementById('panelBtn');
+    const closeDrawer = document.getElementById('closeDrawer');
+    const subtitleCard = document.getElementById('subtitleCard');
+    const sheetBtn = document.getElementById('sheetBtn');
+    const subtitleBtn = document.getElementById('subtitleBtn');
+    const sourceLine = document.getElementById('sourceLine');
+    const targetLine = document.getElementById('targetLine');
+    const stateText = document.getElementById('stateText');
+
+    function toggleDrawer() {
+      drawer.classList.toggle('open');
+      panelBtn.classList.toggle('active', drawer.classList.contains('open'));
+    }
+
+    function toggleSheet() {
+      bottomSheet.classList.toggle('open');
+      sheetBtn.classList.toggle('active', bottomSheet.classList.contains('open'));
+    }
+
+    panelBtn.addEventListener('click', toggleDrawer);
+    closeDrawer.addEventListener('click', toggleDrawer);
+    subtitleCard.addEventListener('click', toggleSheet);
+    sheetBtn.addEventListener('click', toggleSheet);
+    subtitleBtn.addEventListener('click', () => {
+      bottomSheet.classList.remove('open');
+      sheetBtn.classList.remove('active');
+    });
+
+    const presets = {
+      general: {
+        source: 'you can understand. So watch the whole thing and comment down below if you could understand me or not.',
+        target: '这将是我以本地速度发言的 8 分钟。我很想知道你能理解多少，所以请看完整段内容，并在下面评论你是否能理解我。',
+        state: 'Stable · 局部修正已开启'
+      },
+      tech: {
+        source: 'We use agents to handle planning, tool calls, and latency-sensitive decisions in real time.',
+        target: '我们使用智能体实时处理规划、工具调用以及对延迟敏感的决策。',
+        state: 'Revised · Agent 已统一为智能体'
+      },
+      course: {
+        source: 'When the video is not live, the system can look ahead and refine the current paragraph.',
+        target: '当视频不是直播内容时，系统可以预读后文，并精修当前段落。',
+        state: 'Course · Look-ahead 45s'
+      },
+      meeting: {
+        source: 'The next speaker will summarize the roadmap and align the team on delivery risks.',
+        target: '下一位发言人将总结路线图，并就交付风险与团队达成一致。',
+        state: 'Meeting · 议题分段已开启'
+      }
+    };
+
+    function applyPreset(key) {
+      const p = presets[key] || presets.general;
+      sourceLine.textContent = p.source;
+      targetLine.textContent = p.target;
+      stateText.textContent = p.state;
+
+      document.querySelectorAll('[data-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === key);
+      });
+      document.querySelectorAll('[data-preset]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.preset === key);
+      });
+    }
+
+    document.querySelectorAll('[data-mode]').forEach(btn => {
+      btn.addEventListener('click', () => applyPreset(btn.dataset.mode));
+    });
+
+    document.querySelectorAll('[data-preset]').forEach(btn => {
+      btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+    });
+  </script>
+</body>
+</html>

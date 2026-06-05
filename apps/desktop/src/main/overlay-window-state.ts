@@ -4,6 +4,13 @@ export type OverlayWindowState = {
   ignoreMouse: boolean;
 };
 
+export type OverlayUiLayer = "default" | "controls" | "settings" | "pinned";
+
+export type OverlayWindowLayout = {
+  width: number;
+  height: number;
+};
+
 export type OverlayWindowEvent =
   | { type: "overlay.visible"; visible: boolean }
   | { type: "overlay.locked"; locked: boolean }
@@ -29,4 +36,20 @@ export function reduceOverlayWindowState(state: OverlayWindowState, event: Overl
   }
 
   return state;
+}
+
+export function selectOverlayWindowLayout(layer: OverlayUiLayer): OverlayWindowLayout {
+  if (layer === "pinned") {
+    return { width: 1120, height: 520 };
+  }
+
+  if (layer === "controls" || layer === "settings") {
+    return { width: 1120, height: 390 };
+  }
+
+  return { width: 1120, height: 142 };
+}
+
+export function selectSubtitleStyleWindowLayout(): OverlayWindowLayout {
+  return { width: 360, height: 420 };
 }

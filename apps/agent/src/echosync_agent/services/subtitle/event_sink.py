@@ -19,6 +19,12 @@ class EventSubtitleSink(SubtitleSink):
         self.event_bus = event_bus
 
     async def publish_translation(self, segment: TranslationSegment) -> None:
+        if segment.target_text == "":
+            await self.event_bus.publish(
+                "transcript.partial",
+                _payload("transcript.partial", segment),
+            )
+            return
         await self.event_bus.publish(
             "translation.partial",
             _payload("translation.partial", segment),

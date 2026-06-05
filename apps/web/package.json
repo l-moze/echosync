@@ -2,6 +2,7 @@
   "name": "@echosync/web",
   "private": true,
   "version": "0.1.0",
+  "description": "EchoSync 同声传译工作台。",
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",

@@ -143,7 +143,11 @@ class _AsrWebSocketSession:
             end_ms=int(message.get("end_ms", 0)),
             source_lang=str(message.get("source_lang", self.source_lang)),
             source_kind=AudioSourceKind(str(message.get("source_kind", self.source_kind))),
-            device_id=self.device_id if message.get("device_id") is None else str(message["device_id"]),
+            device_id=(
+                self.device_id
+                if message.get("device_id") is None
+                else str(message["device_id"])
+            ),
             is_final=bool(message.get("is_final", False)),
         )
 

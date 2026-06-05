@@ -31,6 +31,30 @@ def test_asr_factory_builds_funasr_transcriber() -> None:
     assert transcriber.config.chunk_ms == 600
 
 
+@pytest.mark.parametrize(
+    ("latency_mode", "expected_chunk_ms"),
+    [
+        ("low_latency", 320),
+        ("balanced", 600),
+        ("accuracy", 900),
+    ],
+)
+def test_asr_factory_maps_funasr_latency_mode_to_inference_window(
+    latency_mode: str,
+    expected_chunk_ms: int,
+) -> None:
+    transcriber = build_transcriber_from_settings(
+        _settings(
+            asr_provider="funasr",
+            asr_latency_mode=latency_mode,
+            funasr_chunk_ms=600,
+        )
+    )
+
+    assert isinstance(transcriber, FunAsrTranscriber)
+    assert transcriber.config.chunk_ms == expected_chunk_ms
+
+
 def test_asr_factory_builds_voxtral_transcriber() -> None:
     transcriber = build_transcriber_from_settings(
         _settings(

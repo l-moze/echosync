@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata = {
   title: "EchoSync",
-  description: "AI simultaneous interpretation workspace"
+  description: "AI 同声传译工作台"
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,4 +1,5 @@
 import type { DesktopAudioSourceId } from "./audio-source-catalog";
+import type { CaptionLine } from "./caption-store";
 
 export type RuntimePlatform = "windows" | "mac" | "web";
 export type SessionLifecycle = "idle" | "active" | "finished";
@@ -7,6 +8,7 @@ export type AudioActivityState = "silent" | "active" | "clipping" | "device_miss
 export type AutoScrollMode = "following" | "locked";
 export type TermSyncStatus = "syncing" | "active" | "failed";
 export type ConfidenceDisplaySource = "native_confidence" | "derived_stability" | "unavailable";
+export type StartupPhase = "idle" | "preparing_audio" | "connecting_agent" | "opening_overlay" | "recovering" | "failed";
 
 export type SessionSummary = {
   durationMs: number;
@@ -21,6 +23,14 @@ export type SessionTerm = {
   source: string;
   target: string;
   status: TermSyncStatus;
+};
+
+export type StartupUiState = {
+  phase: StartupPhase;
+  startedAtMs: number | null;
+  message: string;
+  detail: string | null;
+  canCancel: boolean;
 };
 
 export type SessionUiState = {
@@ -53,6 +63,17 @@ export type SessionUiState = {
     enabled: boolean;
     dirty: boolean;
   };
+  startup: StartupUiState;
+};
+
+export type SessionHealthMetrics = {
+  inputSource: string;
+  firstCaptionLatencyMs: number | null;
+  stableCommitLatencyMs: number | null;
+  patchCount: number;
+  audioLevel: AudioActivityState;
+  confidenceLabel: string;
+  averageStability: number | null;
 };
 
 export type SessionUiEvent =
@@ -62,6 +83,13 @@ export type SessionUiEvent =
   | { type: "session.started" }
   | { type: "session.finished"; summary: SessionSummary }
   | { type: "session.reset" }
+  | { type: "session.return_home" }
+  | { type: "startup.started"; phase: Exclude<StartupPhase, "idle" | "failed">; atMs: number }
+  | { type: "startup.phase.changed"; phase: Exclude<StartupPhase, "idle" | "failed">; atMs: number }
+  | { type: "startup.slow_tick"; atMs: number }
+  | { type: "startup.failed"; message: string }
+  | { type: "startup.completed" }
+  | { type: "startup.cancelled" }
   | { type: "transcript.user.scrolled_up" }
   | { type: "transcript.user.follow_current" }
   | { type: "transcript.user.selected_text" }
@@ -109,7 +137,8 @@ export function createInitialSessionUiState({ platform }: { platform: RuntimePla
     preExportEdit: {
       enabled: false,
       dirty: false
-    }
+    },
+    startup: createIdleStartupState()
   };
 }
 
@@ -157,7 +186,8 @@ export function reduceSessionUiState(state: SessionUiState, event: SessionUiEven
       lifecycle: "active",
       activePanel: "transcript-monitor",
       controlBarVisible: true,
-      autoScroll: { mode: "following", newContentAvailable: false }
+      autoScroll: { mode: "following", newContentAvailable: false },
+      startup: createIdleStartupState()
     };
   }
 
@@ -174,6 +204,65 @@ export function reduceSessionUiState(state: SessionUiState, event: SessionUiEven
 
   if (event.type === "session.reset") {
     return createInitialSessionUiState({ platform: state.selectedSourceId === "windows-system" ? "windows" : "web" });
+  }
+
+  if (event.type === "session.return_home") {
+    return createInitialSessionUiState({ platform: state.selectedSourceId === "windows-system" ? "windows" : "web" });
+  }
+
+  if (event.type === "startup.started") {
+    return {
+      ...state,
+      startup: createStartupState(event.phase, event.atMs)
+    };
+  }
+
+  if (event.type === "startup.phase.changed") {
+    return {
+      ...state,
+      startup: {
+        ...createStartupState(event.phase, state.startup.startedAtMs ?? event.atMs),
+        canCancel: state.startup.canCancel
+      }
+    };
+  }
+
+  if (event.type === "startup.slow_tick") {
+    if (state.startup.phase === "idle") {
+      return state;
+    }
+    const elapsedMs = state.startup.startedAtMs === null ? 0 : event.atMs - state.startup.startedAtMs;
+    if (elapsedMs < 8000) {
+      return state;
+    }
+    return {
+      ...state,
+      startup: {
+        ...state.startup,
+        canCancel: true,
+        detail: "启动时间较长，请检查 Agent 服务或网络连接。"
+      }
+    };
+  }
+
+  if (event.type === "startup.failed") {
+    return {
+      ...state,
+      startup: {
+        phase: "failed",
+        startedAtMs: state.startup.startedAtMs,
+        message: "启动失败",
+        detail: event.message,
+        canCancel: true
+      }
+    };
+  }
+
+  if (event.type === "startup.completed" || event.type === "startup.cancelled") {
+    return {
+      ...state,
+      startup: createIdleStartupState()
+    };
   }
 
   if (event.type === "transcript.user.scrolled_up" || event.type === "transcript.user.selected_text") {
@@ -236,4 +325,69 @@ export function reduceSessionUiState(state: SessionUiState, event: SessionUiEven
   }
 
   return state;
+}
+
+function createIdleStartupState(): StartupUiState {
+  return {
+    phase: "idle",
+    startedAtMs: null,
+    message: "",
+    detail: null,
+    canCancel: false
+  };
+}
+
+function createStartupState(phase: Exclude<StartupPhase, "idle" | "failed">, startedAtMs: number): StartupUiState {
+  const copy = startupCopy[phase];
+  return {
+    phase,
+    startedAtMs,
+    message: copy.message,
+    detail: copy.detail,
+    canCancel: false
+  };
+}
+
+const startupCopy: Record<Exclude<StartupPhase, "idle" | "failed">, { message: string; detail: string }> = {
+  preparing_audio: {
+    message: "正在准备音频输入...",
+    detail: "请保持视频或会议正在播放。"
+  },
+  connecting_agent: {
+    message: "正在连接 Agent...",
+    detail: "首次启动可能需要模型预热。"
+  },
+  opening_overlay: {
+    message: "正在打开字幕弹窗...",
+    detail: "字幕窗会置顶显示在当前应用上方。"
+  },
+  recovering: {
+    message: "正在恢复连接...",
+    detail: "网络或模型响应较慢，系统正在重试。"
+  }
+};
+
+export function selectSessionHealthMetrics({
+  lines,
+  sessionUi,
+  sourceLabel
+}: {
+  lines: CaptionLine[];
+  sessionUi: SessionUiState;
+  sourceLabel: string;
+}): SessionHealthMetrics {
+  const firstLine = lines.find((line) => line.targetText || line.sourceText);
+  const committedLines = lines.filter((line) => line.state === "locked");
+  const firstCommittedLine = committedLines[0];
+  const stabilityTotal = lines.reduce((sum, line) => sum + line.stability, 0);
+
+  return {
+    inputSource: sourceLabel,
+    firstCaptionLatencyMs: firstLine?.startMs ?? null,
+    stableCommitLatencyMs: firstCommittedLine ? Math.max(0, firstCommittedLine.endMs - firstCommittedLine.startMs) : null,
+    patchCount: lines.reduce((sum, line) => sum + line.patchCount, 0),
+    audioLevel: sessionUi.audioActivity,
+    confidenceLabel: sessionUi.confidence.label,
+    averageStability: lines.length > 0 ? Number((stabilityTotal / lines.length).toFixed(2)) : null
+  };
 }

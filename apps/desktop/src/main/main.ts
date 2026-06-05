@@ -1,12 +1,25 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, screen, session } from "electron";
 import path from "node:path";
+import WebSocket from "ws";
 
 import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSourceId } from "../shared/audio-source-catalog";
 import type { DesktopCaptureSnapshot } from "../shared/desktop-api";
 import type { RealtimeEvent } from "../shared/realtime-events";
-import { reduceOverlayWindowState, type OverlayWindowState } from "./overlay-window-state";
+import { defaultSubtitleStyle, reduceSubtitleStyleState, type SubtitleStyleState } from "../shared/subtitle-style-state";
+import { createCaptionEventBuffer } from "./caption-event-buffer";
+import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
+import {
+  reduceOverlayWindowState,
+  selectOverlayWindowLayout,
+  selectSubtitleStyleWindowLayout,
+  type OverlayUiLayer,
+  type OverlayWindowState
+} from "./overlay-window-state";
 import { CONTROL_WINDOW_PRESET, OVERLAY_WINDOW_PRESET, type DesktopWindowPreset } from "./window-config";
+import { sendToWindow, sendToWindows } from "./window-ipc";
 import { shouldCreateWindowAtStartup, shouldRevealWindowOnReady } from "./window-lifecycle";
+
+const CAPTION_WS_URL = process.env.ECHOSYNC_CAPTION_WS_URL || "ws://127.0.0.1:8766/v1/caption/events";
 
 const rendererUrl = process.env.ECHOSYNC_DESKTOP_RENDERER_URL;
 const preloadPath = path.join(__dirname, "../preload/index.js");
@@ -14,7 +27,9 @@ const rendererFile = path.join(__dirname, "../renderer/index.html");
 
 let controlWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
+let subtitleStyleWindow: BrowserWindow | null = null;
 let overlayVisible = false;
+let subtitleStyleVisible = false;
 let overlayWindowState: OverlayWindowState = {
   visible: false,
   pinned: false,
@@ -25,8 +40,11 @@ let captureSnapshot: DesktopCaptureSnapshot = {
   state: "idle",
   message: "等待选择音频源。"
 };
+let subtitleStyle: SubtitleStyleState = defaultSubtitleStyle;
+let captionWs: WebSocket | null = null;
+const captionEventBuffer = createCaptionEventBuffer();
 
-function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay") {
+function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay" | "subtitle-style") {
   const window = new BrowserWindow({
     title: preset.title,
     width: preset.width,
@@ -50,11 +68,17 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay") 
   window.center();
 
   window.webContents.on("did-finish-load", () => {
-    window.webContents.send("audio:state", captureSnapshot);
+    sendToWindow(window, "audio:state", captureSnapshot);
+    sendToWindow(window, "subtitle-style:state", subtitleStyle);
+    for (const event of captionEventBuffer.snapshot()) {
+      sendToWindow(window, "caption:event", event);
+    }
   });
 
   window.once("ready-to-show", () => {
-    if (!shouldRevealWindowOnReady(preset, role === "overlay" && overlayVisible)) {
+    const userRequestedVisible =
+      (role === "overlay" && overlayVisible) || (role === "subtitle-style" && subtitleStyleVisible);
+    if (!shouldRevealWindowOnReady(preset, userRequestedVisible)) {
       window.hide();
       return;
     }
@@ -64,7 +88,7 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay") 
     }
   });
 
-  if (role === "overlay") {
+  if (role === "overlay" || role === "subtitle-style") {
     window.setAlwaysOnTop(true, "screen-saver");
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   }
@@ -73,7 +97,7 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay") 
   return window;
 }
 
-async function loadRenderer(window: BrowserWindow, role: "control" | "overlay") {
+async function loadRenderer(window: BrowserWindow, role: "control" | "overlay" | "subtitle-style") {
   if (rendererUrl) {
     await window.loadURL(`${rendererUrl}/#/${role}`);
     return;
@@ -83,33 +107,91 @@ async function loadRenderer(window: BrowserWindow, role: "control" | "overlay") 
 }
 
 function broadcastCaptionEvent(event: RealtimeEvent) {
-  controlWindow?.webContents.send("caption:event", event);
-  overlayWindow?.webContents.send("caption:event", event);
+  captionEventBuffer.push(event);
+  sendToWindows([controlWindow, overlayWindow], "caption:event", event);
 }
 
 function broadcastCaptureState(snapshot: DesktopCaptureSnapshot) {
-  controlWindow?.webContents.send("audio:state", snapshot);
-  overlayWindow?.webContents.send("audio:state", snapshot);
+  sendToWindows([controlWindow, overlayWindow], "audio:state", snapshot);
+}
+
+function broadcastSubtitleStyle(style: SubtitleStyleState) {
+  sendToWindows([controlWindow, overlayWindow, subtitleStyleWindow], "subtitle-style:state", style);
 }
 
 function ensureOverlayWindow() {
   if (!overlayWindow || overlayWindow.isDestroyed()) {
     overlayWindow = createWindow(OVERLAY_WINDOW_PRESET, "overlay");
+    overlayWindow.on("closed", () => {
+      overlayWindow = null;
+    });
   }
   return overlayWindow;
 }
 
+function ensureSubtitleStyleWindow() {
+  if (!subtitleStyleWindow || subtitleStyleWindow.isDestroyed()) {
+    const layout = selectSubtitleStyleWindowLayout();
+    subtitleStyleWindow = createWindow(
+      {
+        title: "EchoSync 字幕样式",
+        width: layout.width,
+        height: layout.height,
+        minWidth: layout.width,
+        minHeight: 340,
+        show: false,
+        frame: false,
+        transparent: true,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: true,
+        backgroundColor: "#00000000"
+      },
+      "subtitle-style"
+    );
+    subtitleStyleWindow.on("closed", () => {
+      subtitleStyleWindow = null;
+    });
+  }
+  return subtitleStyleWindow;
+}
+
+function placeSubtitleStyleWindowNearOverlay(window: BrowserWindow) {
+  const overlay = ensureOverlayWindow();
+  const overlayBounds = overlay.getBounds();
+  const windowBounds = window.getBounds();
+  const workArea = screen.getDisplayMatching(overlayBounds).workArea;
+  const margin = 18;
+  const nextX = clamp(overlayBounds.x + overlayBounds.width - windowBounds.width, workArea.x + margin, workArea.x + workArea.width - windowBounds.width - margin);
+  const nextY = clamp(overlayBounds.y + 52, workArea.y + margin, workArea.y + workArea.height - windowBounds.height - margin);
+  window.setPosition(nextX, nextY, false);
+}
+
+function applyOverlayLayout(layer: OverlayUiLayer) {
+  const window = ensureOverlayWindow();
+  const layout = selectOverlayWindowLayout(layer);
+  const [currentWidth, currentHeight] = window.getSize();
+  if (currentWidth === layout.width && currentHeight === layout.height) {
+    return window;
+  }
+
+  window.setSize(layout.width, layout.height, false);
+  return window;
+}
+
 function registerIpc() {
   ipcMain.handle("audio:list-sources", () => DESKTOP_AUDIO_SOURCES);
+  ipcMain.handle("audio:get-state", () => captureSnapshot);
 
-  ipcMain.handle("audio:start", (_event, sourceId: DesktopAudioSourceId) => {
+  ipcMain.handle("audio:start", (_event, sourceId: DesktopAudioSourceId, sessionId?: string) => {
     const source = DESKTOP_AUDIO_SOURCES.find((item) => item.id === sourceId);
     captureSnapshot = {
       sourceId,
       state: source ? "listening" : "error",
       message: source
-        ? `${source.label} 已进入采集准备态。真实 PCM 会由后续采集适配器送入 Agent。`
-        : "未知音频源。"
+        ? `${source.label} 已开始采集，PCM 正在送入 Agent 实时链路。`
+        : "未知音频源。",
+      sessionId: source ? sessionId : undefined
     };
     broadcastCaptureState(captureSnapshot);
     return captureSnapshot;
@@ -119,7 +201,8 @@ function registerIpc() {
     captureSnapshot = {
       ...captureSnapshot,
       state: "stopped",
-      message: "音频采集已停止。"
+      message: "音频采集已停止。",
+      sessionId: undefined
     };
     broadcastCaptureState(captureSnapshot);
     return captureSnapshot;
@@ -148,17 +231,35 @@ function registerIpc() {
 
   ipcMain.handle("overlay:pinned", (_event, pinned: boolean) => {
     overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.pinned", pinned });
+    applyOverlayLayout(pinned ? "pinned" : "default");
     overlayWindow?.setIgnoreMouseEvents(overlayWindowState.ignoreMouse, { forward: true });
-    overlayWindow?.webContents.send("overlay:wake-controls");
+    sendToWindow(overlayWindow, "overlay:wake-controls");
+  });
+
+  ipcMain.handle("overlay:layer", (_event, layer: OverlayUiLayer) => {
+    applyOverlayLayout(layer);
+  });
+
+  ipcMain.handle("subtitle-style:visible", (_event, visible: boolean) => {
+    subtitleStyleVisible = visible;
+    if (!visible) {
+      subtitleStyleWindow?.hide();
+      return;
+    }
+    const window = ensureSubtitleStyleWindow();
+    placeSubtitleStyleWindowNearOverlay(window);
+    window.showInactive();
+    window.moveTop();
+  });
+
+  ipcMain.handle("subtitle-style:update", (_event, patch: Partial<SubtitleStyleState>) => {
+    subtitleStyle = reduceSubtitleStyleState(subtitleStyle, patch);
+    broadcastSubtitleStyle(subtitleStyle);
+    return subtitleStyle;
   });
 
   ipcMain.handle("overlay:wake-controls", () => {
-    overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.wake_controls" });
-    const window = ensureOverlayWindow();
-    window.setIgnoreMouseEvents(false);
-    window.showInactive();
-    window.moveTop();
-    window.webContents.send("overlay:wake-controls");
+    wakeOverlayControls();
   });
 
   ipcMain.handle("overlay:recenter", () => {
@@ -166,6 +267,10 @@ function registerIpc() {
     window.center();
     window.showInactive();
     window.moveTop();
+  });
+
+  ipcMain.handle("clipboard:copy-text", (_event, text: string) => {
+    clipboard.writeText(text);
   });
 
   ipcMain.handle("window:minimize", (event) => {
@@ -189,22 +294,106 @@ function registerIpc() {
   });
 }
 
+function wakeOverlayControls() {
+  overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.wake_controls" });
+  const window = applyOverlayLayout("controls");
+  window.setIgnoreMouseEvents(false);
+  window.showInactive();
+  window.moveTop();
+  sendToWindow(window, "overlay:wake-controls");
+}
+
 app.whenReady().then(() => {
   registerIpc();
 
-  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
-    callback({ video: undefined, audio: "loopback" });
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    void resolveDisplayMediaVideoSource(request.frame, request.videoRequested).then((videoSource) => {
+      callback(createLoopbackDisplayMediaStreams(videoSource, request.videoRequested));
+    });
+  });
+
+  // 连接 Agent 字幕事件 WebSocket
+  connectCaptionWs();
+
+  globalShortcut.register("Alt+Shift+S", () => {
+    wakeOverlayControls();
   });
 
   if (shouldCreateWindowAtStartup(CONTROL_WINDOW_PRESET)) {
     controlWindow = createWindow(CONTROL_WINDOW_PRESET, "control");
+    controlWindow.on("closed", () => {
+      controlWindow = null;
+    });
   }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       controlWindow = createWindow(CONTROL_WINDOW_PRESET, "control");
+      controlWindow.on("closed", () => {
+        controlWindow = null;
+      });
     }
   });
+});
+
+function connectCaptionWs() {
+  try {
+    captionWs = new WebSocket(CAPTION_WS_URL);
+
+    captionWs.on("open", () => {
+      console.log("[caption-ws] 已连接到 Agent:", CAPTION_WS_URL);
+    });
+
+    captionWs.on("message", (data: WebSocket.Data) => {
+      try {
+        const event = JSON.parse(data.toString()) as RealtimeEvent;
+        broadcastCaptionEvent(event);
+      } catch (err) {
+        console.error("[caption-ws] 解析事件失败:", err);
+      }
+    });
+
+    captionWs.on("close", (code, reason) => {
+      console.log("[caption-ws] 已断开，code:", code, "reason:", reason.toString());
+      // 5 秒后重连
+      setTimeout(connectCaptionWs, 5000);
+    });
+
+    captionWs.on("error", (err: Error) => {
+      console.warn("[caption-ws] 连接错误:", err.message);
+    });
+  } catch (err) {
+    console.warn("[caption-ws] 无法创建连接:", err);
+  }
+}
+
+async function resolveDisplayMediaVideoSource(frame: Electron.WebFrameMain | null, videoRequested: boolean) {
+  if (!videoRequested) {
+    return null;
+  }
+
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: 1, height: 1 }
+    });
+    return sources[0] ?? frame;
+  } catch (error) {
+    console.warn("[display-media] 获取屏幕占位视频源失败，尝试使用当前 frame:", error);
+    return frame;
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  if (max < min) {
+    return min;
+  }
+  return Math.min(Math.max(value, min), max);
+}
+
+app.on("before-quit", () => {
+  globalShortcut.unregisterAll();
+  captionWs?.close();
 });
 
 app.on("window-all-closed", () => {

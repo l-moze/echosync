@@ -37,7 +37,13 @@ from echosync_agent.services.translation.terminology import (
 
 
 def _entry(source: str, target: str, **kw) -> GlossaryEntry:
-    d = dict(category="", priority=0, case_sensitive=False, match_mode="auto", constraint="required")
+    d = dict(
+        category="",
+        priority=0,
+        case_sensitive=False,
+        match_mode="auto",
+        constraint="required",
+    )
     d.update(kw)
     return GlossaryEntry(source=source, target=target, **d)
 
@@ -372,7 +378,10 @@ with TemporaryDirectory() as td:
 
 print(f"\n{BOLD}11. apply_glossary_replacements{RESET}")
 
-result11 = apply_glossary_replacements("The API and GPU are fast", {"API": "接口", "GPU": "图形处理器"})
+result11 = apply_glossary_replacements(
+    "The API and GPU are fast",
+    {"API": "接口", "GPU": "图形处理器"},
+)
 check("多个术语正确替换", "接口" in result11 and "图形处理器" in result11)
 
 result11b = apply_glossary_replacements("CAPITAL API", {"API": "接口"})

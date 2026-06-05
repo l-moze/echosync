@@ -295,7 +295,11 @@ class AhoCorasickGlossaryMatcher:
                     if start < 0:
                         continue
 
-                    mode = entry.match_mode if entry.match_mode != "auto" else _infer_match_mode(entry)
+                    mode = (
+                        entry.match_mode
+                        if entry.match_mode != "auto"
+                        else _infer_match_mode(entry)
+                    )
                     if not _check_boundaries(original_text, start, end, mode):
                         continue
 
@@ -352,10 +356,7 @@ def _term_identity(entry: GlossaryEntry) -> str:
 
 def _overlaps_any(candidate: MatchedTerm, selected: list[MatchedTerm]) -> bool:
     """检查 candidate 的 span 是否与已选术语重叠。"""
-    for s in selected:
-        if candidate.start < s.end and candidate.end > s.start:
-            return True
-    return False
+    return any(candidate.start < s.end and candidate.end > s.start for s in selected)
 
 
 # ── Glossary ──────────────────────────────────────────────
@@ -411,7 +412,11 @@ class Glossary:
                     continue
 
                 aliases_raw = (row.get("aliases") or "").strip()
-                aliases = [a.strip() for a in aliases_raw.split("|") if a.strip()] if aliases_raw else []
+                aliases = (
+                    [a.strip() for a in aliases_raw.split("|") if a.strip()]
+                    if aliases_raw
+                    else []
+                )
 
                 category = (row.get("category") or "").strip()
                 try:

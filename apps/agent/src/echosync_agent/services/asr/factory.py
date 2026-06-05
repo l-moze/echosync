@@ -23,7 +23,10 @@ def build_transcriber_from_settings(settings: Settings) -> Transcriber:
             config=FunAsrStreamingConfig(
                 model=settings.funasr_model,
                 device=settings.funasr_device,
-                chunk_ms=settings.funasr_chunk_ms,
+                chunk_ms=_funasr_chunk_ms_for_latency_mode(
+                    base_chunk_ms=settings.funasr_chunk_ms,
+                    latency_mode=settings.asr_latency_mode,
+                ),
             )
         )
     if settings.asr_provider == "voxtral":
@@ -37,3 +40,11 @@ def build_transcriber_from_settings(settings: Settings) -> Transcriber:
             )
         )
     raise ValueError(f"不支持的 ASR 供应商：{settings.asr_provider}")
+
+
+def _funasr_chunk_ms_for_latency_mode(*, base_chunk_ms: int, latency_mode: str) -> int:
+    if latency_mode == "low_latency":
+        return max(240, min(base_chunk_ms, 320))
+    if latency_mode == "accuracy":
+        return max(base_chunk_ms, int(base_chunk_ms * 1.5))
+    return base_chunk_ms
