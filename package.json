@@ -1,0 +1,17 @@
+{
+  "name": "echosync",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI simultaneous interpretation assistant workspace.",
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev",
+    "lint:web": "npm --prefix apps/web run typecheck",
+    "typecheck:web": "npm --prefix apps/web run typecheck",
+    "test:agent": "cd apps/agent && python -m pytest",
+    "demo:agent": "cd apps/agent && python -m echosync_agent.main"
+  },
+  "engines": {
+    "node": ">=20",
+    "python": ">=3.11"
+  }
+}

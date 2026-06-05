@@ -2,11 +2,14 @@
 node_modules/
 .venv/
 venv/
+__pycache__/
 
 # Build output
 dist/
 build/
 out/
+.next/
+apps/web/app/
 
 # Logs
 *.log
@@ -21,3 +24,10 @@ out/
 Thumbs.db
 .vscode/
 .idea/
+
+# Test and tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.tsbuildinfo
+coverage/

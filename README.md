@@ -2,6 +2,16 @@
 
 面向单向音频流的 AI 同声传译助手。产品目标是帮助用户实时理解英语或其他外语的演讲、技术分享、会议以及在线课程内容，通过实时翻译提供流畅的中文理解体验。
 
+## 架构
+
+EchoSync 当前初始化为一个小型 monorepo：
+
+- `apps/web`：React/Vite 听译工作台，用于音频采集入口和字幕渲染。
+- `apps/agent`：Python 实时 Agent，用于 ASR、翻译、修正、字幕事件和可选 TTS。
+- `doc/architecture-mvp.md`：MVP 架构、模块边界与开发路线图。
+
+后端核心采用依赖倒置：管道依赖 `Transcriber`、`Translator`、`CorrectionEngine`、`SubtitleSink` 抽象接口，而不是依赖 FunASR、DeepSeek、edge-tts 或 LiveKit 的具体 SDK。
+
 ## 初始功能范围
 
 - 捕获或接收单向音频流输入
@@ -12,4 +22,4 @@
 
 ## 当前状态
 
-项目仓库已初始化，产品设计与技术实现仍在规划和开发阶段。
+项目仓库已初始化，并完成 React/Vite + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和 fake 链路测试骨架。
