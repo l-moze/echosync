@@ -5,6 +5,7 @@ from html import escape
 
 from echosync_agent.domain import CorrectionContext, TranscriptSegment, TranslationSegment
 from echosync_agent.interfaces import Translator
+from echosync_agent.services.realtime.text_emission_policy import DEFAULT_TEXT_EMISSION_POLICY
 
 
 class DeepSeekTranslator(Translator):
@@ -36,7 +37,8 @@ class DeepSeekTranslator(Translator):
             "For glossary terms marked required, use the target translation exactly. "
             "For glossary terms marked preferred, prefer the target translation when natural. "
             "Do not invent glossary terms that are not listed. "
-            "Return only the translated subtitle text. Do not include XML tags, explanations, or notes."
+            "Return only the translated subtitle text. "
+            "Do not include XML tags, explanations, or notes."
         )
 
         user = self._build_user_prompt(segment.text, context)
@@ -71,7 +73,8 @@ class DeepSeekTranslator(Translator):
             "For glossary terms marked required, use the target translation exactly. "
             "For glossary terms marked preferred, prefer the target translation when natural. "
             "Do not invent glossary terms that are not listed. "
-            "Return only the translated subtitle text. Do not include XML tags, explanations, or notes."
+            "Return only the translated subtitle text. "
+            "Do not include XML tags, explanations, or notes."
         )
         user = self._build_user_prompt(segment.text, context)
         client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
@@ -86,12 +89,27 @@ class DeepSeekTranslator(Translator):
         )
 
         target_text = ""
+        last_published_target = ""
         async for chunk in stream:
             delta = chunk.choices[0].delta.content or ""
             if not delta:
                 continue
             target_text += delta
-            yield self._build_segment(segment, target_text.strip())
+            stripped_target = target_text.strip()
+            if should_flush_streaming_target(
+                previous_text=last_published_target,
+                next_text=stripped_target,
+            ):
+                last_published_target = stripped_target
+                yield self._build_segment(segment, stripped_target)
+
+        final_target = target_text.strip()
+        if should_flush_streaming_target(
+            previous_text=last_published_target,
+            next_text=final_target,
+            is_final=True,
+        ) and final_target != last_published_target:
+            yield self._build_segment(segment, final_target)
 
         self._telemetry_glossary_missing(target_text.strip(), context)
 
@@ -175,3 +193,21 @@ def _xml_text(value: str) -> str:
 def _xml_attr(value: str) -> str:
     """XML 属性值转义（转义引号）。"""
     return escape(value, quote=True)
+
+
+def should_flush_streaming_target(
+    *,
+    previous_text: str,
+    next_text: str,
+    is_final: bool = False,
+) -> bool:
+    """判断流式译文是否值得发布给字幕层。
+
+    中文模型常按单字 token 返回；逐 token 发布会让字幕窗一字一刷。
+    这里按可见字符数和标点做轻量合帧，最终译文由 stream 结束时强制 flush。
+    """
+    return DEFAULT_TEXT_EMISSION_POLICY.should_emit_target(
+        previous_text=previous_text,
+        next_text=next_text,
+        is_final=is_final,
+    )

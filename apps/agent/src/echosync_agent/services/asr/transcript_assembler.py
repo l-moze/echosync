@@ -5,6 +5,10 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 
 from echosync_agent.domain import SegmentStatus, TranscriptSegment, new_segment_id
+from echosync_agent.services.realtime.text_emission_policy import (
+    DEFAULT_TEXT_EMISSION_POLICY,
+    TextEmissionPolicy,
+)
 
 
 class TranscriptAssembler:
@@ -16,23 +20,31 @@ class TranscriptAssembler:
 
     def __init__(
         self,
-        commit_punctuation: str = ".!?。！？",
+        commit_punctuation: str = ".!?。！？，；：",
         checkpoint_audio_ms: int = 1000,
+        max_segment_audio_ms: int = 3800,
+        max_segment_chars: int = 90,
+        emission_policy: TextEmissionPolicy | None = None,
     ) -> None:
         self.commit_punctuation = commit_punctuation
         self.checkpoint_audio_ms = checkpoint_audio_ms
+        self.max_segment_audio_ms = max_segment_audio_ms
+        self.max_segment_chars = max_segment_chars
+        self.emission_policy = emission_policy or DEFAULT_TEXT_EMISSION_POLICY
 
     async def stream(
         self,
         segments: AsyncIterator[TranscriptSegment],
     ) -> AsyncIterator[TranscriptSegment]:
         buffer: list[str] = []
+        current_text = ""
         first: TranscriptSegment | None = None
         last: TranscriptSegment | None = None
         last_delta_at = time.perf_counter()
         checkpoint_start_ms: int | None = None
         segment_id = new_segment_id()
         rev = 1
+        last_emitted_text = ""
 
         async for segment in segments:
             if not segment.text:
@@ -43,9 +55,12 @@ class TranscriptAssembler:
             last = segment
             last_delta_at = time.perf_counter()
             buffer.append(segment.text)
+            current_text = f"{current_text}{segment.text}".strip()
 
             should_commit = (
-                segment.status == SegmentStatus.COMMITTED or self._should_commit(segment.text)
+                segment.status == SegmentStatus.COMMITTED
+                or self._should_commit(segment.text)
+                or self._should_force_commit(current_text, first, last)
             )
             should_checkpoint = (
                 not should_commit
@@ -59,22 +74,39 @@ class TranscriptAssembler:
             elif should_checkpoint:
                 status = SegmentStatus.STABLE
 
-            yield self._build_segment(buffer, first, last, last_delta_at, segment_id, rev, status)
+            if status == SegmentStatus.PARTIAL and self.emission_policy.should_hold_source_partial(
+                current_text=current_text,
+                last_emitted_text=last_emitted_text,
+            ):
+                continue
+
+            yield self._build_segment(
+                current_text,
+                first,
+                last,
+                last_delta_at,
+                segment_id,
+                rev,
+                status,
+            )
+            last_emitted_text = current_text
             rev += 1
 
             if should_commit:
                 buffer = []
+                current_text = ""
                 first = None
                 last = None
                 checkpoint_start_ms = None
                 segment_id = new_segment_id()
                 rev = 1
+                last_emitted_text = ""
             elif should_checkpoint:
                 checkpoint_start_ms = segment.end_ms
 
         if buffer and first is not None and last is not None:
             yield self._build_segment(
-                buffer,
+                current_text,
                 first,
                 last,
                 last_delta_at,
@@ -86,9 +118,20 @@ class TranscriptAssembler:
     def _should_commit(self, text: str) -> bool:
         return text.rstrip().endswith(tuple(self.commit_punctuation))
 
+    def _should_force_commit(
+        self,
+        text: str,
+        first: TranscriptSegment,
+        last: TranscriptSegment,
+    ) -> bool:
+        return (
+            last.end_ms - first.start_ms >= self.max_segment_audio_ms
+            or len(text) >= self.max_segment_chars
+        )
+
     @staticmethod
     def _build_segment(
-        buffer: list[str],
+        text: str,
         first: TranscriptSegment,
         last: TranscriptSegment,
         last_delta_at: float,
@@ -103,7 +146,7 @@ class TranscriptAssembler:
             segment_id=segment_id,
             rev=rev,
             start_ms=first.start_ms,
-            text="".join(buffer).strip(),
+            text=text,
             status=status,
             stability=1.0 if status == SegmentStatus.COMMITTED else last.stability,
             metrics=metrics,
