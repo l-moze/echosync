@@ -42,6 +42,64 @@ describe("字幕弹窗分层交互状态机", () => {
     expect(interactive.pointerMode).toBe("interactive");
   });
 
+  it("进入轻控制态后离开不会立刻卸载控制面板", () => {
+    const interactive = reduceOverlayInteraction(
+      reduceOverlayInteraction(createInitialOverlayInteractionState(), {
+        type: "pointer.entered",
+        atMs: 1000
+      }),
+      {
+        type: "hover.timer.elapsed",
+        atMs: 1230
+      }
+    );
+    const leaving = reduceOverlayInteraction(interactive, {
+      type: "pointer.left",
+      atMs: 1300
+    });
+
+    expect(leaving.layer).toBe("controls");
+    expect(leaving.pointerMode).toBe("interactive");
+    expect(leaving.collapseStartedAtMs).toBe(1300);
+  });
+
+  it("离开轻控制态超过宽限时间后才回到默认态", () => {
+    const leaving = reduceOverlayInteraction(
+      {
+        ...createInitialOverlayInteractionState(),
+        layer: "controls",
+        pointerMode: "interactive",
+        collapseStartedAtMs: 1300
+      },
+      {
+        type: "collapse.timer.elapsed",
+        atMs: 1700
+      }
+    );
+
+    expect(leaving.layer).toBe("default");
+    expect(leaving.pointerMode).toBe("pass_through");
+  });
+
+  it("离开后重新进入控制面板会取消收起", () => {
+    const returned = reduceOverlayInteraction(
+      {
+        ...createInitialOverlayInteractionState(),
+        layer: "controls",
+        pointerMode: "interactive",
+        collapseStartedAtMs: 1300
+      },
+      {
+        type: "pointer.entered",
+        atMs: 1380
+      }
+    );
+
+    expect(returned.layer).toBe("controls");
+    expect(returned.pointerMode).toBe("interactive");
+    expect(returned.collapseStartedAtMs).toBeNull();
+  });
+
   it("Pin 后进入小型双语舞台并保持可交互", () => {
     const pinned = reduceOverlayInteraction(createInitialOverlayInteractionState(), { type: "pin.enabled" });
 

@@ -6,6 +6,8 @@ export type OverlayInteractionState = {
   pointerMode: OverlayPointerMode;
   hoverStartedAtMs: number | null;
   hoverIntentDelayMs: number;
+  collapseStartedAtMs: number | null;
+  collapseDelayMs: number;
   fallbackAwake: boolean;
   revisionHighlightedAtMs: number | null;
   revisionHighlightVisible: boolean;
@@ -13,8 +15,9 @@ export type OverlayInteractionState = {
 
 export type OverlayInteractionEvent =
   | { type: "pointer.entered"; atMs: number }
-  | { type: "pointer.left" }
+  | { type: "pointer.left"; atMs: number }
   | { type: "hover.timer.elapsed"; atMs: number }
+  | { type: "collapse.timer.elapsed"; atMs: number }
   | { type: "pin.enabled" }
   | { type: "pin.disabled" }
   | { type: "fallback.wake" }
@@ -42,6 +45,8 @@ export function createInitialOverlayInteractionState(): OverlayInteractionState 
     pointerMode: "pass_through",
     hoverStartedAtMs: null,
     hoverIntentDelayMs: 200,
+    collapseStartedAtMs: null,
+    collapseDelayMs: 320,
     fallbackAwake: false,
     revisionHighlightedAtMs: null,
     revisionHighlightVisible: false
@@ -56,7 +61,7 @@ export function reduceOverlayInteraction(
     if (state.layer === "pinned") {
       return state;
     }
-    return { ...state, hoverStartedAtMs: event.atMs };
+    return { ...state, hoverStartedAtMs: event.atMs, collapseStartedAtMs: null };
   }
 
   if (event.type === "hover.timer.elapsed") {
@@ -66,26 +71,39 @@ export function reduceOverlayInteraction(
     if (event.atMs - state.hoverStartedAtMs < state.hoverIntentDelayMs) {
       return state;
     }
-    return { ...state, layer: "controls", pointerMode: "interactive" };
+    return { ...state, layer: "controls", pointerMode: "interactive", collapseStartedAtMs: null };
   }
 
   if (event.type === "pointer.left") {
     if (state.layer === "pinned" || state.pointerMode === "dragging") {
       return state;
     }
+    if (state.layer === "controls") {
+      return { ...state, collapseStartedAtMs: event.atMs, fallbackAwake: false };
+    }
+    return { ...state, layer: "default", pointerMode: "pass_through", hoverStartedAtMs: null, collapseStartedAtMs: null, fallbackAwake: false };
+  }
+
+  if (event.type === "collapse.timer.elapsed") {
+    if (state.collapseStartedAtMs === null || state.layer === "pinned") {
+      return state;
+    }
+    if (event.atMs - state.collapseStartedAtMs < state.collapseDelayMs) {
+      return state;
+    }
     return { ...state, layer: "default", pointerMode: "pass_through", hoverStartedAtMs: null, fallbackAwake: false };
   }
 
   if (event.type === "pin.enabled") {
-    return { ...state, layer: "pinned", pointerMode: "interactive", hoverStartedAtMs: null };
+    return { ...state, layer: "pinned", pointerMode: "interactive", hoverStartedAtMs: null, collapseStartedAtMs: null };
   }
 
   if (event.type === "pin.disabled") {
-    return { ...state, layer: "default", pointerMode: "pass_through", fallbackAwake: false };
+    return { ...state, layer: "default", pointerMode: "pass_through", collapseStartedAtMs: null, fallbackAwake: false };
   }
 
   if (event.type === "fallback.wake") {
-    return { ...state, layer: "controls", pointerMode: "interactive", fallbackAwake: true };
+    return { ...state, layer: "controls", pointerMode: "interactive", collapseStartedAtMs: null, fallbackAwake: true };
   }
 
   if (event.type === "drag.started") {

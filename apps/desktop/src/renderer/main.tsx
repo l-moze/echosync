@@ -535,7 +535,11 @@ function OverlayWindow({
           dispatchOverlay({ type: "pointer.entered", atMs });
           window.setTimeout(() => dispatchOverlay({ type: "hover.timer.elapsed", atMs: Date.now() }), 220);
         }}
-        onMouseLeave={() => dispatchOverlay({ type: "pointer.left" })}
+        onMouseLeave={() => {
+          const atMs = Date.now();
+          dispatchOverlay({ type: "pointer.left", atMs });
+          window.setTimeout(() => dispatchOverlay({ type: "collapse.timer.elapsed", atMs: Date.now() }), 340);
+        }}
       >
         <div className="captionText">
           <p className="overlaySource">{activeLine?.sourceText ?? "Waiting for audio stream..."}</p>
