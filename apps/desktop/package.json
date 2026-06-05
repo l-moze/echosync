@@ -9,7 +9,7 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "dev": "npm run build:main && concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
-    "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env ECHOSYNC_DESKTOP_RENDERER_URL=http://127.0.0.1:5173 electron .",
+    "dev:electron": "wait-on http://127.0.0.1:6001 && cross-env ECHOSYNC_DESKTOP_RENDERER_URL=http://127.0.0.1:6001 electron .",
     "dev:renderer": "vite --host 127.0.0.1",
     "start": "electron .",
     "test": "vitest run --config vitest.config.ts",
