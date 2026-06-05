@@ -658,7 +658,7 @@ button:focus-visible {
 }
 
 .floatingCaption.layer-default {
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .floatingCaption.layer-controls,
