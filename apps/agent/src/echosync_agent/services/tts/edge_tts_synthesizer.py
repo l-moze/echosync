@@ -7,7 +7,7 @@ from echosync_agent.interfaces import TtsSynthesizer
 
 
 class EdgeTtsSynthesizer(TtsSynthesizer):
-    """Optional translated-audio adapter."""
+    """可选译文语音适配器。"""
 
     def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural") -> None:
         self.voice = voice

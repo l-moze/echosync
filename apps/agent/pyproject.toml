@@ -1,19 +1,33 @@
 [project]
 name = "echosync-agent"
 version = "0.1.0"
-description = "Realtime AI interpretation agent for EchoSync."
+description = "EchoSync 实时 AI 同传 Agent。"
 readme = "../../README.md"
 requires-python = ">=3.11"
 dependencies = [
   "edge-tts>=6.0",
+  "fastapi>=0.115",
+  "imageio-ffmpeg>=0.5",
   "livekit-agents[silero,turn-detector]>=1.4,<2.0",
   "openai>=1.0",
   "python-dotenv>=1.0",
+  "uvicorn[standard]>=0.30",
   "websocket-client>=1.8"
 ]
 
 [project.scripts]
 echosync-agent-demo = "echosync_agent.main:run"
+echosync-asr-demo = "echosync_agent.asr_demo:main"
+echosync-asr-server = "echosync_agent.transport.asr_websocket:run"
+
+[project.optional-dependencies]
+funasr = [
+  "funasr>=1.2",
+  "modelscope>=1.19"
+]
+voxtral = [
+  "mistralai[realtime]>=1.0"
+]
 
 [build-system]
 requires = ["hatchling"]

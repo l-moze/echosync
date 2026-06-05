@@ -9,17 +9,20 @@ from echosync_agent.interfaces import EventBus, SubtitleSink
 
 
 class EventSubtitleSink(SubtitleSink):
-    """Subtitle sink that appends events to an event bus.
+    """把字幕事件追加到事件总线的输出端。
 
-    Principle: observer/event-sourcing. UI data-channel, tests, and logs can observe the
-    same events without coupling the pipeline to any concrete transport.
+    原则：观察者模式和事件溯源。UI 数据通道、测试和日志可以观察同一批事件，
+    管道不需要耦合到任何具体传输。
     """
 
     def __init__(self, event_bus: EventBus) -> None:
         self.event_bus = event_bus
 
     async def publish_translation(self, segment: TranslationSegment) -> None:
-        await self.event_bus.publish("translation.partial", _payload("translation.partial", segment))
+        await self.event_bus.publish(
+            "translation.partial",
+            _payload("translation.partial", segment),
+        )
 
     async def publish_patch(self, patch: SubtitlePatch) -> None:
         await self.event_bus.publish("translation.patch", _payload("translation.patch", patch))

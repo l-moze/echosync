@@ -4,10 +4,10 @@ from echosync_agent.pipeline import RealtimeInterpretationPipeline
 
 
 class LiveKitAgentBridge:
-    """LiveKit integration boundary.
+    """LiveKit 集成边界。
 
-    The bridge will adapt LiveKit room audio frames into AudioFrame DTOs and publish subtitle
-    events through the room data channel. The interpretation pipeline remains transport-agnostic.
+    这个桥接层负责把 LiveKit 房间音频帧适配成 AudioFrame DTO，并通过房间数据通道
+    发布字幕事件。同传管道保持与传输层无关。
     """
 
     def __init__(self, pipeline: RealtimeInterpretationPipeline) -> None:
@@ -15,5 +15,5 @@ class LiveKitAgentBridge:
 
     async def run(self) -> None:
         raise NotImplementedError(
-            "LiveKit room wiring is scheduled for MVP Day 1 after credentials are available."
+            "LiveKit 房间接线预留到凭据可用后的 MVP Day 1。"
         )

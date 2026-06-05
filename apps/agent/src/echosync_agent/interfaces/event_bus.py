@@ -9,7 +9,7 @@ class EventHandler(Protocol):
 
 
 class EventBus(Protocol):
-    """Small observer interface for event-sourced subtitle state."""
+    """用于字幕事件溯源状态的小型观察者接口。"""
 
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         raise NotImplementedError

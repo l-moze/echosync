@@ -2,7 +2,7 @@
   "name": "echosync",
   "private": true,
   "version": "0.1.0",
-  "description": "AI simultaneous interpretation assistant workspace.",
+  "description": "AI 同声传译助手工作区。",
   "scripts": {
     "dev:web": "npm --prefix apps/web run dev",
     "dev:desktop": "npm --prefix apps/desktop run dev",

@@ -3,6 +3,7 @@ node_modules/
 .venv/
 venv/
 __pycache__/
+.cache/
 
 # Build output
 dist/
@@ -28,5 +29,7 @@ Thumbs.db
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.tmp/
+*.whl
 *.tsbuildinfo
 coverage/

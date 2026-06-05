@@ -30,6 +30,14 @@ async def _assert_pipeline_emits_translation_and_commit_events() -> None:
     await pipeline.run(_frames())
 
     event_types = [event_type for event_type, _ in event_bus.events]
-    assert event_types == ["translation.partial", "segment.commit"]
-    assert event_bus.events[0][1]["target_text"].startswith("[zh]")
-    assert event_bus.events[1][1]["final"] is True
+    assert event_types == [
+        "translation.partial",
+        "translation.partial",
+        "translation.partial",
+        "segment.commit",
+    ]
+    assert event_bus.events[0][1]["source_text"] == "Vector database latency matters."
+    assert event_bus.events[0][1]["target_text"] == ""
+    assert event_bus.events[1][1]["target_text"] == "[zh]"
+    assert event_bus.events[2][1]["target_text"].startswith("[zh] Vector")
+    assert event_bus.events[3][1]["final"] is True

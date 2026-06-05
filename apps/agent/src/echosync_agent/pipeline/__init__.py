@@ -1,3 +1,4 @@
+from echosync_agent.pipeline.engine_pipeline import EngineDrivenInterpretationPipeline
 from echosync_agent.pipeline.realtime_pipeline import RealtimeInterpretationPipeline
 
-__all__ = ["RealtimeInterpretationPipeline"]
+__all__ = ["EngineDrivenInterpretationPipeline", "RealtimeInterpretationPipeline"]

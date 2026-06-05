@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from echosync_agent.domain import CorrectionContext, TranscriptSegment, TranslationSegment
 from echosync_agent.interfaces import Translator
+from echosync_agent.services.translation.terminology import apply_glossary_replacements
 
 
 class MockTranslator(Translator):
-    """Predictable translator for contract tests and UI demos."""
+    """用于契约测试和 UI 演示的可预测翻译器。"""
 
     def __init__(self, target_lang: str = "zh-CN") -> None:
         self.target_lang = target_lang
@@ -15,8 +18,20 @@ class MockTranslator(Translator):
         segment: TranscriptSegment,
         context: CorrectionContext,
     ) -> TranslationSegment:
-        glossary_text = self._apply_glossary(segment.text, context.glossary)
+        glossary_text = apply_glossary_replacements(segment.text, context.glossary)
         target_text = f"[zh] {glossary_text}"
+        return self._build_segment(segment, target_text)
+
+    async def stream_translate(
+        self,
+        segment: TranscriptSegment,
+        context: CorrectionContext,
+    ) -> AsyncIterator[TranslationSegment]:
+        translation = await self.translate(segment, context)
+        yield self._build_segment(segment, "[zh]")
+        yield translation
+
+    def _build_segment(self, segment: TranscriptSegment, target_text: str) -> TranslationSegment:
         return TranslationSegment(
             session_id=segment.session_id,
             segment_id=segment.segment_id,
@@ -32,10 +47,3 @@ class MockTranslator(Translator):
             stability=segment.stability,
             speaker=segment.speaker,
         )
-
-    @staticmethod
-    def _apply_glossary(text: str, glossary: dict[str, str]) -> str:
-        result = text
-        for source, target in glossary.items():
-            result = result.replace(source, target)
-        return result

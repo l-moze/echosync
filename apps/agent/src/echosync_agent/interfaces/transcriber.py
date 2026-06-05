@@ -7,7 +7,7 @@ from echosync_agent.domain import AudioFrame, TranscriptSegment
 
 
 class Transcriber(Protocol):
-    """Streaming ASR boundary."""
+    """流式 ASR 边界。"""
 
     def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         raise NotImplementedError

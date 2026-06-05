@@ -7,7 +7,7 @@ from echosync_agent.interfaces import EventBus, EventHandler
 
 
 class InMemoryEventBus(EventBus):
-    """Tiny observer bus for MVP and tests."""
+    """用于 MVP 和测试的小型内存观察者总线。"""
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[EventHandler]] = defaultdict(list)

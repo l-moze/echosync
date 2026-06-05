@@ -6,7 +6,7 @@ from echosync_agent.domain import SegmentCommit, SubtitlePatch, TranslationSegme
 
 
 class SubtitleSink(Protocol):
-    """Output boundary for UI data-channel, WebSocket, logs, or tests."""
+    """面向 UI 数据通道、WebSocket、日志或测试的字幕输出边界。"""
 
     async def publish_translation(self, segment: TranslationSegment) -> None:
         raise NotImplementedError

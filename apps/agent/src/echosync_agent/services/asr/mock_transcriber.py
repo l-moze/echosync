@@ -7,10 +7,10 @@ from echosync_agent.interfaces import Transcriber
 
 
 class MockTranscriber(Transcriber):
-    """Deterministic transcriber for local pipeline tests.
+    """用于本地管道测试的确定性转写器。
 
-    It treats each frame as UTF-8 text. Real audio never enters this class; provider adapters
-    live beside it and satisfy the same Transcriber contract.
+    它把每个音频帧当作 UTF-8 文本处理。真实音频不会进入这个类；
+    真实供应商适配器与它并列，并满足同一个 Transcriber 契约。
     """
 
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:

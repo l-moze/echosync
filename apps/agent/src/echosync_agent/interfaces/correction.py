@@ -6,9 +6,9 @@ from echosync_agent.domain import CorrectionContext, SubtitlePatch, TranslationS
 
 
 class CorrectionEngine(Protocol):
-    """Revision policy boundary.
+    """修订策略边界。
 
-    New strategies can be added without changing translators or subtitle sinks.
+    新增修正策略时，不需要修改翻译器或字幕输出。
     """
 
     async def revise(

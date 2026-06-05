@@ -12,10 +12,10 @@ from echosync_agent.interfaces import CorrectionEngine
 
 
 class RevisionWindowCorrectionEngine(CorrectionEngine):
-    """Small-window correction placeholder.
+    """小窗口修正占位实现。
 
-    MVP behavior is intentionally conservative: only emit a patch when the same segment is
-    translated again with a newer revision. Contextual LLM correction is an extension point.
+    MVP 行为刻意保守：只有同一片段以更新版本再次翻译时才输出补丁。
+    基于上下文的 LLM 修正是后续扩展点。
     """
 
     async def revise(

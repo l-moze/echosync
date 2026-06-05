@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+import argparse
+
+from echosync_agent.asr_demo import build_arg_parser, build_transcriber
+from echosync_agent.services.asr.voxtral_transcriber import VoxtralRealtimeTranscriber
+
+
+def test_asr_demo_cli_accepts_media_and_latency_options() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "lecture.mp4",
+            "--provider",
+            "funasr",
+            "--chunk-ms",
+            "600",
+            "--device",
+            "cpu",
+            "--source-lang",
+            "zh",
+        ]
+    )
+
+    assert isinstance(parser, argparse.ArgumentParser)
+    assert args.media == "lecture.mp4"
+    assert args.provider == "funasr"
+    assert args.chunk_ms == 600
+    assert args.device == "cpu"
+    assert args.source_lang == "zh"
+
+
+def test_asr_demo_cli_defaults_to_auto_device() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(["lecture.mp4"])
+
+    assert args.device == "auto"
+    assert args.voxtral_delay_ms == 1000
+
+
+def test_asr_demo_cli_accepts_voxtral_options() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "lecture.mp4",
+            "--provider",
+            "voxtral",
+            "--model",
+            "voxtral-mini-transcribe-realtime-2602",
+            "--mistral-api-key",
+            "test-key",
+            "--voxtral-delay-ms",
+            "480",
+        ]
+    )
+
+    assert args.provider == "voxtral"
+    assert args.model == "voxtral-mini-transcribe-realtime-2602"
+    assert args.mistral_api_key == "test-key"
+    assert args.voxtral_delay_ms == 480
+
+
+def test_asr_demo_uses_voxtral_default_model_when_model_is_not_supplied() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "lecture.mp4",
+            "--provider",
+            "voxtral",
+            "--mistral-api-key",
+            "test-key",
+        ]
+    )
+
+    transcriber = build_transcriber(args)
+
+    assert isinstance(transcriber, VoxtralRealtimeTranscriber)
+    assert transcriber.config.model == "voxtral-mini-transcribe-realtime-2602"

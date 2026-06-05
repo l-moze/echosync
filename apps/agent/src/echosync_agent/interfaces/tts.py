@@ -7,7 +7,7 @@ from echosync_agent.domain import TranslationSegment
 
 
 class TtsSynthesizer(Protocol):
-    """Optional translated-audio boundary."""
+    """可选译文语音输出边界。"""
 
     def synthesize(self, segment: TranslationSegment) -> AsyncIterator[bytes]:
         raise NotImplementedError

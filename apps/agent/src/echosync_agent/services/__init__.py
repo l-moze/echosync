@@ -1,1 +1,1 @@
-"""Provider implementations for the abstract interfaces."""
+"""抽象接口的供应商实现。"""

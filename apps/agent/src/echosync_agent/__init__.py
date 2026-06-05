@@ -1,4 +1,4 @@
-"""EchoSync realtime interpretation agent."""
+"""EchoSync 实时同传 Agent。"""
 
 __all__ = ["__version__"]
 

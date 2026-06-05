@@ -1,1 +1,1 @@
-"""Realtime transport adapters."""
+"""实时传输适配器。"""

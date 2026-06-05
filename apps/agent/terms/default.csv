@@ -1,0 +1,9 @@
+source,target,aliases,category,case_sensitive,match_mode,priority,constraint
+Eevee,Eevee,"Evee,Evie",proper_noun,true,literal,10,required
+"100,000 subscribers",10万订阅者,"100K,one hundred thousand subscribers",channel,false,phrase,10,required
+native speed English,母语语速英语,native-speed English,learning,false,phrase,10,required
+listening comprehension,听力理解,comprehension,learning,false,phrase,10,required
+banter,玩笑式调侃,your banter,culture,false,word,10,required
+take the piss out of each other,互相开涮,take the piss,culture,false,phrase,10,required
+reality TV,真人秀,reality television,media,false,phrase,10,required
+[laughter],[笑声],laughter,subtitle,false,literal,10,required
