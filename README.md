@@ -24,6 +24,13 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和 fake 链路测试骨架。
 
+当前 Desktop UI 正在按 Stateful Hybrid 主页控制中心推进：
+
+- `Idle`：视频/网课默认开箱，起飞前音频电平校验。
+- `Active`：最近转写、健康度、术语快加和自动滚动锁。
+- `Finished`：会话复盘、导出前快速清理和最近记录。
+- 字幕弹窗采用 Layer A/B/C：默认穿透极简、Hover 轻控制、Pin 小型双语舞台。
+
 ## 本地开发
 
 - 推荐路径：`D:\code\echosync`，该目录位于 NTFS 分区，支持 Next/Node 构建所需的正常 `readlink` 行为。
