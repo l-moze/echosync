@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSource, type DesktopAudioSourceId } from "../shared/audio-source-catalog";
 import { applyRealtimeEvent, type CaptionLine } from "../shared/caption-store";
 import type { DesktopCaptureSnapshot } from "../shared/desktop-api";
+import { createInitialOverlayInteractionState, reduceOverlayInteraction, type OverlayInteractionEvent } from "../shared/overlay-interaction";
 import type { RealtimeEvent } from "../shared/realtime-events";
 import {
   createInitialSessionUiState,
@@ -182,7 +183,7 @@ function App() {
   }
 
   if (role === "overlay") {
-    return <OverlayWindow activeLine={activeLine} snapshot={snapshot} />;
+    return <OverlayWindow activeLine={activeLine} lines={lines} snapshot={snapshot} />;
   }
 
   return (
@@ -498,16 +499,49 @@ function RecentSessionsPanel() {
   );
 }
 
-function OverlayWindow({ activeLine, snapshot }: { activeLine?: CaptionLine; snapshot: DesktopCaptureSnapshot }) {
+function OverlayWindow({
+  activeLine,
+  lines,
+  snapshot
+}: {
+  activeLine?: CaptionLine;
+  lines: CaptionLine[];
+  snapshot: DesktopCaptureSnapshot;
+}) {
   const isListening = snapshot.state === "listening";
+  const [interaction, setInteraction] = useState(createInitialOverlayInteractionState);
+  const isPinned = interaction.layer === "pinned";
+  const showControls = interaction.layer === "controls" || isPinned;
+
+  function dispatchOverlay(event: OverlayInteractionEvent) {
+    setInteraction((current) => reduceOverlayInteraction(current, event));
+  }
+
+  useEffect(() => {
+    const remove = window.echosyncDesktop?.onOverlayWake(() => {
+      dispatchOverlay({ type: "fallback.wake" });
+    });
+    return () => remove?.();
+  }, []);
 
   return (
     <main className="overlayShell">
-      <section className="floatingCaption" tabIndex={0} aria-label="EchoSync 实时双语字幕悬浮窗">
+      <section
+        className={`floatingCaption layer-${interaction.layer}`}
+        tabIndex={0}
+        aria-label="EchoSync 实时双语字幕悬浮窗"
+        onMouseEnter={() => {
+          const atMs = Date.now();
+          dispatchOverlay({ type: "pointer.entered", atMs });
+          window.setTimeout(() => dispatchOverlay({ type: "hover.timer.elapsed", atMs: Date.now() }), 220);
+        }}
+        onMouseLeave={() => dispatchOverlay({ type: "pointer.left" })}
+      >
         <div className="captionText">
           <p className="overlaySource">{activeLine?.sourceText ?? "Waiting for audio stream..."}</p>
           <h1>{activeLine?.targetText ?? "等待 Windows 系统声音或麦克风输入"}</h1>
         </div>
+        {isPinned ? <PinnedCaptionStack lines={lines} /> : null}
         <div className={isListening ? "focusMeter active" : "focusMeter"} aria-label={isListening ? "正在同传" : "实时字幕待命"}>
           <span />
           <span />
@@ -520,13 +554,74 @@ function OverlayWindow({ activeLine, snapshot }: { activeLine?: CaptionLine; sna
           <span>{isListening ? "正在同传" : "实时字幕"}</span>
           <span>{sourceLabel(snapshot.sourceId)}</span>
         </div>
+        {showControls ? (
+          <OverlayControls
+            isPinned={isPinned}
+            onPinToggle={() => {
+              const nextPinned = !isPinned;
+              dispatchOverlay(nextPinned ? { type: "pin.enabled" } : { type: "pin.disabled" });
+              void window.echosyncDesktop?.setOverlayPinned(nextPinned);
+            }}
+            onRecenter={() => void window.echosyncDesktop?.recenterOverlay()}
+            onWakeHome={() => void window.echosyncDesktop?.setOverlayVisible(true)}
+          />
+        ) : null}
       </section>
     </main>
   );
 }
 
+function PinnedCaptionStack({ lines }: { lines: CaptionLine[] }) {
+  return (
+    <div className="pinnedCaptionStack">
+      {lines.slice(-3).map((line, index, visibleLines) => (
+        <article className={`pinnedLine ${line.state} ${index === visibleLines.length - 1 ? "current" : ""}`} key={line.id}>
+          <span className="overlayStateBadge">{captionStateLabel(line.state)}</span>
+          <p className="overlaySource">{line.sourceText}</p>
+          <p className="overlayTarget">{line.targetText}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function OverlayControls({
+  isPinned,
+  onPinToggle,
+  onRecenter,
+  onWakeHome
+}: {
+  isPinned: boolean;
+  onPinToggle: () => void;
+  onRecenter: () => void;
+  onWakeHome: () => void;
+}) {
+  return (
+    <div className="overlayControls">
+      <button className={isPinned ? "selected" : ""} onClick={onPinToggle}>
+        {isPinned ? "取消 Pin" : "Pin"}
+      </button>
+      <button>双语</button>
+      <button>字号</button>
+      <button>透明度</button>
+      <button onClick={onRecenter}>召回居中</button>
+      <button onClick={onWakeHome}>打开主页</button>
+    </div>
+  );
+}
+
 function sourceLabel(sourceId: DesktopAudioSourceId) {
   return DESKTOP_AUDIO_SOURCES.find((source: DesktopAudioSource) => source.id === sourceId)?.label ?? "未知来源";
+}
+
+function captionStateLabel(state: CaptionLine["state"]) {
+  const labels: Record<CaptionLine["state"], string> = {
+    interim: "确认中",
+    stable: "已稳定",
+    revised: "已修订",
+    locked: "已锁定"
+  };
+  return labels[state];
 }
 
 function formatTime(ms: number) {
