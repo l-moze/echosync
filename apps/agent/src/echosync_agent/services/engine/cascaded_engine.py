@@ -76,8 +76,9 @@ class CascadedInterpretationEngine(InterpretationEngine):
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[InterpretationEvent]:
         event_queue: asyncio.Queue[InterpretationEvent | BaseException | object] = asyncio.Queue()
         done = object()
-        pending_checkpoints: dict[str, TranscriptSegment] = {}
-        pending_order: deque[str] = deque()
+        pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment] = {}
+        pending_order: deque[tuple[str, SegmentStatus]] = deque()
+        stable_checkpoint_seen: set[str] = set()
         checkpoint_available = asyncio.Event()
         producer_done = False
         assembled_transcripts = self.transcript_assembler.stream(self.transcriber.stream(frames))
@@ -88,9 +89,19 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 async for transcript in assembled_transcripts:
                     await event_queue.put(self._source_only_translation(transcript))
                     if transcript.status != SegmentStatus.PARTIAL:
-                        if transcript.segment_id not in pending_checkpoints:
-                            pending_order.append(transcript.segment_id)
-                        pending_checkpoints[transcript.segment_id] = transcript
+                        checkpoint_key = self._checkpoint_key(transcript)
+                        if transcript.status == SegmentStatus.STABLE:
+                            if transcript.segment_id in stable_checkpoint_seen:
+                                continue
+                            stable_checkpoint_seen.add(transcript.segment_id)
+
+                        if checkpoint_key not in pending_checkpoints:
+                            pending_order.append(checkpoint_key)
+
+                        if transcript.status == SegmentStatus.STABLE:
+                            pending_checkpoints.setdefault(checkpoint_key, transcript)
+                        else:
+                            pending_checkpoints[checkpoint_key] = transcript
                         checkpoint_available.set()
             except BaseException as exc:
                 await event_queue.put(exc)
@@ -103,8 +114,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 while True:
                     await checkpoint_available.wait()
                     while pending_order:
-                        segment_id = pending_order.popleft()
-                        item = pending_checkpoints.pop(segment_id, None)
+                        checkpoint_key = pending_order.popleft()
+                        item = pending_checkpoints.pop(checkpoint_key, None)
                         if item is None:
                             continue
                         async for event in self._translate_checkpoint(item):
@@ -179,11 +190,10 @@ class CascadedInterpretationEngine(InterpretationEngine):
             )
 
     @staticmethod
-    def _is_stale_checkpoint(
-        transcript: TranscriptSegment,
-        latest_queued_rev: dict[str, int],
-    ) -> bool:
-        return transcript.rev < latest_queued_rev.get(transcript.segment_id, transcript.rev)
+    def _checkpoint_key(transcript: TranscriptSegment) -> tuple[str, SegmentStatus]:
+        if transcript.status == SegmentStatus.STABLE:
+            return (transcript.segment_id, SegmentStatus.STABLE)
+        return (transcript.segment_id, SegmentStatus.COMMITTED)
 
     def _source_only_translation(self, transcript: TranscriptSegment) -> TranslationSegment:
         return TranslationSegment(

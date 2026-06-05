@@ -8,14 +8,14 @@ import {
 import type { CaptionLine } from "../src/shared/caption-store";
 
 describe("字幕显示缓冲", () => {
-  it("初始短译文先保留在 desired，不立刻显示到 overlay", () => {
+  it("初始短译文收到后立即显示，语义合帧由 Agent 输出侧负责", () => {
     const desired = [line({ id: "seg_1", targetText: "大" })];
     const buffer = createInitialCaptionDisplayBuffer();
 
     const next = selectDisplayCaptionLines(buffer, desired, 1000);
 
-    expect(next.lines[0].targetText).toBe("");
-    expect(next.pendingLineIds).toEqual(["seg_1"]);
+    expect(next.lines[0].targetText).toBe("大");
+    expect(next.pendingLineIds).toEqual([]);
   });
 
   it("短译文超过首帧等待时间后显示，避免永久卡住", () => {
@@ -37,7 +37,7 @@ describe("字幕显示缓冲", () => {
     expect(next.lines[0].targetText).toBe("大家好，欢迎");
   });
 
-  it("已有译文的短增量先等待，再按时间节拍显示", () => {
+  it("已有译文的短增量立即显示，避免前端比 stream 返回更慢", () => {
     const visible: CaptionDisplayBuffer = {
       entries: {
         seg_1: {
@@ -51,14 +51,12 @@ describe("字幕显示缓冲", () => {
     const desired = [line({ id: "seg_1", sourceText: "Hello everyone", targetText: "大家好呀" })];
 
     const held = selectDisplayCaptionLines(visible, desired, 1040);
-    const flushed = selectDisplayCaptionLines(held.buffer, desired, 1090);
 
-    expect(held.lines[0].targetText).toBe("大家好");
-    expect(held.pendingLineIds).toEqual(["seg_1"]);
-    expect(flushed.lines[0].targetText).toBe("大家好呀");
+    expect(held.lines[0].targetText).toBe("大家好呀");
+    expect(held.pendingLineIds).toEqual([]);
   });
 
-  it("长增量按 grapheme chunk 前进，避免整段突然跳入", () => {
+  it("长增量立即展示完整事件文本，不在前端二次语义切块", () => {
     const visible: CaptionDisplayBuffer = {
       entries: {
         seg_1: {
@@ -73,9 +71,8 @@ describe("字幕显示缓冲", () => {
 
     const next = selectDisplayCaptionLines(visible, desired, 1030);
 
-    expect(next.lines[0].targetText).toMatch(/^大家好，欢迎来到/);
-    expect(next.lines[0].targetText).not.toBe(desired[0].targetText);
-    expect(next.pendingLineIds).toEqual(["seg_1"]);
+    expect(next.lines[0].targetText).toBe(desired[0].targetText);
+    expect(next.pendingLineIds).toEqual([]);
   });
 
   it("committed 行立即显示最终译文", () => {

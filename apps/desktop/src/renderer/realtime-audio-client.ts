@@ -1,4 +1,5 @@
 import type { DesktopAudioSourceId } from "../shared/audio-source-catalog";
+import type { TranslationProviderId } from "../shared/translation-provider-catalog";
 
 import { createAudioGate, type AudioGateChunk } from "./audio-gate";
 import {
@@ -32,6 +33,7 @@ export type RealtimeAudioClientOptions = {
   endpointBaseUrl?: string;
   recorder?: SessionRecorder;
   sessionId?: string;
+  translationProvider?: TranslationProviderId;
 };
 
 export function createRealtimeAudioClient({
@@ -41,7 +43,8 @@ export function createRealtimeAudioClient({
   recorder = createSessionRecorder(),
   sessionId = createSessionId(),
   sourceId,
-  sourceLang = "en"
+  sourceLang = "en",
+  translationProvider
 }: RealtimeAudioClientOptions): RealtimeAudioClient {
   let socket: WebSocket | null = null;
   let mediaStream: MediaStream | null = null;
@@ -89,6 +92,9 @@ export function createRealtimeAudioClient({
       };
       if (asrProvider) {
         startMessage.asr_provider = asrProvider;
+      }
+      if (translationProvider) {
+        startMessage.translation_provider = translationProvider;
       }
       socket.send(JSON.stringify(startMessage));
 

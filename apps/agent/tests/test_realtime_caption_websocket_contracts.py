@@ -7,7 +7,11 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from echosync_agent.runtime.settings import Settings, with_session_asr_overrides
+from echosync_agent.runtime.settings import (
+    Settings,
+    with_session_asr_overrides,
+    with_session_translation_overrides,
+)
 from echosync_agent.transport.caption_ws import CaptionEventHub, create_caption_app
 from echosync_agent.transport.realtime_ws import (
     AUDIO_FRAME_HEADER,
@@ -182,6 +186,23 @@ def test_realtime_session_applies_asr_provider_from_audio_start(monkeypatch: Any
     assert captured[0].asr_latency_mode == "balanced"
 
 
+def test_realtime_session_applies_translation_provider_from_audio_start(monkeypatch: Any) -> None:
+    captured: list[Settings] = []
+
+    def fake_build_demo_pipeline(**kwargs: Any) -> tuple[object, object]:
+        captured.append(kwargs["settings"])
+        return _NoopPipeline(), object()
+
+    monkeypatch.setattr(
+        "echosync_agent.transport.realtime_ws.build_demo_pipeline",
+        fake_build_demo_pipeline,
+    )
+
+    asyncio.run(_run_realtime_session_translation_provider_override_test())
+
+    assert captured[0].translator_provider == "deepseek"
+
+
 def test_session_asr_override_rejects_candidate_provider_until_adapter_exists() -> None:
     settings = replace(Settings.from_env(), asr_provider="mock")
 
@@ -192,6 +213,17 @@ def test_session_asr_override_rejects_candidate_provider_until_adapter_exists() 
         assert "尚未接入" in str(exc)
     else:
         raise AssertionError("deepgram must stay unavailable until its adapter is implemented")
+
+
+def test_session_translation_override_rejects_unknown_provider() -> None:
+    settings = replace(Settings.from_env(), translator_provider="mock")
+
+    try:
+        with_session_translation_overrides(settings, translation_provider="qwen")
+    except ValueError as exc:
+        assert "不支持的翻译 provider" in str(exc)
+    else:
+        raise AssertionError("unknown translation provider must be rejected")
 
 
 async def _run_realtime_session_stop_without_done_test() -> None:
@@ -480,6 +512,36 @@ async def _run_realtime_session_asr_provider_override_test() -> None:
     session = _RealtimeWebSocketSession(
         websocket=websocket,  # type: ignore[arg-type]
         session_id="sess_asr_override",
+        settings=settings,
+        caption_event_bus=CaptionEventHub(),
+    )
+
+    await session.run()
+
+
+async def _run_realtime_session_translation_provider_override_test() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="mock",
+        translator_provider="mock",
+        glossary_enabled=False,
+    )
+    websocket = _MemoryWebSocket(
+        [
+            {
+                "type": "audio.start",
+                "source_lang": "en",
+                "sample_rate": 16_000,
+                "channels": 1,
+                "source_kind": "network_stream",
+                "translation_provider": "deepseek",
+            },
+            {"type": "audio.end"},
+        ]
+    )
+    session = _RealtimeWebSocketSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        session_id="sess_translation_override",
         settings=settings,
         caption_event_bus=CaptionEventHub(),
     )

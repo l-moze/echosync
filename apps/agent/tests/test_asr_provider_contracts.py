@@ -71,6 +71,31 @@ def test_asr_factory_builds_voxtral_transcriber() -> None:
     assert transcriber.config.target_streaming_delay_ms == 480
 
 
+@pytest.mark.parametrize(
+    ("latency_mode", "expected_delay_ms"),
+    [
+        ("low_latency", 480),
+        ("balanced", 1000),
+        ("accuracy", 1600),
+    ],
+)
+def test_asr_factory_maps_voxtral_latency_mode_to_target_streaming_delay(
+    latency_mode: str,
+    expected_delay_ms: int,
+) -> None:
+    transcriber = build_transcriber_from_settings(
+        _settings(
+            asr_provider="voxtral",
+            asr_latency_mode=latency_mode,
+            mistral_api_key="test-key",
+            voxtral_target_delay_ms=1000,
+        )
+    )
+
+    assert isinstance(transcriber, VoxtralRealtimeTranscriber)
+    assert transcriber.config.target_streaming_delay_ms == expected_delay_ms
+
+
 def test_asr_factory_requires_mistral_api_key_for_voxtral() -> None:
     with pytest.raises(ValueError, match="MISTRAL_API_KEY"):
         build_transcriber_from_settings(_settings(asr_provider="voxtral", mistral_api_key=""))

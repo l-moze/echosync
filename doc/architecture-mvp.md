@@ -81,7 +81,7 @@ Electron getDisplayMedia(loopback)
   -> Electron overlay caption-store
 ```
 
-Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit`。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider` 覆盖后端 `.env` 默认值；API key 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr` 或 `voxtral`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，方便现场拆分采集、传输、ASR 和翻译延迟。
+Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit`。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider` 或 `translation_provider` 覆盖后端 `.env` 默认值；API key、base URL 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr` 或 `voxtral`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，方便现场拆分采集、传输、ASR 和翻译延迟。
 
 桌面 UI 生命周期：
 
@@ -142,7 +142,7 @@ SessionArchiveDraft
 选型：
 
 - ASR：当前 provider 支持 `mock`、`funasr`、`voxtral`。FunASR 本地 AutoModel 适配器在 `services/asr/funasr_transcriber.py`，会把 80ms 传输帧聚合成推理窗口：`low_latency` 约 320ms、`balanced` 默认 600ms、`accuracy` 约 900ms；Voxtral Realtime 云端适配器在 `services/asr/voxtral_transcriber.py`，适合英语技术分享和国际会议。Deepgram/Azure 属于下一批低延迟/高稳定云端候选，尚未进入可选 provider。媒体文件抽音频由 `services/media/ffmpeg_audio_source.py` 完成。
-- 翻译：DeepSeek 兼容 OpenAI API 的适配器在 `services/translation/deepseek_translator.py`。
+- 翻译：当前 provider 支持 `mock`、`deepseek`。DeepSeek 兼容 OpenAI API 的适配器在 `services/translation/deepseek_translator.py`；Desktop 的“通用模型”不发送覆盖字段，沿用 Agent `.env`，显式选择 `DeepSeek-V3` 时只发送 `translation_provider=deepseek`。
 - TTS：edge-tts 适配器在 `services/tts/edge_tts_synthesizer.py`，先作为可选输出。
 
 原则落实：
@@ -195,7 +195,7 @@ SessionArchiveDraft
 - 音频门控：`audio-gate.ts` 使用分片队列读取固定长度 chunk，避免每次 `push()` 都把残留 buffer 与新样本整体拼接，也避免每次切片后复制剩余样本。该优化把热路径从“重复搬运余量样本”收敛为“只复制输出 chunk 一次”，降低 renderer GC 和音频抖动。
 - ASR 分段：`TranscriptAssembler` 维护 `current_text` 增量文本，不再每个 ASR delta 都 `join(buffer)`。输出契约仍保持 `partial/stable/committed` 三态，避免改变字幕 UI 和翻译器边界。
 - 翻译排队：`CascadedInterpretationEngine` 对待翻译 checkpoint 按 `segment_id` 去重，同一活动片段在队列中只保留最新 `rev`。这属于实时系统背压和队列合并问题，优先级高于复杂组合优化。
-- 译文显示合帧：DeepSeek 等流式翻译模型可能按中文单字 token 返回。后端 `DeepSeekTranslator` 会按最小可见字符数和标点合并 token 后再发布，前端 `caption-store` 也会暂存过短译文增量，避免字幕窗一字一刷。最终 `committed` 事件仍完整覆盖字幕。
+- 译文显示合帧：DeepSeek 等流式翻译模型可能按中文单字 token 返回。后端 `DeepSeekTranslator` 会按最小可见字符数和标点合并 token 后再发布，前端只即时展示 Agent 已发布的事件文本，不再二次语义切块。最终 `committed` 事件仍完整覆盖字幕。
 - 术语匹配：小词表继续使用预编译 Regex，大词表使用 Aho-Corasick 多模式匹配。后续若 ASR 错词导致术语漏匹配，应先做 normalized text + offset map，再对高优先级术语做轻量近似匹配，避免全量编辑距离扫描。
 
 暂不采用的算法：
@@ -307,7 +307,7 @@ AudioFrame 流
 - 使用 `transcript.partial` 驱动源文 hypothesis，使用 `translation.partial` 驱动译文字幕，使用 `segment.commit` 锁定最终字幕。
 - 为 DeepL 等非流式翻译器保留 batch-only 路线：只实现 `Translator.translate()`，由级联引擎自动回退，并允许录播/可访问视频场景打时间差。
 - 保持 edge-tts 关闭，避免 TTS 增加首版延迟。
-- 默认 `mock` 只用于事件演示；真实 PCM 音频测试必须使用 `funasr` 或 `voxtral`。会话级 `audio.start.asr_provider` 可以覆盖 `.env` 默认 provider，但密钥配置仍由服务端 `.env` 控制。
+- 默认 `mock` 只用于事件演示；真实 PCM 音频测试必须使用 `funasr` 或 `voxtral`。会话级 `audio.start.asr_provider` 和 `audio.start.translation_provider` 可以覆盖 `.env` 默认 provider，但密钥配置仍由服务端 `.env` 控制。
 - `realtime.error` 与 `realtime.done` 保持互斥：启动失败、provider 不匹配或 pipeline 异常只发 error；正常 `audio.end` 才发 done。
 - `TranscriptAssembler` 当前按标点、最大约 3.8 秒音频窗口或约 90 字符强制提交，避免中文无标点识别结果长期堆成一个字幕块。
 

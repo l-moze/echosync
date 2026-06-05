@@ -36,7 +36,10 @@ def build_transcriber_from_settings(settings: Settings) -> Transcriber:
             config=VoxtralRealtimeConfig(
                 api_key=settings.mistral_api_key,
                 model=settings.voxtral_model,
-                target_streaming_delay_ms=settings.voxtral_target_delay_ms,
+                target_streaming_delay_ms=_voxtral_target_delay_ms_for_latency_mode(
+                    base_delay_ms=settings.voxtral_target_delay_ms,
+                    latency_mode=settings.asr_latency_mode,
+                ),
             )
         )
     raise ValueError(f"不支持的 ASR 供应商：{settings.asr_provider}")
@@ -48,3 +51,11 @@ def _funasr_chunk_ms_for_latency_mode(*, base_chunk_ms: int, latency_mode: str) 
     if latency_mode == "accuracy":
         return max(base_chunk_ms, int(base_chunk_ms * 1.5))
     return base_chunk_ms
+
+
+def _voxtral_target_delay_ms_for_latency_mode(*, base_delay_ms: int, latency_mode: str) -> int:
+    if latency_mode == "low_latency":
+        return max(240, min(base_delay_ms, 480))
+    if latency_mode == "accuracy":
+        return max(base_delay_ms, 1600)
+    return base_delay_ms

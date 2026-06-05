@@ -6,6 +6,7 @@ from os import getenv
 SUPPORTED_ASR_PROVIDERS = frozenset({"mock", "funasr", "voxtral"})
 NEXT_ASR_PROVIDER_CANDIDATES = frozenset({"deepgram", "azure"})
 SUPPORTED_ASR_LATENCY_MODES = frozenset({"low_latency", "balanced", "accuracy"})
+SUPPORTED_TRANSLATION_PROVIDERS = frozenset({"mock", "deepseek"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,3 +89,26 @@ def with_session_asr_overrides(
     if not updates:
         return settings
     return replace(settings, **updates)
+
+
+def with_session_translation_overrides(
+    settings: Settings,
+    *,
+    translation_provider: object | None = None,
+) -> Settings:
+    """应用来自单个 realtime session 的翻译模型选择。
+
+    客户端只声明 provider id；API key、base URL 和模型名仍由服务端环境变量控制。
+    """
+
+    if translation_provider is None:
+        return settings
+
+    provider = str(translation_provider).strip().lower()
+    if not provider:
+        return settings
+    if provider not in SUPPORTED_TRANSLATION_PROVIDERS:
+        raise ValueError(f"不支持的翻译 provider：{provider}")
+    if provider == settings.translator_provider:
+        return settings
+    return replace(settings, translator_provider=provider)

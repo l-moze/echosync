@@ -34,7 +34,7 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和模拟链路测试骨架。当前地基同时支持 ASR→翻译→修正的级联模型，以及未来 OpenAI Realtime、Qwen LiveTranslate、Azure Speech Translation 等端到端模型适配。
 
-ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。Desktop 会在 `audio.start` 中声明本次会话的 `asr_latency_mode`，只有用户显式选择 provider 时才额外发送 `asr_provider` 覆盖后端 `.env` 默认值；API key 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
+ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`。Desktop 会在 `audio.start` 中声明本次会话的 `asr_latency_mode`，只有用户显式选择 provider 时才额外发送 `asr_provider` 或 `translation_provider` 覆盖后端 `.env` 默认值；API key、base URL 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
 
 当前 Web 工作台已按 `doc/UI设计调研.md` 的 MVP 方向实现：
 
@@ -97,7 +97,7 @@ ECHOSYNC_ASR_PROVIDER=funasr
 FUNASR_DEVICE=auto
 ```
 
-也可以在 Desktop 会话启动时通过 `audio.start.asr_provider` 覆盖默认 ASR provider。当前 renderer 默认真实采集只发送 `balanced` 延迟模式，不覆盖后端 provider；如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
+也可以在 Desktop 会话启动时通过 `audio.start.asr_provider` 覆盖默认 ASR provider，通过 `audio.start.translation_provider` 覆盖默认翻译 provider。当前 renderer 默认真实采集只发送 `balanced` 延迟模式；翻译模型选择为“通用模型”时不覆盖后端 provider。显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
 
 如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
 

@@ -40,11 +40,11 @@
 
 ## 当前状态
 
-当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传时采集音频，先发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`，Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
+当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传时采集音频，先发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider` 或 `translation_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`，Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
 
 后端仍兼容旧 JSON `audio.chunk` / `pcm_base64`，主要用于旧测试、纯 ASR 调试和过渡期兼容；当前 Desktop 真实链路默认不走 base64 JSON。
 
-仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Agent 会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥和模型配置仍来自 Agent 端 `.env`。
+仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Agent 会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider` 和 `audio.start.translation_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥和模型配置仍来自 Agent 端 `.env`。
 
 `8765` 与 `8766` 的边界：
 
@@ -84,7 +84,7 @@
 
 ### P0：真实 ASR 配置与健康检查
 1. 启动 `8766` 完整同传服务。
-2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr` 或 `voxtral` 作为默认值，或由 Desktop 在 `audio.start.asr_provider` 中选择本次会话 provider。
+2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr` 或 `voxtral` 作为默认值，设置 `ECHOSYNC_TRANSLATOR_PROVIDER=deepseek` 作为真实翻译默认值；也可以由 Desktop 在 `audio.start.asr_provider` / `audio.start.translation_provider` 中选择本次会话 provider。
 3. Desktop 开始同传前检查 Agent 是否可连接，避免 UI 进入“同传中”但后端未启动。
 
 ### P1：音频源分支补实

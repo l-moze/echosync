@@ -3,6 +3,12 @@ import { createRoot } from "react-dom/client";
 
 import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSource, type DesktopAudioSourceId } from "../shared/audio-source-catalog";
 import {
+  selectedTranslationProviderId,
+  TRANSLATION_PROVIDER_OPTIONS,
+  translationProviderLabel,
+  type TranslationProviderSelection
+} from "../shared/translation-provider-catalog";
+import {
   createInitialCaptionDisplayBuffer,
   selectDisplayCaptionLines,
   type CaptionDisplayBuffer
@@ -74,6 +80,8 @@ function App() {
   const role = resolveDesktopWindowRole(window.location.hash);
   const [lines, setLines] = useState<CaptionLine[]>(createInitialCaptionLines);
   const [sourceId, setSourceId] = useState<DesktopAudioSourceId>("windows-system");
+  const [translationProvider, setTranslationProvider] =
+    useState<TranslationProviderSelection>("server-default");
   const [overlayLocked, setOverlayLocked] = useState(false);
   const [sessionUi, setSessionUi] = useState(() => createInitialSessionUiState({ platform: "windows" }));
   const [snapshot, setSnapshot] = useState<DesktopCaptureSnapshot>({
@@ -199,7 +207,10 @@ function App() {
     terminalRealtimeErrorRef.current = null;
     setSessionArchive(null);
     setLines(createInitialCaptionLines());
-    const client = createRealtimeAudioClient({ sourceId: nextSourceId });
+    const client = createRealtimeAudioClient({
+      sourceId: nextSourceId,
+      translationProvider: selectedTranslationProviderId(translationProvider)
+    });
     realtimeClientRef.current = client;
     activeSessionIdRef.current = client.sessionId;
     const nextSnapshot = await window.echosyncDesktop?.startCapture(nextSourceId, client.sessionId);
@@ -357,6 +368,7 @@ function App() {
         onStop={() => void stopCapture()}
         realtimeError={realtimeError}
         snapshot={snapshot}
+        translationProvider={translationProvider}
       />
     );
   }
@@ -382,6 +394,7 @@ function App() {
           lines={lines}
           onShowOverlay={() => window.echosyncDesktop?.setOverlayVisible(true)}
           onSourceSelect={(nextSourceId) => setSourceId(nextSourceId)}
+          onTranslationProviderSelect={setTranslationProvider}
           onReturnHome={requestReturnHome}
           onStart={() => void startCapture()}
           onStop={() => void stopCapture()}
@@ -391,6 +404,7 @@ function App() {
           sessionUi={sessionUi}
           sourceId={sourceId}
           toggleOverlayLocked={() => void toggleOverlayLocked()}
+          translationProvider={translationProvider}
         />
       </section>
       {sessionUi.startup.phase !== "idle" ? (
@@ -575,6 +589,7 @@ function ControlCenter({
   lines,
   onShowOverlay,
   onSourceSelect,
+  onTranslationProviderSelect,
   onReturnHome,
   onStart,
   onStop,
@@ -583,13 +598,15 @@ function ControlCenter({
   sessionArchive,
   sessionUi,
   sourceId,
-  toggleOverlayLocked
+  toggleOverlayLocked,
+  translationProvider
 }: {
   activeLine?: CaptionLine;
   currentSource: DesktopAudioSource;
   lines: CaptionLine[];
   onShowOverlay: () => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
+  onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onReturnHome: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -599,6 +616,7 @@ function ControlCenter({
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
   sourceId: DesktopAudioSourceId;
   toggleOverlayLocked: () => void;
+  translationProvider: TranslationProviderSelection;
 }) {
   return (
     <section className={`controlCenter lifecycle-${sessionUi.lifecycle}`}>
@@ -607,9 +625,11 @@ function ControlCenter({
           currentSource={currentSource}
           onShowOverlay={onShowOverlay}
           onSourceSelect={onSourceSelect}
+          onTranslationProviderSelect={onTranslationProviderSelect}
           onStart={onStart}
           sessionUi={sessionUi}
           sourceId={sourceId}
+          translationProvider={translationProvider}
         />
       ) : null}
       {sessionUi.lifecycle === "active" ? (
@@ -622,6 +642,7 @@ function ControlCenter({
           sessionUi={sessionUi}
           sourceId={sourceId}
           toggleOverlayLocked={toggleOverlayLocked}
+          translationProvider={translationProvider}
         />
       ) : null}
       {sessionUi.lifecycle === "finished" ? (
@@ -641,16 +662,20 @@ function IdleDashboard({
   currentSource,
   onShowOverlay,
   onSourceSelect,
+  onTranslationProviderSelect,
   onStart,
   sessionUi,
-  sourceId
+  sourceId,
+  translationProvider
 }: {
   currentSource: DesktopAudioSource;
   onShowOverlay: () => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
+  onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onStart: () => void;
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
   sourceId: DesktopAudioSourceId;
+  translationProvider: TranslationProviderSelection;
 }) {
   return (
     <div className="dashboardGrid">
@@ -662,6 +687,18 @@ function IdleDashboard({
           {DESKTOP_AUDIO_SOURCES.map((source) => (
             <button className={source.id === sourceId ? "selected" : ""} key={source.id} onClick={() => onSourceSelect(source.id)}>
               {source.label}
+            </button>
+          ))}
+        </div>
+        <div className="providerTabs" aria-label="翻译模型选择">
+          {TRANSLATION_PROVIDER_OPTIONS.map((provider) => (
+            <button
+              className={provider.id === translationProvider ? "selected" : ""}
+              key={provider.id}
+              onClick={() => onTranslationProviderSelect(provider.id)}
+            >
+              <strong>{provider.label}</strong>
+              <span>{provider.description}</span>
             </button>
           ))}
         </div>
@@ -684,7 +721,7 @@ function IdleDashboard({
         <HealthMetric label="输入源" value={currentSource.label} />
         <HealthMetric label="音频活动" value={sessionUi.audioActivity} />
         <HealthMetric label="字幕窗" value="可打开" />
-        <HealthMetric label="Provider" value="读取 .env" />
+        <HealthMetric label="翻译模型" value={translationProviderLabel(translationProvider)} />
       </aside>
     </div>
   );
@@ -698,7 +735,8 @@ function ActiveDashboard({
   dispatchSessionUi,
   sessionUi,
   sourceId,
-  toggleOverlayLocked
+  toggleOverlayLocked,
+  translationProvider
 }: {
   activeLine?: CaptionLine;
   lines: CaptionLine[];
@@ -708,6 +746,7 @@ function ActiveDashboard({
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
   sourceId: DesktopAudioSourceId;
   toggleOverlayLocked: () => void;
+  translationProvider: TranslationProviderSelection;
 }) {
   return (
     <div className="dashboardGrid">
@@ -723,6 +762,7 @@ function ActiveDashboard({
       </section>
       <aside className="dashboardPanel">
         <h2>会话驾驶舱</h2>
+        <HealthMetric label="翻译模型" value={translationProviderLabel(translationProvider)} />
         <HealthPanel lines={lines} sessionUi={sessionUi} sourceId={sourceId} />
         <TermQuickAdd dispatchSessionUi={dispatchSessionUi} sessionUi={sessionUi} />
       </aside>
@@ -1082,7 +1122,8 @@ function OverlayWindow({
   onSourceStart,
   onStop,
   realtimeError,
-  snapshot
+  snapshot,
+  translationProvider
 }: {
   activeLine?: CaptionLine;
   lines: CaptionLine[];
@@ -1090,6 +1131,7 @@ function OverlayWindow({
   onStop: () => void;
   realtimeError: string | null;
   snapshot: DesktopCaptureSnapshot;
+  translationProvider: TranslationProviderSelection;
 }) {
   const isListening = snapshot.state === "listening";
   const [interaction, setInteraction] = useState(createInitialOverlayInteractionState);
@@ -1243,6 +1285,7 @@ function OverlayWindow({
             onMicrophoneSelect={() => void selectMicrophoneCapture()}
             snapshot={snapshot}
             subtitleStyle={subtitleStyle}
+            translationProvider={translationProvider}
           />
         ) : null}
       </section>
@@ -1351,7 +1394,8 @@ function OverlaySessionBar({
   onDisplayModeChange,
   onMicrophoneSelect,
   snapshot,
-  subtitleStyle
+  subtitleStyle,
+  translationProvider
 }: {
   isListening: boolean;
   lines: CaptionLine[];
@@ -1360,6 +1404,7 @@ function OverlaySessionBar({
   onMicrophoneSelect: () => void;
   snapshot: DesktopCaptureSnapshot;
   subtitleStyle: SubtitleStyleState;
+  translationProvider: TranslationProviderSelection;
 }) {
   const durationMs = Math.max(0, ...lines.map((line) => line.endMs)) + (isListening ? 10400 : 0);
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
@@ -1380,7 +1425,7 @@ function OverlaySessionBar({
         <ToolbarIcon name="power" />
       </button>
       <span className="sessionTimer">{formatClock(durationMs)}</span>
-      <span className="sessionPill">Agent Provider</span>
+      <span className="sessionPill">{translationProviderLabel(translationProvider)}</span>
       <span className="sessionPill">{sourceLabel(snapshot.sourceId)}</span>
       <details className="displayModePicker">
         <summary>{styleOptionLabel(displayMode)}</summary>

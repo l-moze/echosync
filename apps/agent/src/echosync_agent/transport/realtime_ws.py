@@ -15,7 +15,11 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from echosync_agent.domain import AudioFrame, AudioSourceKind
 from echosync_agent.runtime import build_demo_pipeline
-from echosync_agent.runtime.settings import Settings, with_session_asr_overrides
+from echosync_agent.runtime.settings import (
+    Settings,
+    with_session_asr_overrides,
+    with_session_translation_overrides,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -196,9 +200,10 @@ class _RealtimeWebSocketSession:
                 self._apply_start_message(message)
             except Exception as exc:
                 logger.exception(
-                    "realtime_session_start_failed session_id=%s asr=%s",
+                    "realtime_session_start_failed session_id=%s asr=%s translator=%s",
                     self.session_id,
                     self.settings.asr_provider,
+                    self.settings.translator_provider,
                 )
                 self._stop_reason = "start_error"
                 await self._send_error(str(exc))
@@ -213,7 +218,7 @@ class _RealtimeWebSocketSession:
             self._start_pipeline()
             logger.info(
                 "audio_stream_started session_id=%s source_kind=%s device_id=%s "
-                "sample_rate=%d channels=%d source_lang=%s asr=%s mode=%s",
+                "sample_rate=%d channels=%d source_lang=%s asr=%s mode=%s translator=%s",
                 self.session_id,
                 self.source_kind,
                 self.device_id,
@@ -222,6 +227,7 @@ class _RealtimeWebSocketSession:
                 self.source_lang,
                 self.settings.asr_provider,
                 self.settings.asr_latency_mode,
+                self.settings.translator_provider,
             )
             return False
         if message_type == "audio.chunk":
@@ -259,6 +265,10 @@ class _RealtimeWebSocketSession:
             self.settings,
             asr_latency_mode=message.get("asr_latency_mode"),
             asr_provider=message.get("asr_provider"),
+        )
+        self.settings = with_session_translation_overrides(
+            self.settings,
+            translation_provider=message.get("translation_provider"),
         )
         self.source_lang = str(message.get("source_lang", self.source_lang))
         self.sample_rate = int(message.get("sample_rate", self.sample_rate))

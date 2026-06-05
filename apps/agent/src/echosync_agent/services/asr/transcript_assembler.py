@@ -24,7 +24,7 @@ class TranscriptAssembler:
 
     def __init__(
         self,
-        commit_punctuation: str = ".!?。！？，；：",
+        commit_punctuation: str = ".!?。！？",
         checkpoint_audio_ms: int = 1000,
         max_segment_audio_ms: int = 3800,
         max_segment_chars: int = 90,
@@ -48,6 +48,7 @@ class TranscriptAssembler:
         last: TranscriptSegment | None = None
         last_delta_at = time.perf_counter()
         checkpoint_start_ms: int | None = None
+        force_checkpointed = False
         segment_id = new_segment_id()
         rev = 1
         last_emitted_text = ""
@@ -66,21 +67,24 @@ class TranscriptAssembler:
                 incoming_text=segment.text,
             ).text
 
-            should_commit = self._should_commit(current_text) or self._should_force_commit(
-                current_text,
-                first,
-                last,
+            should_force_checkpoint = (
+                not force_checkpointed
+                and self._should_force_checkpoint(current_text, first, last)
             )
+            should_commit = self._should_commit(current_text)
             should_checkpoint = (
                 not should_commit
                 and (
+                    should_force_checkpoint
+                    or self._should_weak_boundary(current_text)
+                    or
                     (
                         checkpoint_start_ms is not None
                         and segment.end_ms - checkpoint_start_ms >= self.checkpoint_audio_ms
                     )
                     or segment.status == SegmentStatus.COMMITTED
                 )
-                and self._should_checkpoint(current_text)
+                and (should_force_checkpoint or self._should_checkpoint(current_text))
             )
 
             status = SegmentStatus.PARTIAL
@@ -116,8 +120,11 @@ class TranscriptAssembler:
                 segment_id = new_segment_id()
                 rev = 1
                 last_emitted_text = ""
+                force_checkpointed = False
             elif should_checkpoint:
                 checkpoint_start_ms = segment.end_ms
+                if should_force_checkpoint:
+                    force_checkpointed = True
 
         if buffer and first is not None and last is not None:
             yield self._build_segment(
@@ -133,17 +140,20 @@ class TranscriptAssembler:
     def _should_commit(self, text: str) -> bool:
         return text.rstrip().endswith(tuple(self.commit_punctuation))
 
+    def _should_weak_boundary(self, text: str) -> bool:
+        return text.rstrip().endswith((",", "，", ";", "；", ":", "："))
+
     def _should_checkpoint(self, text: str) -> bool:
         text = text.strip()
         if not text:
             return False
-        if text.endswith((",", "，", ";", "；", ":", "：")):
+        if self._should_weak_boundary(text):
             return True
         if _contains_cjk(text):
             return len(_visible_chars(text)) >= 8
         return _word_count(text) >= 3 and len(_visible_chars(text)) >= 10
 
-    def _should_force_commit(
+    def _should_force_checkpoint(
         self,
         text: str,
         first: TranscriptSegment,
@@ -155,10 +165,10 @@ class TranscriptAssembler:
             return False
 
         # Some realtime providers attach cumulative audio-window timestamps to
-        # every short text delta. Do not turn those word-sized partials into
-        # locked subtitle rows just because the provider window is already long.
+        # every short text delta. CJK meaning units should stay revisable until
+        # sentence punctuation or stream end locks the segment.
         if _contains_cjk(text):
-            return len(_visible_chars(text)) >= 8
+            return False
         return len(text) >= max(24, self.max_segment_chars // 3)
 
     @staticmethod

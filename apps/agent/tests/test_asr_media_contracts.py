@@ -64,6 +64,41 @@ def test_media_audio_source_splits_pcm_into_timed_frames() -> None:
     assert frames[0].is_final is True
 
 
+def test_media_audio_source_yields_frame_before_full_file_is_decoded() -> None:
+    first_chunk_delivered = asyncio.Event()
+    allow_second_chunk = asyncio.Event()
+
+    async def read_stream(_command: list[str]) -> AsyncIterator[bytes]:
+        first_chunk_delivered.set()
+        yield b"\x01\x00" * 1600
+        await allow_second_chunk.wait()
+        yield b"\x02\x00" * 1600
+
+    source = MediaAudioSource(
+        path="lecture.mp4",
+        session_id="sess_streaming_video",
+        source_lang="en",
+        chunk_ms=100,
+        ffmpeg_path="ffmpeg",
+        read_pcm_stream=read_stream,
+    )
+
+    async def first_frame() -> AudioFrame:
+        stream = source.frames()
+        frame = await asyncio.wait_for(anext(stream), timeout=1)
+        assert first_chunk_delivered.is_set()
+        await stream.aclose()
+        return frame
+
+    frame = asyncio.run(first_frame())
+
+    assert frame.seq == 1
+    assert frame.start_ms == 0
+    assert frame.end_ms == 100
+    assert frame.is_final is False
+    assert frame.pcm == b"\x01\x00" * 1600
+
+
 def test_funasr_streaming_transcriber_reuses_cache_and_marks_final_chunk() -> None:
     calls: list[dict[str, object]] = []
 

@@ -1,11 +1,11 @@
 from echosync_agent.services.realtime.text_emission_policy import TextEmissionPolicy
 
 
-def test_policy_holds_short_cjk_source_partial_until_readable_chunk() -> None:
+def test_policy_does_not_hold_cjk_source_partial() -> None:
     policy = TextEmissionPolicy(source_cjk_min_chars=4)
 
-    assert policy.should_hold_source_partial(current_text="你", last_emitted_text="") is True
-    assert policy.should_hold_source_partial(current_text="你好世", last_emitted_text="") is True
+    assert policy.should_hold_source_partial(current_text="你", last_emitted_text="") is False
+    assert policy.should_hold_source_partial(current_text="你好世", last_emitted_text="") is False
     assert policy.should_hold_source_partial(current_text="你好世界", last_emitted_text="") is False
 
 

@@ -38,25 +38,29 @@ def test_transcript_assembler_flushes_remaining_text_at_end_of_stream() -> None:
     assert segments[-1].status == SegmentStatus.COMMITTED
 
 
-def test_transcript_assembler_commits_on_chinese_comma() -> None:
+def test_transcript_assembler_checkpoints_on_chinese_comma_without_locking() -> None:
     assembler = TranscriptAssembler()
 
     segments = asyncio.run(_collect(assembler.stream(_partial_segments(["会遵循流程，"]))))
 
-    assert segments[-1].text == "会遵循流程，"
-    assert segments[-1].status == SegmentStatus.COMMITTED
+    assert [(segment.text, segment.status) for segment in segments] == [
+        ("会遵循流程，", SegmentStatus.STABLE),
+        ("会遵循流程，", SegmentStatus.COMMITTED),
+    ]
 
 
-def test_transcript_assembler_force_commits_long_segment_without_punctuation() -> None:
+def test_transcript_assembler_does_not_force_commit_long_segment_without_sentence_punctuation(
+) -> None:
     assembler = TranscriptAssembler(max_segment_audio_ms=1200, max_segment_chars=200)
 
     segments = asyncio.run(
         _collect(assembler.stream(_partial_segments(["第一段", "需要被切开", "避免字幕堆叠"])))
     )
 
-    assert any(segment.status == SegmentStatus.COMMITTED for segment in segments)
     committed = [segment for segment in segments if segment.status == SegmentStatus.COMMITTED]
-    assert committed[0].text == "第一段需要被切开"
+    assert len(committed) == 1
+    assert committed[0] == segments[-1]
+    assert committed[0].text == "第一段需要被切开避免字幕堆叠"
 
 
 def test_transcript_assembler_tracks_text_incrementally_without_regressing_contract() -> None:
@@ -69,14 +73,14 @@ def test_transcript_assembler_tracks_text_incrementally_without_regressing_contr
     assert [(segment.text, segment.status) for segment in segments] == [
         ("abc", SegmentStatus.PARTIAL),
         ("abcdef", SegmentStatus.PARTIAL),
-        ("abcdefghi", SegmentStatus.COMMITTED),
-        ("j", SegmentStatus.PARTIAL),
-        ("j", SegmentStatus.COMMITTED),
+        ("abcdefghi", SegmentStatus.STABLE),
+        ("abcdefghij", SegmentStatus.PARTIAL),
+        ("abcdefghij", SegmentStatus.COMMITTED),
     ]
-    assert segments[2].segment_id != segments[3].segment_id
+    assert len({segment.segment_id for segment in segments}) == 1
 
 
-def test_transcript_assembler_coalesces_single_character_deltas_before_display() -> None:
+def test_transcript_assembler_streams_cjk_deltas_as_cumulative_same_segment_text() -> None:
     assembler = TranscriptAssembler(
         checkpoint_audio_ms=10_000,
         max_segment_audio_ms=10_000,
@@ -88,12 +92,17 @@ def test_transcript_assembler_coalesces_single_character_deltas_before_display()
     )
 
     assert [(segment.text, segment.status) for segment in segments] == [
+        ("你", SegmentStatus.PARTIAL),
+        ("你好", SegmentStatus.PARTIAL),
+        ("你好世", SegmentStatus.PARTIAL),
         ("你好世界", SegmentStatus.PARTIAL),
+        ("你好世界，", SegmentStatus.STABLE),
         ("你好世界，", SegmentStatus.COMMITTED),
     ]
+    assert len({segment.segment_id for segment in segments}) == 1
 
 
-def test_transcript_assembler_accepts_custom_emission_policy() -> None:
+def test_transcript_assembler_keeps_legacy_source_emission_config_without_delaying_source() -> None:
     assembler = TranscriptAssembler(
         checkpoint_audio_ms=10_000,
         max_segment_audio_ms=10_000,
@@ -104,7 +113,9 @@ def test_transcript_assembler_accepts_custom_emission_policy() -> None:
     segments = asyncio.run(_collect(assembler.stream(_partial_segments(["你", "好", "世"]))))
 
     assert [(segment.text, segment.status) for segment in segments] == [
+        ("你", SegmentStatus.PARTIAL),
         ("你好", SegmentStatus.PARTIAL),
+        ("你好世", SegmentStatus.PARTIAL),
         ("你好世", SegmentStatus.COMMITTED),
     ]
 
@@ -127,7 +138,8 @@ def test_transcript_assembler_replaces_rolling_full_hypotheses() -> None:
     ]
 
 
-def test_transcript_assembler_does_not_checkpoint_single_word_from_cumulative_provider_time() -> None:
+def test_transcript_assembler_does_not_checkpoint_single_word_from_cumulative_provider_time(
+) -> None:
     assembler = TranscriptAssembler(
         checkpoint_audio_ms=1_000,
         max_segment_audio_ms=10_000,
@@ -182,7 +194,8 @@ def test_transcript_assembler_does_not_lock_each_short_upstream_final_without_pu
     assert len({segment.segment_id for segment in segments}) == 1
 
 
-def test_transcript_assembler_does_not_force_commit_each_short_delta_from_cumulative_provider_time() -> None:
+def test_transcript_assembler_does_not_force_commit_each_short_delta_from_cumulative_provider_time(
+) -> None:
     assembler = TranscriptAssembler(
         checkpoint_audio_ms=10_000,
         max_segment_audio_ms=3_800,
@@ -214,7 +227,8 @@ def test_transcript_assembler_does_not_force_commit_each_short_delta_from_cumula
     assert len({segment.segment_id for segment in segments}) == 1
 
 
-def test_transcript_assembler_does_not_force_commit_single_cjk_token_from_cumulative_provider_time() -> None:
+def test_transcript_assembler_does_not_force_commit_single_cjk_token_from_cumulative_provider_time(
+) -> None:
     assembler = TranscriptAssembler(
         checkpoint_audio_ms=10_000,
         max_segment_audio_ms=3_800,
@@ -235,6 +249,8 @@ def test_transcript_assembler_does_not_force_commit_single_cjk_token_from_cumula
     )
 
     assert [(segment.text, segment.status) for segment in segments] == [
+        ("你", SegmentStatus.PARTIAL),
+        ("你好", SegmentStatus.PARTIAL),
         ("你好", SegmentStatus.COMMITTED),
     ]
     assert len({segment.segment_id for segment in segments}) == 1

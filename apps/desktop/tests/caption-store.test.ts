@@ -158,7 +158,7 @@ describe("桌面字幕状态机", () => {
     expect(selectActiveCaptionLine(lines)?.id).toBe("seg_source");
   });
 
-  it("独立 transcript partial 过短时先暂存，避免字幕窗逐字显示", () => {
+  it("独立 transcript partial 过短也立即进入当前行，避免前端比接收流更慢", () => {
     const lines = applyRealtimeEvent([], {
       type: "transcript.partial",
       session_id: "sess_demo",
@@ -174,7 +174,9 @@ describe("桌面字幕状态机", () => {
       end_ms: 160
     });
 
-    expect(lines).toEqual([]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].sourceText).toBe("等");
+    expect(lines[0].targetText).toBe("");
   });
 
   it("不创建只有源文草稿的短 partial 行，避免字幕窗逐词闪烁", () => {
@@ -252,7 +254,7 @@ describe("桌面字幕状态机", () => {
     expect(lines[0].targetText).toBe("这个模型很快");
   });
 
-  it("store 保留过短译文 token，由显示缓冲决定何时展示", () => {
+  it("store 保留 Agent 已发布的短译文事件文本", () => {
     const oneChar = applyRealtimeEvent([], {
       type: "translation.partial",
       session_id: "sess_demo",
@@ -394,6 +396,99 @@ describe("桌面字幕状态机", () => {
     expect(lines[0].targetText).toBe("");
   });
 
+  it("忽略 base_rev 不匹配的修订补丁，避免晚到 patch 覆盖新译文", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_patch",
+        rev: 3,
+        state: "stable",
+        sourceText: "The model is fast.",
+        targetText: "这个模型很快。",
+        stability: 0.9,
+        startMs: 0,
+        endMs: 1200,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.patch",
+      session_id: "sess_demo",
+      segment_id: "seg_patch",
+      rev: 4,
+      base_rev: 2,
+      target_lang: "zh-CN",
+      operations: [{ op: "replace", from_char: 0, to_char: 4, text: "旧补丁" }],
+      reason: "revision_window",
+      stability: 0.82
+    });
+
+    expect(lines).toEqual(initialLines);
+  });
+
+  it("忽略 locked 行上的修订补丁，避免最终字幕被自动改写", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_locked",
+        rev: 2,
+        state: "locked",
+        sourceText: "The final line is locked.",
+        targetText: "最终字幕已锁定。",
+        stability: 1,
+        startMs: 0,
+        endMs: 1200,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.patch",
+      session_id: "sess_demo",
+      segment_id: "seg_locked",
+      rev: 3,
+      base_rev: 2,
+      target_lang: "zh-CN",
+      operations: [{ op: "insert", at_char: 0, text: "错误" }],
+      reason: "context_revision",
+      stability: 0.82
+    });
+
+    expect(lines).toEqual(initialLines);
+  });
+
+  it("忽略 locked 行上的晚到 partial，避免最终字幕解锁回滚", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_locked_partial",
+        rev: 4,
+        state: "locked",
+        sourceText: "The final line is locked.",
+        targetText: "最终字幕已锁定。",
+        stability: 1,
+        startMs: 0,
+        endMs: 1200,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_locked_partial",
+      rev: 5,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The final line",
+      target_text: "最终字幕",
+      status: "stable",
+      stability: 0.82,
+      start_ms: 0,
+      end_ms: 900
+    });
+
+    expect(lines).toEqual(initialLines);
+  });
+
   it("忽略 realtime 控制事件，避免错误消息污染字幕列表", () => {
     const initialLines: CaptionLine[] = [
       {
@@ -473,7 +568,38 @@ describe("桌面字幕状态机", () => {
       }
     ];
 
-    expect(selectActiveCaptionLine(lines)?.id).toBe("seg_translated");
+    expect(selectActiveCaptionLine(lines)?.id).toBe("seg_source_draft");
+  });
+
+  it("按前端接收顺序选择当前字幕，而不是依赖后端音频时间戳", () => {
+    const lines: CaptionLine[] = [
+      {
+        id: "seg_old_audio_new_event",
+        rev: 1,
+        state: "interim",
+        sourceText: "current source hypothesis",
+        targetText: "",
+        stability: 0.72,
+        startMs: 0,
+        endMs: 800,
+        receivedAtMs: 2000,
+        patchCount: 0
+      },
+      {
+        id: "seg_new_audio_old_event",
+        rev: 1,
+        state: "stable",
+        sourceText: "older translated line",
+        targetText: "较早的译文",
+        stability: 0.9,
+        startMs: 900,
+        endMs: 1800,
+        receivedAtMs: 1000,
+        patchCount: 0
+      }
+    ];
+
+    expect(selectActiveCaptionLine(lines)?.id).toBe("seg_old_audio_new_event");
   });
 
   it("默认字幕只显示当前双语，聚焦和驻留态显示可回看的历史字幕", () => {
