@@ -109,6 +109,24 @@ def test_transcript_assembler_accepts_custom_emission_policy() -> None:
     ]
 
 
+def test_transcript_assembler_replaces_rolling_full_hypotheses() -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=10_000,
+        max_segment_audio_ms=10_000,
+        max_segment_chars=200,
+    )
+
+    segments = asyncio.run(
+        _collect(assembler.stream(_partial_segments(["Hello wor", "Hello world", "Hello world."])))
+    )
+
+    assert [(segment.text, segment.status) for segment in segments] == [
+        ("Hello wor", SegmentStatus.PARTIAL),
+        ("Hello world", SegmentStatus.PARTIAL),
+        ("Hello world.", SegmentStatus.COMMITTED),
+    ]
+
+
 async def _partial_segments(texts: list[str]) -> AsyncIterator[TranscriptSegment]:
     for index, text in enumerate(texts):
         yield TranscriptSegment(

@@ -5,6 +5,10 @@ from collections.abc import AsyncIterator
 from dataclasses import replace
 
 from echosync_agent.domain import SegmentStatus, TranscriptSegment, new_segment_id
+from echosync_agent.services.realtime.hypothesis_update_policy import (
+    DEFAULT_HYPOTHESIS_UPDATE_POLICY,
+    HypothesisUpdatePolicy,
+)
 from echosync_agent.services.realtime.text_emission_policy import (
     DEFAULT_TEXT_EMISSION_POLICY,
     TextEmissionPolicy,
@@ -25,12 +29,14 @@ class TranscriptAssembler:
         max_segment_audio_ms: int = 3800,
         max_segment_chars: int = 90,
         emission_policy: TextEmissionPolicy | None = None,
+        hypothesis_policy: HypothesisUpdatePolicy | None = None,
     ) -> None:
         self.commit_punctuation = commit_punctuation
         self.checkpoint_audio_ms = checkpoint_audio_ms
         self.max_segment_audio_ms = max_segment_audio_ms
         self.max_segment_chars = max_segment_chars
         self.emission_policy = emission_policy or DEFAULT_TEXT_EMISSION_POLICY
+        self.hypothesis_policy = hypothesis_policy or DEFAULT_HYPOTHESIS_UPDATE_POLICY
 
     async def stream(
         self,
@@ -55,7 +61,10 @@ class TranscriptAssembler:
             last = segment
             last_delta_at = time.perf_counter()
             buffer.append(segment.text)
-            current_text = f"{current_text}{segment.text}".strip()
+            current_text = self.hypothesis_policy.apply(
+                current_text=current_text,
+                incoming_text=segment.text,
+            ).text
 
             should_commit = (
                 segment.status == SegmentStatus.COMMITTED
