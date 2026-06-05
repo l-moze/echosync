@@ -81,7 +81,7 @@ Electron getDisplayMedia(loopback)
   -> Electron overlay caption-store
 ```
 
-Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit`。`audio.start` 可以声明本次会话的 `asr_provider` 和 `asr_latency_mode`，Agent 在服务端默认 `.env` 基础上做会话级覆盖，但 API key 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr` 或 `voxtral`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，方便现场拆分采集、传输、ASR 和翻译延迟。
+Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit`。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider` 覆盖后端 `.env` 默认值；API key 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr` 或 `voxtral`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，方便现场拆分采集、传输、ASR 和翻译延迟。
 
 桌面 UI 生命周期：
 
@@ -89,7 +89,7 @@ Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分
 Idle -> Active -> Finished
 ```
 
-`Idle` 负责视频/网课默认开箱和起飞前音频电平校验；`Active` 负责转写监控、健康度、术语快加和自动滚动锁；`Finished` 负责复盘、导出前清理和沉淀。透明字幕窗按 Layer A/B/C 分层，默认穿透，Hover 唤醒轻控制，Pin 后展示最近 2-3 行和字幕状态。桌面端的状态模型放在 `apps/desktop/src/shared/session-ui-state.ts` 和 `apps/desktop/src/shared/overlay-interaction.ts`，后续 Web 工作台可以复用同一语义而不共享 Electron IPC。
+`Idle` 负责视频/网课默认开箱和起飞前音频电平校验；`Active` 负责转写监控、健康度、术语快加和自动滚动锁；`Finished` 负责复盘、导出前清理和沉淀。收到当前会话 `realtime.error` 时，renderer 会停止本地音频 client、通知主进程回收采集状态，并退回带错误详情的失败浮层。透明字幕窗按 Layer A/B/C 分层，默认穿透，Hover 唤醒轻控制，Pin 后展示最近 2-3 行和字幕状态；字幕样式支持双语、主字幕、翻译字幕三种显示模式，旧 `line/split` 值归一为双语模式。桌面端的状态模型放在 `apps/desktop/src/shared/session-ui-state.ts` 和 `apps/desktop/src/shared/overlay-interaction.ts`，后续 Web 工作台可以复用同一语义而不共享 Electron IPC。
 
 ### 1.6. 会话回放记录
 
@@ -116,7 +116,7 @@ SessionArchiveDraft
 
 选型：当前 MVP 用 FastAPI WebSocket 承载桌面端 PCM16 音频块和字幕事件，优先把 Windows 本地悬浮字幕链路跑实。LiveKit/WebRTC 保留为后续远程房间、多端会议、浏览器音轨和云端 Agent 场景的候选传输层。
 
-控制事件语义：`realtime.error` 是终止态，表示启动校验失败或 pipeline 异常；`realtime.done` 只在正常结束时发送。用户主动停止时，Agent 会取消未完成的 pipeline；如果 pipeline 已经失败，则先把错误发给 realtime WebSocket 和 caption hub，避免客户端看到“失败后又完成”的矛盾状态。
+控制事件语义：`realtime.error` 是终止态，表示启动校验失败或 pipeline 异常；`realtime.done` 只在正常结束时发送。用户主动停止时，Agent 会取消未完成的 pipeline；如果 pipeline 已经失败，则先把错误发给 realtime WebSocket 和 caption hub，避免客户端看到“失败后又完成”的矛盾状态。Desktop 主进程的 caption WebSocket 正常断线 5 秒重连，但应用退出时会清理重连计时器并主动关闭连接。
 
 原则落实：
 

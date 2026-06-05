@@ -225,38 +225,6 @@ async def _run_realtime_session_stop_without_done_test() -> None:
     assert websocket.sent_messages == [{"type": "realtime.done", "session_id": "sess_stop"}]
 
 
-async def _run_realtime_session_start_error_does_not_send_done_test() -> None:
-    settings = replace(
-        Settings.from_env(),
-        asr_provider="mock",
-        translator_provider="mock",
-        glossary_enabled=False,
-    )
-    websocket = _MemoryWebSocket(
-        [
-            {
-                "type": "audio.start",
-                "source_lang": "en",
-                "sample_rate": 16_000,
-                "channels": 1,
-                "source_kind": "windows_system",
-            },
-        ]
-    )
-    hub = _MemoryCaptionHub()
-    session = _RealtimeWebSocketSession(
-        websocket=websocket,  # type: ignore[arg-type]
-        session_id="sess_start_error",
-        settings=settings,
-        caption_event_bus=hub,
-    )
-
-    await session.run()
-
-    assert [message["type"] for message in websocket.sent_messages] == ["realtime.error"]
-    assert not [event for event in hub.events if event[0] == "realtime.done"]
-
-
 async def _run_realtime_session_pipeline_error_publish_test() -> None:
     settings = replace(
         Settings.from_env(),
@@ -411,12 +379,9 @@ async def _run_realtime_session_start_error_does_not_send_done_test() -> None:
 
     await session.run()
 
+    assert [message["type"] for message in websocket.sent_messages] == ["realtime.error"]
     assert websocket.sent_messages[0]["type"] == "realtime.error"
     assert "mock ASR" in websocket.sent_messages[0]["message"]
-    done_messages = [
-        message for message in websocket.sent_messages if message["type"] == "realtime.done"
-    ]
-    assert not done_messages
     assert not [event for event in hub.events if event[0] == "realtime.done"]
 
 

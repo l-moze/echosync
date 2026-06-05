@@ -34,7 +34,7 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和模拟链路测试骨架。当前地基同时支持 ASR→翻译→修正的级联模型，以及未来 OpenAI Realtime、Qwen LiveTranslate、Azure Speech Translation 等端到端模型适配。
 
-ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。Desktop 会在 `audio.start` 中声明本次会话的 `asr_provider` 与 `asr_latency_mode`，Agent 以 `.env` 作为默认值并允许会话级覆盖；API key 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
+ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。Desktop 会在 `audio.start` 中声明本次会话的 `asr_latency_mode`，只有用户显式选择 provider 时才额外发送 `asr_provider` 覆盖后端 `.env` 默认值；API key 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
 
 当前 Web 工作台已按 `doc/UI设计调研.md` 的 MVP 方向实现：
 
@@ -57,7 +57,7 @@ ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 
 - `Idle`：视频/网课默认开箱，主区提供起飞前音频电平校验和一键打开字幕弹窗。
 - `Active`：主页切换为会话驾驶舱，展示最近转写、健康度、术语快加和自动滚动锁入口。
 - `Finished`：会话结束后停留在复盘态，提供导出前快速清理、摘要指标和最近记录。
-- 字幕弹窗采用 Layer A/B/C：默认穿透极简、Hover 轻控制、Pin 小型双语舞台，并支持快捷唤醒和召回居中。
+- 字幕弹窗采用 Layer A/B/C：默认穿透极简、Hover 轻控制、Pin 小型双语舞台，并支持快捷唤醒和召回居中；字幕样式支持双语、主字幕、翻译字幕三种显示模式，旧 `line/split` 配置会兼容回双语模式。
 - 会话结束后会保留本次原始音频 Blob，并在复盘页提供双栏原文/译文、片段级播放高亮和点击片段 seek。当前归档只在本次进程内可回放，下一阶段落盘到 `userData/sessions/{sessionId}/`。
 
 ## 文档与备注规范
@@ -97,7 +97,7 @@ ECHOSYNC_ASR_PROVIDER=funasr
 FUNASR_DEVICE=auto
 ```
 
-也可以在 Desktop 会话启动时通过 `audio.start.asr_provider` 覆盖默认 ASR provider。当前 renderer 默认真实采集使用 `funasr + balanced`；如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
+也可以在 Desktop 会话启动时通过 `audio.start.asr_provider` 覆盖默认 ASR provider。当前 renderer 默认真实采集只发送 `balanced` 延迟模式，不覆盖后端 provider；如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
 
 如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
 
@@ -113,7 +113,7 @@ FUNASR_DEVICE=auto
 
 实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 按 `segment_id` 合并待处理项，降低模型慢响应时的队列积压。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
 
-实时控制事件语义：`realtime.error` 表示本次会话启动失败或 pipeline 失败，客户端应进入错误态；`realtime.done` 只表示正常完成。用户主动停止时，如果 pipeline 已经失败，Agent 会优先上报错误；如果仍在处理队列，则取消未完成的 pipeline，避免停止后继续推送晚到字幕。
+实时控制事件语义：`realtime.error` 表示本次会话启动失败或 pipeline 失败，客户端应进入错误态并停止本地媒体流；`realtime.done` 只表示正常完成。用户主动停止时，如果 pipeline 已经失败，Agent 会优先上报错误；如果仍在处理队列，则取消未完成的 pipeline，避免停止后继续推送晚到字幕。
 
 原始音频录制与 ASR 发送是两条链路：`MediaRecorder` 连续保存原始 `MediaStream`，ASR 发送链路继续使用音频门控。这样复盘页能回放完整音频，而实时识别不会被静音流拖慢。
 

@@ -1467,7 +1467,11 @@ button:focus-visible {
 .captionText {
   display: grid;
   min-width: 0;
+  max-width: 100%;
   gap: 6px;
+  align-items: center;
+  justify-items: center;
+  text-align: center;
 }
 
 .floatingCaption > .captionText {
@@ -1489,25 +1493,19 @@ button:focus-visible {
   grid-column: 1 / -1;
 }
 
-.floatingCaption.mode-split .captionText {
-  grid-template-columns: minmax(0, 0.84fr) minmax(0, 1.16fr);
-  align-items: end;
-  column-gap: 24px;
-}
-
-.floatingCaption.translationFirst.mode-split .captionText {
-  grid-template-columns: minmax(0, 1.16fr) minmax(0, 0.84fr);
-}
-
 .overlaySource,
 .floatingCaption h1,
 .overlayTarget {
   margin: 0;
   min-width: 0;
-  overflow: hidden;
+  max-width: 100%;
   letter-spacing: 0;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
 }
 
 .overlaySource {
@@ -1515,12 +1513,14 @@ button:focus-visible {
   font-size: var(--source-size, 18px);
   line-height: 1.26;
   opacity: 0.76;
+  -webkit-line-clamp: 2;
 }
 
 .floatingCaption h1 {
   color: var(--target-color, #ffffff);
   font-size: var(--target-size, 30px);
   line-height: 1.18;
+  -webkit-line-clamp: 2;
 }
 
 .overlayError {
@@ -2070,11 +2070,6 @@ button:focus-visible {
   .floatingCaption,
   .overlayStage.layer-default .floatingCaption {
     width: min(100%, 92vw);
-  }
-
-  .floatingCaption.mode-split .captionText,
-  .floatingCaption.translationFirst.mode-split .captionText {
-    grid-template-columns: 1fr;
   }
 
   .overlayToolbar {

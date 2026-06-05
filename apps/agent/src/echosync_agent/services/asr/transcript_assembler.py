@@ -66,15 +66,21 @@ class TranscriptAssembler:
                 incoming_text=segment.text,
             ).text
 
-            should_commit = (
-                segment.status == SegmentStatus.COMMITTED
-                or self._should_commit(segment.text)
-                or self._should_force_commit(current_text, first, last)
+            should_commit = self._should_commit(current_text) or self._should_force_commit(
+                current_text,
+                first,
+                last,
             )
             should_checkpoint = (
                 not should_commit
-                and checkpoint_start_ms is not None
-                and segment.end_ms - checkpoint_start_ms >= self.checkpoint_audio_ms
+                and (
+                    (
+                        checkpoint_start_ms is not None
+                        and segment.end_ms - checkpoint_start_ms >= self.checkpoint_audio_ms
+                    )
+                    or segment.status == SegmentStatus.COMMITTED
+                )
+                and self._should_checkpoint(current_text)
             )
 
             status = SegmentStatus.PARTIAL
@@ -127,16 +133,33 @@ class TranscriptAssembler:
     def _should_commit(self, text: str) -> bool:
         return text.rstrip().endswith(tuple(self.commit_punctuation))
 
+    def _should_checkpoint(self, text: str) -> bool:
+        text = text.strip()
+        if not text:
+            return False
+        if text.endswith((",", "，", ";", "；", ":", "：")):
+            return True
+        if _contains_cjk(text):
+            return len(_visible_chars(text)) >= 8
+        return _word_count(text) >= 3 and len(_visible_chars(text)) >= 10
+
     def _should_force_commit(
         self,
         text: str,
         first: TranscriptSegment,
         last: TranscriptSegment,
     ) -> bool:
-        return (
-            last.end_ms - first.start_ms >= self.max_segment_audio_ms
-            or len(text) >= self.max_segment_chars
-        )
+        if len(text) >= self.max_segment_chars:
+            return True
+        if last.end_ms - first.start_ms < self.max_segment_audio_ms:
+            return False
+
+        # Some realtime providers attach cumulative audio-window timestamps to
+        # every short text delta. Do not turn those word-sized partials into
+        # locked subtitle rows just because the provider window is already long.
+        if _contains_cjk(text):
+            return len(_visible_chars(text)) >= 8
+        return len(text) >= max(24, self.max_segment_chars // 3)
 
     @staticmethod
     def _build_segment(
@@ -160,3 +183,15 @@ class TranscriptAssembler:
             stability=1.0 if status == SegmentStatus.COMMITTED else last.stability,
             metrics=metrics,
         )
+
+
+def _contains_cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def _visible_chars(text: str) -> str:
+    return "".join(char for char in text if not char.isspace())
+
+
+def _word_count(text: str) -> int:
+    return len([part for part in text.replace("-", " ").split() if part.strip()])

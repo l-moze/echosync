@@ -127,6 +127,119 @@ def test_transcript_assembler_replaces_rolling_full_hypotheses() -> None:
     ]
 
 
+def test_transcript_assembler_does_not_checkpoint_single_word_from_cumulative_provider_time() -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=1_000,
+        max_segment_audio_ms=10_000,
+        max_segment_chars=200,
+    )
+
+    segments = asyncio.run(
+        _collect(
+            assembler.stream(
+                _timed_partial_segments(
+                    [
+                        ("we", 0, 4_000),
+                        (" are", 0, 4_080),
+                    ]
+                )
+            )
+        )
+    )
+
+    assert [(segment.text, segment.status) for segment in segments] == [
+        ("we", SegmentStatus.PARTIAL),
+        ("we are", SegmentStatus.PARTIAL),
+        ("we are", SegmentStatus.COMMITTED),
+    ]
+
+
+def test_transcript_assembler_does_not_lock_each_short_upstream_final_without_punctuation() -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=10_000,
+        max_segment_audio_ms=10_000,
+        max_segment_chars=200,
+    )
+
+    segments = asyncio.run(
+        _collect(
+            assembler.stream(
+                _timed_segments(
+                    [
+                        ("we", 0, 600, SegmentStatus.COMMITTED),
+                        (" are", 600, 1_200, SegmentStatus.COMMITTED),
+                        (" training", 1_200, 1_800, SegmentStatus.COMMITTED),
+                        (" our", 1_800, 2_400, SegmentStatus.COMMITTED),
+                        (" model.", 2_400, 3_000, SegmentStatus.COMMITTED),
+                    ]
+                )
+            )
+        )
+    )
+
+    committed = [segment for segment in segments if segment.status == SegmentStatus.COMMITTED]
+    assert [segment.text for segment in committed] == ["we are training our model."]
+    assert len({segment.segment_id for segment in segments}) == 1
+
+
+def test_transcript_assembler_does_not_force_commit_each_short_delta_from_cumulative_provider_time() -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=10_000,
+        max_segment_audio_ms=3_800,
+        max_segment_chars=200,
+    )
+
+    segments = asyncio.run(
+        _collect(
+            assembler.stream(
+                _timed_partial_segments(
+                    [
+                        ("we", 0, 4_000),
+                        (" are", 0, 4_080),
+                        (" training", 0, 4_160),
+                        (" our", 0, 4_240),
+                    ]
+                )
+            )
+        )
+    )
+
+    assert [(segment.text, segment.status) for segment in segments] == [
+        ("we", SegmentStatus.PARTIAL),
+        ("we are", SegmentStatus.PARTIAL),
+        ("we are training", SegmentStatus.PARTIAL),
+        ("we are training our", SegmentStatus.PARTIAL),
+        ("we are training our", SegmentStatus.COMMITTED),
+    ]
+    assert len({segment.segment_id for segment in segments}) == 1
+
+
+def test_transcript_assembler_does_not_force_commit_single_cjk_token_from_cumulative_provider_time() -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=10_000,
+        max_segment_audio_ms=3_800,
+        max_segment_chars=200,
+    )
+
+    segments = asyncio.run(
+        _collect(
+            assembler.stream(
+                _timed_partial_segments(
+                    [
+                        ("你", 0, 4_000),
+                        ("好", 0, 4_080),
+                    ]
+                )
+            )
+        )
+    )
+
+    assert [(segment.text, segment.status) for segment in segments] == [
+        ("你好", SegmentStatus.COMMITTED),
+    ]
+    assert len({segment.segment_id for segment in segments}) == 1
+
+
 async def _partial_segments(texts: list[str]) -> AsyncIterator[TranscriptSegment]:
     for index, text in enumerate(texts):
         yield TranscriptSegment(
@@ -139,6 +252,42 @@ async def _partial_segments(texts: list[str]) -> AsyncIterator[TranscriptSegment
             text=text,
             status=SegmentStatus.PARTIAL,
             stability=0.72,
+            metrics={"asr_latency_ms": 12.0},
+        )
+
+
+async def _timed_partial_segments(
+    items: list[tuple[str, int, int]]
+) -> AsyncIterator[TranscriptSegment]:
+    for index, (text, start_ms, end_ms) in enumerate(items):
+        yield TranscriptSegment(
+            session_id="sess_asm",
+            segment_id=f"seg_timed_{index}",
+            rev=1,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            source_lang="en",
+            text=text,
+            status=SegmentStatus.PARTIAL,
+            stability=0.72,
+            metrics={"asr_latency_ms": 12.0},
+        )
+
+
+async def _timed_segments(
+    items: list[tuple[str, int, int, SegmentStatus]]
+) -> AsyncIterator[TranscriptSegment]:
+    for index, (text, start_ms, end_ms, status) in enumerate(items):
+        yield TranscriptSegment(
+            session_id="sess_asm",
+            segment_id=f"seg_status_{index}",
+            rev=1,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            source_lang="en",
+            text=text,
+            status=status,
+            stability=1.0 if status == SegmentStatus.COMMITTED else 0.72,
             metrics={"asr_latency_ms": 12.0},
         )
 

@@ -30,6 +30,7 @@ import {
 } from "../shared/session-ui-state";
 import {
   defaultSubtitleStyle,
+  normalizeSubtitleDisplayMode,
   reduceSubtitleStyleState,
   type SubtitleDisplayMode,
   type SubtitleOutlineStyle,
@@ -56,7 +57,7 @@ function useSharedSubtitleStyle() {
 
   useEffect(() => {
     const remove = window.echosyncDesktop?.onSubtitleStyle((style) => {
-      setSubtitleStyle(style);
+      setSubtitleStyle((current) => reduceSubtitleStyleState(current, style));
     });
     return () => remove?.();
   }, []);
@@ -87,6 +88,12 @@ function App() {
   const realtimeClientRef = useRef<RealtimeAudioClient | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const startupRunIdRef = useRef(0);
+  const sessionUiRef = useRef(sessionUi);
+  const terminalRealtimeErrorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    sessionUiRef.current = sessionUi;
+  }, [sessionUi]);
 
   useEffect(() => {
     const removeCaptionListener = window.echosyncDesktop?.onRealtimeEvent((event) => {
@@ -106,13 +113,20 @@ function App() {
           state: "error",
           message: event.message
         }));
+        void stopRealtimeAfterError(event.message);
       }
     });
     const removeCaptureListener = window.echosyncDesktop?.onCaptureState((nextSnapshot) => {
-      setSnapshot(nextSnapshot);
+      const terminalError = terminalRealtimeErrorRef.current;
+      setSnapshot(
+        terminalError && nextSnapshot.state === "stopped"
+          ? { ...nextSnapshot, state: "error", message: terminalError, sessionId: undefined }
+          : nextSnapshot
+      );
       setSourceId(nextSnapshot.sourceId);
       activeSessionIdRef.current = nextSnapshot.sessionId ?? null;
       if (nextSnapshot.state === "listening") {
+        terminalRealtimeErrorRef.current = null;
         dispatchSessionUi({ type: "session.started" });
       }
       if (nextSnapshot.state === "error") {
@@ -140,7 +154,9 @@ function App() {
   const currentSource = DESKTOP_AUDIO_SOURCES.find((source) => source.id === sourceId) ?? DESKTOP_AUDIO_SOURCES[1];
 
   function dispatchSessionUi(event: SessionUiEvent) {
-    setSessionUi((current) => reduceSessionUiState(current, event));
+    const next = reduceSessionUiState(sessionUiRef.current, event);
+    sessionUiRef.current = next;
+    setSessionUi(next);
   }
 
   useEffect(() => {
@@ -180,6 +196,7 @@ function App() {
       activeSessionIdRef.current = null;
     }
     setRealtimeError(null);
+    terminalRealtimeErrorRef.current = null;
     setSessionArchive(null);
     setLines(createInitialCaptionLines());
     const client = createRealtimeAudioClient({ sourceId: nextSourceId });
@@ -220,6 +237,36 @@ function App() {
     } else {
       dispatchSessionUi({ type: "startup.failed", message: "桌面端没有返回音频采集状态。" });
     }
+  }
+
+  async function stopRealtimeAfterError(message: string) {
+    startupRunIdRef.current += 1;
+    terminalRealtimeErrorRef.current = message;
+    const currentClient = realtimeClientRef.current;
+    realtimeClientRef.current = null;
+    activeSessionIdRef.current = null;
+    let nextSnapshot: DesktopCaptureSnapshot | undefined;
+
+    try {
+      await currentClient?.stop();
+    } catch (error) {
+      console.warn("[realtime] 停止失败会话音频流时出错:", error);
+    }
+
+    try {
+      nextSnapshot = await window.echosyncDesktop?.stopCapture();
+    } catch (error) {
+      console.warn("[realtime] 更新失败会话采集状态时出错:", error);
+    }
+
+    setSnapshot((current) => ({
+      ...(nextSnapshot ?? current),
+      state: "error",
+      message,
+      sessionId: undefined
+    }));
+
+    dispatchSessionUi({ type: "startup.failed", message });
   }
 
   async function stopCapture() {
@@ -1204,6 +1251,7 @@ function OverlayWindow({
 }
 
 function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyle: SubtitleStyleState }) {
+  const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
   const sourceText = line?.sourceText ?? "Waiting for audio stream...";
   const targetText = line?.targetText.trim() || (line ? "正在翻译..." : "等待 Windows 系统声音或麦克风输入");
   const source = (
@@ -1217,7 +1265,25 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
     </h1>
   );
 
-  return <div className="captionText">{subtitleStyle.translationFirst ? <>{target}{source}</> : <>{source}{target}</>}</div>;
+  const bilingual = subtitleStyle.translationFirst ? (
+    <>
+      {target}
+      {source}
+    </>
+  ) : (
+    <>
+      {source}
+      {target}
+    </>
+  );
+
+  return (
+    <div className="captionText">
+      {displayMode === "source" ? source : null}
+      {displayMode === "translation" ? target : null}
+      {displayMode === "bilingual" ? bilingual : null}
+    </div>
+  );
 }
 
 function OverlayCaptionHistory({ lines, subtitleStyle }: { lines: CaptionLine[]; subtitleStyle: SubtitleStyleState }) {
@@ -1296,6 +1362,7 @@ function OverlaySessionBar({
   subtitleStyle: SubtitleStyleState;
 }) {
   const durationMs = Math.max(0, ...lines.map((line) => line.endMs)) + (isListening ? 10400 : 0);
+  const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
   return (
     <div className="overlaySessionBar">
       <button
@@ -1316,13 +1383,16 @@ function OverlaySessionBar({
       <span className="sessionPill">Agent Provider</span>
       <span className="sessionPill">{sourceLabel(snapshot.sourceId)}</span>
       <details className="displayModePicker">
-        <summary>{subtitleStyle.displayMode === "split" ? "分区对照" : "逐句对照"}</summary>
+        <summary>{styleOptionLabel(displayMode)}</summary>
         <div className="displayModeMenu">
-          <button className={subtitleStyle.displayMode === "line" ? "selected" : ""} onClick={() => onDisplayModeChange("line")}>
-            逐句对照
+          <button className={displayMode === "bilingual" ? "selected" : ""} onClick={() => onDisplayModeChange("bilingual")}>
+            双语字幕
           </button>
-          <button className={subtitleStyle.displayMode === "split" ? "selected" : ""} onClick={() => onDisplayModeChange("split")}>
-            分区对照
+          <button className={displayMode === "source" ? "selected" : ""} onClick={() => onDisplayModeChange("source")}>
+            主字幕
+          </button>
+          <button className={displayMode === "translation" ? "selected" : ""} onClick={() => onDisplayModeChange("translation")}>
+            翻译字幕
           </button>
         </div>
       </details>
@@ -1366,16 +1436,16 @@ function SubtitleStylePanel({
       </header>
       <div className="subtitleStylePanelBody">
         <StyleSection title="主字幕">
-          <StepperRow label="字号" max={40} min={20} onChange={(targetScale) => onChange({ targetScale })} value={subtitleStyle.targetScale} />
-          <SwatchRow label="颜色" onChange={(targetColor) => onChange({ targetColor })} value={subtitleStyle.targetColor} />
-          <SelectRow label="字体" onChange={(targetFont) => onChange({ targetFont })} options={fontOptions} value={subtitleStyle.targetFont} />
-          <SwitchRow label="加粗" onChange={(targetBold) => onChange({ targetBold })} value={subtitleStyle.targetBold} />
-        </StyleSection>
-        <StyleSection title="翻译字幕">
           <StepperRow label="字号" max={28} min={12} onChange={(sourceScale) => onChange({ sourceScale })} value={subtitleStyle.sourceScale} />
           <SwatchRow label="颜色" onChange={(sourceColor) => onChange({ sourceColor })} value={subtitleStyle.sourceColor} />
           <SelectRow label="字体" onChange={(sourceFont) => onChange({ sourceFont })} options={fontOptions} value={subtitleStyle.sourceFont} />
           <SwitchRow label="加粗" onChange={(sourceBold) => onChange({ sourceBold })} value={subtitleStyle.sourceBold} />
+        </StyleSection>
+        <StyleSection title="翻译字幕">
+          <StepperRow label="字号" max={40} min={20} onChange={(targetScale) => onChange({ targetScale })} value={subtitleStyle.targetScale} />
+          <SwatchRow label="颜色" onChange={(targetColor) => onChange({ targetColor })} value={subtitleStyle.targetColor} />
+          <SelectRow label="字体" onChange={(targetFont) => onChange({ targetFont })} options={fontOptions} value={subtitleStyle.targetFont} />
+          <SwitchRow label="加粗" onChange={(targetBold) => onChange({ targetBold })} value={subtitleStyle.targetBold} />
         </StyleSection>
         <StyleSection title="其他设置">
           <StepperRow label="背景透明度" max={0.95} min={0.35} onChange={(backgroundOpacity) => onChange({ backgroundOpacity })} step={0.05} value={subtitleStyle.backgroundOpacity} />
@@ -1390,7 +1460,7 @@ function SubtitleStylePanel({
           <SelectRow
             label="显示模式"
             onChange={(displayMode) => onChange({ displayMode: displayMode as SubtitleDisplayMode })}
-            options={["line", "split"]}
+            options={["bilingual", "source", "translation"]}
             value={subtitleStyle.displayMode}
           />
         </StyleSection>
@@ -1550,8 +1620,9 @@ function fontFamilyValue(value: string) {
 
 function styleOptionLabel(value: string) {
   const labels: Record<string, string> = {
-    line: "逐句对照",
-    split: "分区对照",
+    bilingual: "双语字幕",
+    source: "主字幕",
+    translation: "翻译字幕",
     shadow: "阴影",
     outline: "描边",
     none: "无"

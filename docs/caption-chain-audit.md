@@ -40,11 +40,11 @@
 
 ## 当前状态
 
-当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传时采集音频，先发送 JSON 控制帧 `audio.start`，声明 `asr_provider`、`asr_latency_mode`、采样率和源信息，再把音频正文转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`，Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
+当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传时采集音频，先发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`，Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
 
 后端仍兼容旧 JSON `audio.chunk` / `pcm_base64`，主要用于旧测试、纯 ASR 调试和过渡期兼容；当前 Desktop 真实链路默认不走 base64 JSON。
 
-仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Agent 会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider` 可以做会话级切换；密钥和模型配置仍来自 Agent 端 `.env`。
+仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Agent 会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥和模型配置仍来自 Agent 端 `.env`。
 
 `8765` 与 `8766` 的边界：
 
@@ -66,7 +66,7 @@
 
 ### 断点 3：错误终止事件必须和正常完成事件互斥
 **原因**：实时链路如果在 `audio.start` 时先启动 pipeline、再校验 ASR provider，mock + 真实 PCM 会先发 `realtime.error`，随后空 pipeline 正常退出又发 `realtime.done`，桌面端会看到矛盾状态。
-**处理**：Agent 现在先应用会话级 ASR 配置和音频源校验，再启动 pipeline。`realtime.error` 表示终止态，启动失败或 pipeline 异常不再追加 `realtime.done`；用户停止时如果 pipeline 已经失败，会优先上报错误。
+**处理**：Agent 现在先应用会话级 ASR 配置和音频源校验，再启动 pipeline。`realtime.error` 表示终止态，启动失败或 pipeline 异常不再追加 `realtime.done`；用户停止时如果 pipeline 已经失败，会优先上报错误。Desktop 收到当前会话错误后会停止本地音频 client、回收主进程采集状态，并退回失败浮层。
 
 ## 文件变更清单
 
@@ -75,9 +75,10 @@
 | `transport/caption_ws.py` | `run_caption_server()` 传 producer；WS handler 每次连接重新运行 producer |
 | `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；`realtime.error` 与 `realtime.done` 保持互斥 |
 | `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数并订阅 |
-| `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连 |
-| `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
-| `desktop/src/renderer/main.tsx` | 移除 demoEvents，新增 `hasRealEvents` 状态 |
+| `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；应用退出时清理重连计时器并关闭 WS |
+| `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame；默认不覆盖后端 ASR provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
+| `desktop/src/renderer/main.tsx` | 移除 demoEvents，新增 `hasRealEvents` 状态；收到当前会话 `realtime.error` 时停止本地音频并回收采集状态 |
+| `desktop/src/shared/subtitle-style-state.ts` | 字幕显示模式迁移为双语、主字幕、翻译字幕三态，兼容旧 `line/split` 配置 |
 
 ## 下一步推进
 

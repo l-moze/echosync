@@ -159,6 +159,25 @@ describe("主页 Stateful Hybrid 状态模型", () => {
     });
   });
 
+  it("活跃会话失败后回到首页面板并保留错误浮层", () => {
+    const active = reduceSessionUiState(createInitialSessionUiState({ platform: "windows" }), {
+      type: "session.started"
+    });
+
+    const failed = reduceSessionUiState(active, {
+      type: "startup.failed",
+      message: "当前是 mock ASR，不能处理真实音频。"
+    });
+
+    expect(failed.lifecycle).toBe("idle");
+    expect(failed.activePanel).toBe("start");
+    expect(failed.controlBarVisible).toBe(false);
+    expect(failed.startup).toMatchObject({
+      phase: "failed",
+      detail: "当前是 mock ASR，不能处理真实音频。"
+    });
+  });
+
   it("用户回溯或选择文本时锁定自动滚动并提示新内容", () => {
     const active = reduceSessionUiState(createInitialSessionUiState({ platform: "windows" }), {
       type: "session.started"

@@ -248,6 +248,9 @@ export function reduceSessionUiState(state: SessionUiState, event: SessionUiEven
   if (event.type === "startup.failed") {
     return {
       ...state,
+      lifecycle: "idle",
+      activePanel: "start",
+      controlBarVisible: false,
       startup: {
         phase: "failed",
         startedAtMs: state.startup.startedAtMs,

@@ -42,6 +42,8 @@ let captureSnapshot: DesktopCaptureSnapshot = {
 };
 let subtitleStyle: SubtitleStyleState = defaultSubtitleStyle;
 let captionWs: WebSocket | null = null;
+let captionReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let isQuitting = false;
 const captionEventBuffer = createCaptionEventBuffer();
 
 function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay" | "subtitle-style") {
@@ -337,6 +339,13 @@ app.whenReady().then(() => {
 });
 
 function connectCaptionWs() {
+  if (isQuitting) {
+    return;
+  }
+  if (captionReconnectTimer) {
+    clearTimeout(captionReconnectTimer);
+    captionReconnectTimer = null;
+  }
   try {
     captionWs = new WebSocket(CAPTION_WS_URL);
 
@@ -355,8 +364,9 @@ function connectCaptionWs() {
 
     captionWs.on("close", (code, reason) => {
       console.log("[caption-ws] 已断开，code:", code, "reason:", reason.toString());
-      // 5 秒后重连
-      setTimeout(connectCaptionWs, 5000);
+      if (!isQuitting) {
+        captionReconnectTimer = setTimeout(connectCaptionWs, 5000);
+      }
     });
 
     captionWs.on("error", (err: Error) => {
@@ -392,6 +402,11 @@ function clamp(value: number, min: number, max: number) {
 }
 
 app.on("before-quit", () => {
+  isQuitting = true;
+  if (captionReconnectTimer) {
+    clearTimeout(captionReconnectTimer);
+    captionReconnectTimer = null;
+  }
   globalShortcut.unregisterAll();
   captionWs?.close();
 });

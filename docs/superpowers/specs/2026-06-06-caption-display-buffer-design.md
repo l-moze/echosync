@@ -26,6 +26,9 @@ EchoSync 当前字幕链路已经有 `transcript.partial`、`translation.partial
 
 ```text
 Agent events
+  -> TranscriptAssembler
+       合并 ASR token / word delta
+       只有标点、足够长度、或强制边界才形成 stable/locked
   -> caption-store
        保存最新 desired source/target/state/rev
        不再因为短 token 丢弃 translation.partial
@@ -42,12 +45,26 @@ Dashboard / Export / Archive
 
 ## 显示策略
 
+### 字幕模式
+
+- `bilingual`：默认模式，翻译字幕作为主行显示，原文主字幕作为较小副行显示，双行纵向堆叠，不做左右分区。
+- `source`：只显示原文主字幕，用于用户想核对 ASR 识别内容时。
+- `translation`：只显示中文翻译字幕，用于沉浸式观看课程、演讲或会议时。
+- 双语模式允许“翻译字幕优先”配置，但默认必须中文优先，避免英文抢占阅读注意力。
+
 ### Store 层
 
 - `transcript.partial` 只更新源文，不清空已有译文。
 - `translation.partial` 只要有目标译文就更新 desired target。
 - 空目标的 source-only 事件仍不创建新行，避免字幕窗出现只有源文的短草稿。
 - 旧 `rev` 仍丢弃，避免慢翻译回滚。
+
+### Agent 断句层
+
+- ASR 供应商的 token / word delta 不能直接变成可翻译段。
+- 上游 `COMMITTED` 只表示该小块 ASR 已最终，不等同于 EchoSync 字幕段要锁定。
+- 英文默认不在单词级 checkpoint；至少需要短语级内容，或遇到逗号/冒号等弱边界。
+- 真正 `locked` 优先由句末标点、最大字符数、或强制长段边界触发。
 
 ### Display Buffer 层
 

@@ -1,4 +1,4 @@
-export type SubtitleDisplayMode = "split" | "line";
+export type SubtitleDisplayMode = "bilingual" | "source" | "translation";
 export type SubtitleOutlineStyle = "outline" | "shadow" | "none";
 
 export type SubtitleStyleState = {
@@ -29,13 +29,22 @@ export const defaultSubtitleStyle: SubtitleStyleState = {
   backgroundOpacity: 0.76,
   backgroundBlur: 24,
   outlineStyle: "shadow",
-  translationFirst: false,
-  displayMode: "split"
+  translationFirst: true,
+  displayMode: "bilingual"
 };
 
 export function reduceSubtitleStyleState(
   state: SubtitleStyleState,
   patch: Partial<SubtitleStyleState>
 ): SubtitleStyleState {
-  return { ...state, ...patch };
+  const next = { ...state, ...patch };
+  return { ...next, displayMode: normalizeSubtitleDisplayMode(next.displayMode) };
+}
+
+export function normalizeSubtitleDisplayMode(mode: SubtitleDisplayMode | "line" | "split"): SubtitleDisplayMode {
+  if (mode === "source" || mode === "translation") {
+    return mode;
+  }
+
+  return "bilingual";
 }

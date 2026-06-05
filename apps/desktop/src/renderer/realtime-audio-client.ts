@@ -36,7 +36,7 @@ export type RealtimeAudioClientOptions = {
 
 export function createRealtimeAudioClient({
   asrLatencyMode = "balanced",
-  asrProvider = "funasr",
+  asrProvider,
   endpointBaseUrl = DEFAULT_REALTIME_WS_URL,
   recorder = createSessionRecorder(),
   sessionId = createSessionId(),
@@ -76,7 +76,7 @@ export function createRealtimeAudioClient({
       silentOutput = audioContext.createGain();
       silentOutput.gain.value = 0;
 
-      socket.send(JSON.stringify({
+      const startMessage: Record<string, unknown> = {
         type: "audio.start",
         protocol: "pcm16.binary.v1",
         frame_duration_ms: AUDIO_FRAME_DURATION_MS,
@@ -85,9 +85,12 @@ export function createRealtimeAudioClient({
         channels: 1,
         source_kind: sourceKindForSource(sourceId),
         device_id: sourceId,
-        asr_provider: asrProvider,
         asr_latency_mode: asrLatencyMode
-      }));
+      };
+      if (asrProvider) {
+        startMessage.asr_provider = asrProvider;
+      }
+      socket.send(JSON.stringify(startMessage));
 
       processor.onaudioprocess = (event) => {
         if (!socket || socket.readyState !== WebSocket.OPEN || !audioContext) {
