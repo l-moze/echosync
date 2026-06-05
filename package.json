@@ -5,6 +5,10 @@
   "description": "AI simultaneous interpretation assistant workspace.",
   "scripts": {
     "dev:web": "npm --prefix apps/web run dev",
+    "dev:desktop": "npm --prefix apps/desktop run dev",
+    "build:desktop": "npm --prefix apps/desktop run build",
+    "test:desktop": "npm --prefix apps/desktop test",
+    "typecheck:desktop": "npm --prefix apps/desktop run typecheck",
     "lint:web": "npm --prefix apps/web run typecheck",
     "typecheck:web": "npm --prefix apps/web run typecheck",
     "test:agent": "cd apps/agent && python -m pytest",

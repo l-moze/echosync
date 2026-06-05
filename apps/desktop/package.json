@@ -1,0 +1,35 @@
+{
+  "name": "@echosync/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "EchoSync Windows 悬浮字幕桌面端。",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "npm run build:main && npm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "dev": "npm run build:main && concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env ECHOSYNC_DESKTOP_RENDERER_URL=http://127.0.0.1:5173 electron .",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "start": "electron .",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "9.2.1",
+    "cross-env": "^7.0.3",
+    "electron": "^37.6.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.0.0",
+    "vitest": "^4.1.8",
+    "wait-on": "^9.0.10"
+  }
+}
