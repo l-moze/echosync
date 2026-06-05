@@ -2,6 +2,26 @@
 
 ## 技术选型与原则映射
 
+## 与 deep-research-report.md 的对齐情况
+
+| 研究报告建议 | 当前框架实现 | 状态 | 说明 |
+|---|---|---|---|
+| Caption-first cascaded pipeline | `AudioFrame -> Transcriber -> Translator -> CorrectionEngine -> SubtitleSink` | 已对齐 | 字幕优先，TTS 只作为可选 `TtsSynthesizer` 边界。 |
+| React 或 Next.js 工作台 | `apps/web` 使用 Next 15 + React | 已对齐 | 已在 `D:\code\echosync` NTFS 路径下验证 Next 15 build。 |
+| 浏览器采集 microphone/tab/upload | UI 已保留 `mic/tab/file` 模式入口 | 部分对齐 | 真实 Web Audio/LiveKit capture 在 Phase 1 接入。 |
+| WebSocket 到自有后端 | 当前选择 LiveKit/WebRTC + Python Agent | 有意偏离 | 研究报告给 WebSocket/FastAPI 作为默认可控路径；补充文档要求 3 天 MVP 国内友好，优先 LiveKit 降低音频传输复杂度。后续可补 FastAPI control plane。 |
+| Python 实时编排服务 | `apps/agent` Python package | 已对齐 | 目前是 Agent 编排层，不把供应商 SDK 写进核心管道。 |
+| streaming ASR: faster-whisper 或 FunASR | `FunAsrTranscriber` 适配器占位，`MockTranscriber` 用于测试 | 已对齐 | MVP 接 FunASR；faster-whisper 可新增适配器，不改管道。 |
+| fast cloud translator | `DeepSeekTranslator` 使用 OpenAI-compatible API | 已对齐 | DeepSeek 符合补充文档的国内友好约束。 |
+| local-agreement stability | 由 `Transcriber` 输出 `partial/stable/committed` 状态，独立策略未实现 | 部分对齐 | 当前契约已预留状态字段；后续应新增 `StabilityPolicy` 或 ASR aggregator。 |
+| revision-window patches | `RevisionWindowCorrectionEngine` + `translation.patch` | 已对齐 | MVP 只做保守 patch，复杂上下文纠错放到后续迭代。 |
+| event stream, not full redraw | `EventSubtitleSink` 输出 `translation.partial`、`translation.patch`、`segment.commit` | 已对齐 | 前端 `protocol.ts` 与后端 DTO 对齐。 |
+| in-memory session state first, Redis later | `InMemoryEventBus` | 已对齐 | Redis Streams 放到 Phase 4。 |
+| glossary/termbank mandatory | DTO 和 `CorrectionContext.glossary` 已预留 | 部分对齐 | UI 有术语栏展示；术语管理和命中统计待实现。 |
+| optional TTS/native S2ST | `EdgeTtsSynthesizer` 边界 | 已对齐 | 默认关闭，避免 MVP 首版增加延迟。 |
+
+当前文档与研究报告的关系是：**产品/管道模型对齐，传输层采用补充文档里的 LiveKit 快速开发路线；FastAPI/WebSocket 作为后续可控路径保留，而不是删除。**
+
 ### 1. Next 15 Web 工作台
 
 选型：`apps/web` 使用 Next 15 + React，后续接 `@livekit/components-react` 获取麦克风、标签页音频或文件音频。页面放在 `src/app`，避开旧 F 盘 exFAT 环境下根级 `app/` 目录的权限锁。
