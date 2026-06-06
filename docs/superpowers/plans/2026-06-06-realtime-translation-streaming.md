@@ -10,6 +10,13 @@
 
 ---
 
+## Status 2026-06-06
+
+- Agent Tasks 1-4 已完成并通过全量 Agent 测试：`128 passed, 1 warning`。
+- Desktop Task 5 已完成“即时 snapshot 显示”和“过期 patch / locked late partial 防护”，并通过 focused Vitest 与 typecheck。
+- 仍有一个 P0 语义缺口：前端当前把 `translation.partial(status=committed)` 直接映射为 `locked`，会导致后续 `translation.patch` 在 `segment.commit` 之前被丢弃。真正锁定应只由 `segment.commit` 触发。
+- LocalAgreement buffer 和完整 LLM revision manager 仍是后续阶段，不属于本轮已完成范围。
+
 ### Task 1: Central Text Emission Policy
 
 **Files:**
@@ -17,7 +24,7 @@
 - Create: `apps/agent/src/echosync_agent/services/realtime/text_emission_policy.py`
 - Test: `apps/agent/tests/test_text_emission_policy.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 from echosync_agent.services.realtime.text_emission_policy import TextEmissionPolicy
@@ -49,7 +56,7 @@ def test_policy_flushes_target_on_readable_chunks_punctuation_final_and_rewrite(
     assert policy.should_emit_target(previous_text="大家好", next_text="大家好呀", is_final=True) is True
 ```
 
-- [ ] **Step 2: Run tests and verify failure**
+- [x] **Step 2: Run tests and verify failure**
 
 Run:
 
@@ -60,7 +67,7 @@ python -m pytest tests/test_text_emission_policy.py -q
 
 Expected: fail because `echosync_agent.services.realtime.text_emission_policy` does not exist.
 
-- [ ] **Step 3: Implement policy**
+- [x] **Step 3: Implement policy**
 
 Create `TextEmissionPolicy` with:
 
@@ -70,7 +77,7 @@ Create `TextEmissionPolicy` with:
 - source partial hold only for empty or duplicate text
 - punctuation-triggered flush
 
-- [ ] **Step 4: Run tests and verify pass**
+- [x] **Step 4: Run tests and verify pass**
 
 Run:
 
@@ -87,11 +94,11 @@ Expected: all tests pass.
 - Modify: `apps/agent/src/echosync_agent/services/asr/transcript_assembler.py`
 - Test: `apps/agent/tests/test_transcript_assembler_contracts.py`
 
-- [ ] **Step 1: Add regression test for injectable policy**
+- [x] **Step 1: Add regression test for injectable policy**
 
 Add a test that creates `TranscriptAssembler(emission_policy=TextEmissionPolicy(source_cjk_min_chars=2))` and verifies `"你", "好", "世"` emits cumulative source partials `"你"`, `"你好"`, `"你好世"` before final commit. The legacy `source_cjk_min_chars` option remains accepted for compatibility but no longer delays source display.
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 
 Run:
 
@@ -102,11 +109,11 @@ python -m pytest tests/test_transcript_assembler_contracts.py -q
 
 Expected: fail because `TranscriptAssembler` does not accept `emission_policy`.
 
-- [ ] **Step 3: Inject policy**
+- [x] **Step 3: Inject policy**
 
 Add optional constructor argument `emission_policy: TextEmissionPolicy | None = None`, default to `TextEmissionPolicy()`, and use `self.emission_policy.should_hold_source_partial(...)` only to suppress empty/duplicate source updates.
 
-- [ ] **Step 4: Verify assembler contracts**
+- [x] **Step 4: Verify assembler contracts**
 
 Run:
 
@@ -123,7 +130,7 @@ Expected: all assembler tests pass.
 - Modify: `apps/agent/src/echosync_agent/services/translation/deepseek_translator.py`
 - Test: `apps/agent/tests/test_deepseek_translator_contracts.py`
 
-- [ ] **Step 1: Add compatibility test**
+- [x] **Step 1: Add compatibility test**
 
 Keep `should_flush_streaming_target()` as a public helper and assert it delegates the same behavior:
 
@@ -132,7 +139,7 @@ assert should_flush_streaming_target(previous_text="旧译文", next_text="新")
 assert should_flush_streaming_target(previous_text="大家好", next_text="大家好呀", is_final=True) is True
 ```
 
-- [ ] **Step 2: Verify test fails**
+- [x] **Step 2: Verify test fails**
 
 Run:
 
@@ -143,11 +150,11 @@ python -m pytest tests/test_deepseek_translator_contracts.py -q
 
 Expected: fail because `is_final` is not accepted yet.
 
-- [ ] **Step 3: Delegate to policy**
+- [x] **Step 3: Delegate to policy**
 
 Import `DEFAULT_TEXT_EMISSION_POLICY`, update `should_flush_streaming_target(previous_text, next_text, is_final=False)`, and call the helper with `is_final=True` before yielding the final stream result.
 
-- [ ] **Step 4: Verify translator contracts**
+- [x] **Step 4: Verify translator contracts**
 
 Run:
 
@@ -163,7 +170,7 @@ Expected: all translator tests pass.
 **Files:**
 - Modify only files from Tasks 1-3.
 
-- [ ] **Step 1: Run full Agent tests**
+- [x] **Step 1: Run full Agent tests**
 
 Run:
 
@@ -174,9 +181,9 @@ python -m pytest
 
 Expected: all Agent tests pass.
 
-- [ ] **Step 2: Report remaining gaps**
+- [x] **Step 2: Report remaining gaps**
 
-Report that phase 1 is policy extraction and wiring only. LocalAgreement, LLM revision patching, and metrics are intentionally left for later tasks listed in the design spec.
+Report that phase 1 is policy extraction and wiring only. LocalAgreement and full LLM revision patching remain later tasks listed in the design spec. Translation first-token/final telemetry has completed first-round implementation; remaining telemetry work is capture/send/ASR-first-delta/overlay-render boundaries.
 
 ### Task 5: Frontend Snapshot Rendering Guardrails
 
@@ -186,19 +193,19 @@ Report that phase 1 is policy extraction and wiring only. LocalAgreement, LLM re
 - Test: `apps/desktop/tests/caption-store.test.ts`
 - Test: `apps/desktop/tests/caption-display-buffer.test.ts`
 
-- [ ] **Step 1: Preserve received text immediately**
+- [x] **Step 1: Preserve received text immediately**
 
 Add tests that a one-character `transcript.partial` creates/updates the current source line, and a short `translation.partial` is preserved in store and display buffer without frontend hold.
 
-- [ ] **Step 2: Remove frontend semantic buffering**
+- [x] **Step 2: Remove frontend semantic buffering**
 
 Keep `caption-display-buffer` as a snapshot pass-through. It may preserve `firstSeenAtMs` and `lastVisibleAtMs` for future visual decay, but it must not delay or chunk text.
 
-- [ ] **Step 3: Guard against stale revisions**
+- [ ] **Step 3: Guard against stale revisions and premature locking**
 
-Add tests that `translation.patch` is ignored when `base_rev` does not match or the line is already `locked`, and that late partials do not unlock committed lines.
+Add tests that `translation.patch` is ignored when `base_rev` does not match or the line is already truly locked by `segment.commit`, and that late partials do not unlock committed lines. Current code already covers stale `base_rev` and locked late partials, but still needs the P0 fix where `translation.partial(status=committed)` must not pre-lock the line before `segment.commit`.
 
-- [ ] **Step 4: Verify desktop contracts**
+- [x] **Step 4: Verify desktop contracts**
 
 Run:
 
