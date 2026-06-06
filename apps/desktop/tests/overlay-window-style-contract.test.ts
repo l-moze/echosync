@@ -61,6 +61,11 @@ describe("字幕弹窗样式契约", () => {
     expect(rendererSource).not.toContain("showChrome ? <OverlayResizeHandles /> : null");
   });
 
+  it("resize 手柄容器不覆盖全窗拖拽区域", () => {
+    expect(cssRule(".overlayResizeHandles")).not.toContain("-webkit-app-region: no-drag");
+    expect(cssRule(".resizeHandle")).toContain("-webkit-app-region: no-drag");
+  });
+
   it("顶部工具组容器只负责布局，不绘制圆角外框", () => {
     const toolbarRules = cssRules(".overlayToolbar");
 

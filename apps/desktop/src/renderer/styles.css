@@ -1771,7 +1771,6 @@ button:focus-visible {
 }
 
 .overlayResizeHandles {
-  -webkit-app-region: no-drag;
   position: absolute;
   inset: 0;
   z-index: 9;
@@ -1779,6 +1778,7 @@ button:focus-visible {
 }
 
 .resizeHandle {
+  -webkit-app-region: no-drag;
   position: absolute;
   display: block;
   pointer-events: auto;
