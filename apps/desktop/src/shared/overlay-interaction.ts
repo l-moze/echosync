@@ -67,7 +67,12 @@ export function reduceOverlayInteraction(
   }
 
   if (event.type === "hover.timer.elapsed") {
-    if (state.hoverStartedAtMs === null || state.layer === "settings" || state.layer === "pinned") {
+    if (
+      state.hoverStartedAtMs === null ||
+      state.layer === "settings" ||
+      state.layer === "pinned" ||
+      state.pointerMode === "dragging"
+    ) {
       return state;
     }
     if (event.atMs - state.hoverStartedAtMs < state.hoverIntentDelayMs) {

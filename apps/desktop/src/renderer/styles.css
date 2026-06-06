@@ -1423,7 +1423,7 @@ button:focus-visible {
   padding: 18px 30px 18px 34px;
   overflow: visible;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 22px;
+  border-radius: 0;
   background:
     linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
     rgba(12, 14, 18, 0.72);
@@ -1463,7 +1463,6 @@ button:focus-visible {
 .floatingCaption:focus-visible {
   min-height: 106px;
   border-color: rgba(255, 255, 255, 0.14);
-  border-radius: 22px;
   background:
     linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
     rgba(12, 14, 18, 0.72);
@@ -1481,7 +1480,6 @@ button:focus-visible {
   width: 100%;
   padding: 8px 24px 10px;
   border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
   background:
     linear-gradient(180deg, rgba(31, 35, 43, calc(var(--subtitle-bg-opacity, 0.76) * 0.78)), rgba(10, 12, 16, calc(var(--subtitle-bg-opacity, 0.76) * 0.78))),
     rgba(12, 14, 18, 0.52);
@@ -1496,7 +1494,6 @@ button:focus-visible {
 .overlayStage.layer-default .floatingCaption:focus-visible {
   min-height: 0;
   border-color: rgba(255, 255, 255, 0.1);
-  border-radius: 18px;
   background:
     linear-gradient(180deg, rgba(31, 35, 43, calc(var(--subtitle-bg-opacity, 0.76) * 0.78)), rgba(10, 12, 16, calc(var(--subtitle-bg-opacity, 0.76) * 0.78))),
     rgba(12, 14, 18, 0.52);

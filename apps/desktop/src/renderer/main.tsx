@@ -1432,7 +1432,10 @@ function OverlayWindow({
               />
             </div>
           ) : null}
-          {showChrome ? <OverlayResizeHandles /> : null}
+          <OverlayResizeHandles
+            onResizeEnd={() => dispatchOverlay({ type: "drag.ended" })}
+            onResizeStart={() => dispatchOverlay({ type: "drag.started" })}
+          />
         </section>
       </section>
     </main>
@@ -1441,17 +1444,19 @@ function OverlayWindow({
 
 type OverlayResizeDirection = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
 
-function OverlayResizeHandles() {
+function OverlayResizeHandles({ onResizeEnd, onResizeStart }: { onResizeEnd: () => void; onResizeStart: () => void }) {
   const directions: OverlayResizeDirection[] = ["n", "e", "s", "w", "ne", "nw", "se", "sw"];
 
   function startResize(direction: OverlayResizeDirection, event: ReactPointerEvent<HTMLSpanElement>) {
     event.preventDefault();
     event.stopPropagation();
+    onResizeStart();
     const startX = event.screenX;
     const startY = event.screenY;
     let initialBounds: DesktopWindowBounds | null = null;
     let frame: number | null = null;
     let pendingBounds: Partial<DesktopWindowBounds> | null = null;
+    let stopped = false;
 
     function scheduleResize(bounds: Partial<DesktopWindowBounds>) {
       pendingBounds = bounds;
@@ -1469,12 +1474,22 @@ function OverlayResizeHandles() {
     }
 
     function stopResize() {
+      if (stopped) {
+        return;
+      }
+      stopped = true;
       window.removeEventListener("pointermove", moveResize);
       window.removeEventListener("pointerup", stopResize);
       window.removeEventListener("pointercancel", stopResize);
       if (frame !== null) {
         window.cancelAnimationFrame(frame);
+        frame = null;
       }
+      if (pendingBounds) {
+        void window.echosyncDesktop?.resizeOverlay(pendingBounds);
+        pendingBounds = null;
+      }
+      onResizeEnd();
     }
 
     function moveResize(moveEvent: PointerEvent) {

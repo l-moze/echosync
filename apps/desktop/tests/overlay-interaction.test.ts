@@ -43,6 +43,21 @@ describe("字幕弹窗分层交互状态机", () => {
     expect(interactive.pointerMode).toBe("interactive");
   });
 
+  it("拖拽调整窗口大小期间不会被 hover timer 切到控制态", () => {
+    const pending = reduceOverlayInteraction(createInitialOverlayInteractionState(), {
+      type: "pointer.entered",
+      atMs: 1000
+    });
+    const dragging = reduceOverlayInteraction(pending, { type: "drag.started" });
+    const elapsed = reduceOverlayInteraction(dragging, {
+      type: "hover.timer.elapsed",
+      atMs: 1300
+    });
+
+    expect(elapsed.layer).toBe("default");
+    expect(elapsed.pointerMode).toBe("dragging");
+  });
+
   it("进入轻控制态后离开不会立刻卸载控制面板", () => {
     const interactive = reduceOverlayInteraction(
       reduceOverlayInteraction(createInitialOverlayInteractionState(), {

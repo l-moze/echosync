@@ -77,16 +77,29 @@ describe("悬浮字幕窗主进程行为", () => {
     expect(OVERLAY_WINDOW_PRESET.hasShadow).toBe(false);
   });
 
-  it("用户调整后的 overlay 宽度在各 layer 之间共享，高度按 layer 保存", () => {
+  it("用户调整后的 overlay 尺寸在各 layer 之间共享，并按 layer 最小尺寸夹取", () => {
     const resized = reduceOverlayWindowSizeState(
       createDefaultOverlayWindowSizeState(),
       "controls",
       { width: 900, height: 330 }
     );
 
-    expect(selectOverlayWindowLayout("default", resized).width).toBe(900);
+    expect(selectOverlayWindowLayout("default", resized)).toEqual({ width: 900, height: 330 });
     expect(selectOverlayWindowLayout("controls", resized)).toEqual({ width: 900, height: 330 });
-    expect(selectOverlayWindowLayout("pinned", resized).height).toBeGreaterThanOrEqual(460);
+    expect(selectOverlayWindowLayout("settings", resized)).toEqual({ width: 900, height: 330 });
+    expect(selectOverlayWindowLayout("pinned", resized)).toEqual({ width: 900, height: 420 });
+  });
+
+  it("设置态调整窗口大小后退出到默认态不回弹", () => {
+    const resized = reduceOverlayWindowSizeState(
+      createDefaultOverlayWindowSizeState(),
+      "settings",
+      { width: 960, height: 360 }
+    );
+
+    expect(selectOverlayWindowLayout("default", resized)).toEqual({ width: 960, height: 360 });
+    expect(selectOverlayWindowLayout("controls", resized)).toEqual({ width: 960, height: 360 });
+    expect(selectOverlayWindowLayout("settings", resized)).toEqual({ width: 960, height: 360 });
   });
 
   it("自定义 resize 会按当前 layer 最小尺寸和屏幕工作区夹取 bounds", () => {

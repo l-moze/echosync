@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const stylesheet = readFileSync(resolve(__dirname, "../src/renderer/styles.css"), "utf8");
+const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
 const overlayStylesheet = stylesheet.slice(stylesheet.indexOf("/* Overlay v2:"));
 
 function cssRule(selector: string): string {
@@ -15,6 +16,16 @@ function cssRules(selector: string): string[] {
   return [...overlayStylesheet.matchAll(new RegExp(`(?:^|\\n|})\\s*${escaped}\\s*\\{([^}]*)\\}`, "g"))].map(
     (match) => match[1],
   );
+}
+
+function rootCaptionWindowRules(): string[] {
+  return [...overlayStylesheet.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter((match) =>
+      match[1]
+        .split(",")
+        .some((selector) => /\.floatingCaption(?:[.:][\w-]+)*$/.test(selector.trim())),
+    )
+    .map((match) => match[2]);
 }
 
 describe("字幕弹窗样式契约", () => {
@@ -33,6 +44,21 @@ describe("字幕弹窗样式契约", () => {
 
   it("resize 手柄不绘制独立矩形角标", () => {
     expect(stylesheet).not.toContain(".resize-se::after");
+  });
+
+  it("字幕窗口本体保持直角，避免露出圆角透明父层", () => {
+    const captionRules = rootCaptionWindowRules();
+
+    expect(captionRules.length).toBeGreaterThan(0);
+    for (const captionRule of captionRules) {
+      const radiusValues = [...captionRule.matchAll(/\bborder-radius\s*:\s*([^;]+);/g)].map((match) => match[1].trim());
+      expect(radiusValues.every((value) => /^0(?:px)?$/.test(value))).toBe(true);
+    }
+  });
+
+  it("resize 手柄始终渲染，不依赖工具栏显示状态", () => {
+    expect(rendererSource).toContain("<OverlayResizeHandles");
+    expect(rendererSource).not.toContain("showChrome ? <OverlayResizeHandles /> : null");
   });
 
   it("顶部工具组容器只负责布局，不绘制圆角外框", () => {

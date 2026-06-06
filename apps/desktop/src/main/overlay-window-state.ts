@@ -85,13 +85,11 @@ export function reduceOverlayWindowSizeState(
   const width = Math.max(layout.width, minLayout.width);
   const height = Math.max(layout.height, minLayout.height);
   const nextHeightByLayer = {
-    ...state.heightByLayer,
-    [layer]: height
+    default: height,
+    controls: height,
+    settings: height,
+    pinned: height
   };
-  if (layer === "controls" || layer === "settings") {
-    nextHeightByLayer.controls = height;
-    nextHeightByLayer.settings = height;
-  }
   return {
     width,
     heightByLayer: nextHeightByLayer
