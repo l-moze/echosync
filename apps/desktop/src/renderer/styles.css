@@ -1091,7 +1091,7 @@ button:focus-visible {
   padding: 12px 28px 14px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0);
-  border-radius: 8px;
+  border-radius: 0;
   background:
     linear-gradient(90deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.08) 18%, rgba(0, 0, 0, 0.08) 82%, rgba(0, 0, 0, 0));
   box-shadow: none;
@@ -1101,7 +1101,6 @@ button:focus-visible {
     transform 180ms ease,
     min-height 180ms ease,
     border-color 180ms ease,
-    border-radius 180ms ease,
     background 180ms ease,
     opacity 180ms ease,
     box-shadow 180ms ease,
@@ -1112,7 +1111,7 @@ button:focus-visible {
 .floatingCaption:focus-visible {
   min-height: 104px;
   border-color: rgba(255, 255, 255, 0.2);
-  border-radius: 16px;
+  border-radius: 0;
   background:
     linear-gradient(180deg, rgba(18, 22, 30, 0.78), rgba(8, 10, 14, 0.72)),
     rgba(12, 14, 18, 0.74);

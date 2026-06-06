@@ -19,7 +19,7 @@ function cssRules(selector: string): string[] {
 }
 
 function rootCaptionWindowRules(): string[] {
-  return [...overlayStylesheet.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+  return [...stylesheet.matchAll(/([^{}]+)\{([^}]*)\}/g)]
     .filter((match) =>
       match[1]
         .split(",")
@@ -53,6 +53,8 @@ describe("字幕弹窗样式契约", () => {
     for (const captionRule of captionRules) {
       const radiusValues = [...captionRule.matchAll(/\bborder-radius\s*:\s*([^;]+);/g)].map((match) => match[1].trim());
       expect(radiusValues.every((value) => /^0(?:px)?$/.test(value))).toBe(true);
+      const transitionValues = [...captionRule.matchAll(/\btransition\s*:\s*([^;]+);/g)].map((match) => match[1].trim());
+      expect(transitionValues.every((value) => !/\bborder-radius\b/.test(value))).toBe(true);
     }
   });
 
