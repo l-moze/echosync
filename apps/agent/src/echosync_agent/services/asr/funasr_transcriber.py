@@ -11,6 +11,7 @@ import numpy as np
 from echosync_agent.domain import AudioFrame, SegmentStatus, TranscriptSegment, new_segment_id
 from echosync_agent.interfaces import Transcriber
 from echosync_agent.services.asr.semantic_chunker import (
+    FrameVadDetector,
     SemanticBoundary,
     SemanticChunkingConfig,
     SemanticEndpointTracker,
@@ -33,8 +34,10 @@ class FunAsrStreamingConfig:
     decoder_chunk_look_back: int = 1
     chunk_ms: int = 600
     source_lang: str = "zh"
+    semantic_min_chunk_ms: int | None = None
     semantic_max_chunk_ms: int = 3_500
     semantic_overlap_ms: int = 800
+    vad_silence_ms: int = 300
 
 
 ModelFactory = Callable[[], Any]
@@ -51,20 +54,24 @@ class FunAsrTranscriber(Transcriber):
         self,
         model_factory: ModelFactory | None = None,
         config: FunAsrStreamingConfig | None = None,
+        vad_detector: FrameVadDetector | None = None,
     ) -> None:
         self.config = config or FunAsrStreamingConfig()
         self._model_factory = model_factory or self._default_model_factory
         self._model: Any | None = None
+        self._vad_detector = vad_detector
 
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         cache: dict[str, Any] = {}
         pending: _PendingAudioBuffer | None = None
         endpoint_tracker = SemanticEndpointTracker(
             SemanticChunkingConfig(
-                min_chunk_ms=self.config.chunk_ms,
+                min_chunk_ms=self.config.semantic_min_chunk_ms or self.config.chunk_ms,
                 max_chunk_ms=self.config.semantic_max_chunk_ms,
                 overlap_ms=self.config.semantic_overlap_ms,
-            )
+                vad_silence_ms=self.config.vad_silence_ms,
+            ),
+            vad_detector=self._vad_detector,
         )
 
         async for raw_frame in frames:

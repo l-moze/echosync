@@ -5,8 +5,10 @@ from collections.abc import AsyncIterator
 
 from echosync_agent.domain import AudioFrame
 from echosync_agent.services.asr.semantic_chunker import (
+    FrameVadDetector,
     SemanticAudioChunker,
     SemanticChunkingConfig,
+    SemanticEndpointTracker,
 )
 
 
@@ -75,6 +77,46 @@ def test_semantic_chunker_keeps_overlap_after_hard_cut() -> None:
     assert chunks[0].overlap_ms == 200
     assert chunks[1].frame.is_final is True
     assert chunks[1].source_frames == 2
+
+
+def test_semantic_endpoint_tracker_marks_soft_boundary_from_vad_silence() -> None:
+    tracker = SemanticEndpointTracker(
+        SemanticChunkingConfig(
+            min_chunk_ms=200,
+            max_chunk_ms=1_000,
+            overlap_ms=200,
+            vad_silence_ms=200,
+        ),
+        vad_detector=StartMsVadDetector(silence_from_ms=200),
+    )
+
+    marks = [
+        tracker.mark(frame)
+        for frame in asyncio.run(
+            _collect(
+                _frames(
+                    [
+                        (0, 100, False),
+                        (100, 200, False),
+                        (200, 300, False),
+                        (300, 400, False),
+                    ]
+                )
+            )
+        )
+    ]
+
+    assert [mark.boundary for mark in marks] == ["none", "none", "none", "soft"]
+    assert marks[-1].frame.is_final is True
+    assert marks[-1].active_audio_ms == 400
+
+
+class StartMsVadDetector(FrameVadDetector):
+    def __init__(self, *, silence_from_ms: int) -> None:
+        self.silence_from_ms = silence_from_ms
+
+    def is_speech(self, frame: AudioFrame) -> bool:
+        return frame.start_ms < self.silence_from_ms
 
 
 async def _frames(items: list[tuple[int, int, bool]]) -> AsyncIterator[AudioFrame]:

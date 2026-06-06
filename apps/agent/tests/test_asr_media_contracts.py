@@ -14,6 +14,7 @@ from echosync_agent.services.asr.funasr_transcriber import (
     FunAsrTranscriber,
     resolve_funasr_device,
 )
+from echosync_agent.services.asr.semantic_chunker import FrameVadDetector
 from echosync_agent.services.media.ffmpeg_audio_source import (
     MediaAudioSource,
     build_ffmpeg_pcm_command,
@@ -353,6 +354,56 @@ def test_funasr_transcriber_forces_hard_semantic_endpoint_and_resets_cache() -> 
     ]
     assert segments[1].metrics["asr_semantic_boundary"] == 2.0
     assert segments[1].metrics["asr_endpoint_final"] == 1.0
+
+
+def test_funasr_transcriber_marks_soft_endpoint_from_vad_detector() -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModel:
+        def generate(self, **kwargs: object) -> list[dict[str, str]]:
+            calls.append(kwargs)
+            return [{"text": f"chunk-{len(calls)}"}]
+
+    async def frames() -> AsyncIterator[AudioFrame]:
+        for seq in range(5):
+            yield AudioFrame(
+                session_id="sess_vad_soft",
+                seq=seq + 1,
+                pcm=b"\x01\x00" * 1600,
+                sample_rate=16_000,
+                channels=1,
+                start_ms=seq * 100,
+                end_ms=(seq + 1) * 100,
+                source_lang="zh",
+                is_final=False,
+            )
+
+    transcriber = FunAsrTranscriber(
+        model_factory=lambda: FakeModel(),
+        config=FunAsrStreamingConfig(
+            chunk_ms=100,
+            semantic_min_chunk_ms=200,
+            semantic_max_chunk_ms=1_000,
+            vad_silence_ms=200,
+        ),
+        vad_detector=StartMsVadDetector(silence_from_ms=200),
+    )
+
+    segments = asyncio.run(_collect(transcriber.stream(frames())))
+
+    assert calls[3]["is_final"] is True
+    assert calls[4]["cache"] is not calls[3]["cache"]
+    assert segments[3].status == SegmentStatus.COMMITTED
+    assert segments[3].metrics["asr_semantic_boundary"] == 1.0
+    assert segments[3].metrics["asr_semantic_active_audio_ms"] == 400.0
+
+
+class StartMsVadDetector(FrameVadDetector):
+    def __init__(self, *, silence_from_ms: int) -> None:
+        self.silence_from_ms = silence_from_ms
+
+    def is_speech(self, frame: AudioFrame) -> bool:
+        return frame.start_ms < self.silence_from_ms
 
 
 def test_funasr_transcriber_uses_frame_sample_rate_for_aggregation_window() -> None:

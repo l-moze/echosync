@@ -193,7 +193,7 @@ SessionArchiveDraft
 当前链路的瓶颈主要来自流式音频、增量文本和多模型排队，不适合优先上 DFS 或背包。已落地的优化方向如下：
 
 - 音频门控：`audio-gate.ts` 使用分片队列读取固定长度 chunk，避免每次 `push()` 都把残留 buffer 与新样本整体拼接，也避免每次切片后复制剩余样本。该优化把热路径从“重复搬运余量样本”收敛为“只复制输出 chunk 一次”，降低 renderer GC 和音频抖动。
-- SemanticChunker：`services/asr/semantic_chunker.py` 提供完整的 soft cut、hard cut、overlap 语义块实现，供后续 batch ASR 或非流式模型复用。FunASR 这类流式 provider 不等待完整语义块，而是使用 `SemanticEndpointTracker` 标记 soft/hard endpoint，保持 320/600/900ms 推理窗口不被阻塞。
+- SemanticChunker：`services/asr/semantic_chunker.py` 提供完整的 soft cut、hard cut、overlap 语义块实现，供后续 batch ASR 或非流式模型复用。FunASR 这类流式 provider 不等待完整语义块，而是使用 `SemanticEndpointTracker` 标记 soft/hard endpoint，保持 320/600/900ms 推理窗口不被阻塞。`SemanticEndpointTracker` 已支持可插拔 `FrameVadDetector`，连续静音达到阈值时可直接触发 soft endpoint；未配置 detector 时继续兼容上游 `is_final`。
 - FunASR endpoint：FunASR 适配器遇到上游 `is_final=true` 会把当前窗口作为 endpoint final 推理，并在之后重置 provider cache，避免上一句上下文污染下一句。连续语音超过 hard timeout 时，endpoint tracker 会强制把当前帧标记为 final，触发 cache reset。每次 ASR 推理都会输出 `funasr_inference_chunk` 日志，包含 `input_audio_ms`、`transport_frames`、`final`、`semantic_boundary`、`latency_ms` 和 `rtf`；soft/hard/stream end 还会输出 `funasr_semantic_boundary`。
 - ASR 分段：`TranscriptAssembler` 维护 `current_text` 增量文本，不再每个 ASR delta 都 `join(buffer)`。输出契约仍保持 `partial/stable/committed` 三态，避免改变字幕 UI 和翻译器边界。
 - 翻译排队：`CascadedInterpretationEngine` 对待翻译 checkpoint 按 `segment_id` 去重，同一活动片段在队列中只保留最新 `rev`。默认跳过 partial 翻译，并输出 `translation_checkpoint_skipped reason=partial_disabled`，让日志能证明 DeepSeek 请求没有被不稳定文本放大。
