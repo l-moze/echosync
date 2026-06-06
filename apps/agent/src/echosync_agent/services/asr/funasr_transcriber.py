@@ -10,6 +10,11 @@ import numpy as np
 
 from echosync_agent.domain import AudioFrame, SegmentStatus, TranscriptSegment, new_segment_id
 from echosync_agent.interfaces import Transcriber
+from echosync_agent.services.asr.semantic_chunker import (
+    SemanticBoundary,
+    SemanticChunkingConfig,
+    SemanticEndpointTracker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,8 @@ class FunAsrStreamingConfig:
     decoder_chunk_look_back: int = 1
     chunk_ms: int = 600
     source_lang: str = "zh"
+    semantic_max_chunk_ms: int = 3_500
+    semantic_overlap_ms: int = 800
 
 
 ModelFactory = Callable[[], Any]
@@ -52,8 +59,17 @@ class FunAsrTranscriber(Transcriber):
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         cache: dict[str, Any] = {}
         pending: _PendingAudioBuffer | None = None
+        endpoint_tracker = SemanticEndpointTracker(
+            SemanticChunkingConfig(
+                min_chunk_ms=self.config.chunk_ms,
+                max_chunk_ms=self.config.semantic_max_chunk_ms,
+                overlap_ms=self.config.semantic_overlap_ms,
+            )
+        )
 
-        async for frame in frames:
+        async for raw_frame in frames:
+            semantic_frame = endpoint_tracker.mark(raw_frame)
+            frame = semantic_frame.frame
             if pending is None:
                 pending = _PendingAudioBuffer(
                     sample_rate=frame.sample_rate,
@@ -81,6 +97,9 @@ class FunAsrTranscriber(Transcriber):
                     pending.take_all(is_final=True),
                     cache=cache,
                     is_final=True,
+                    semantic_boundary=semantic_frame.boundary,
+                    semantic_active_audio_ms=semantic_frame.active_audio_ms,
+                    semantic_overlap_ms=semantic_frame.overlap_ms,
                 )
                 if segment is not None:
                     yield segment
@@ -91,6 +110,9 @@ class FunAsrTranscriber(Transcriber):
                 pending.take_all(is_final=True),
                 cache=cache,
                 is_final=True,
+                semantic_boundary="stream_end",
+                semantic_active_audio_ms=0,
+                semantic_overlap_ms=0,
             )
             if segment is not None:
                 yield segment
@@ -100,6 +122,9 @@ class FunAsrTranscriber(Transcriber):
         chunk: _BufferedAudioChunk,
         cache: dict[str, Any],
         is_final: bool,
+        semantic_boundary: SemanticBoundary = "none",
+        semantic_active_audio_ms: int = 0,
+        semantic_overlap_ms: int = 0,
     ) -> TranscriptSegment | None:
         frame = chunk.frame
         model = self._get_model()
@@ -119,18 +144,30 @@ class FunAsrTranscriber(Transcriber):
         asr_rtf = elapsed_ms / audio_ms
         logger.info(
             "funasr_inference_chunk session_id=%s start_ms=%d end_ms=%d "
-            "input_audio_ms=%d transport_frames=%d final=%s latency_ms=%d "
-            "rtf=%.3f text_chars=%d",
+            "input_audio_ms=%d transport_frames=%d final=%s semantic_boundary=%s "
+            "latency_ms=%d rtf=%.3f text_chars=%d",
             frame.session_id,
             frame.start_ms,
             frame.end_ms,
             audio_ms,
             chunk.transport_frames,
             is_final,
+            semantic_boundary,
             elapsed_ms,
             asr_rtf,
             len(text),
         )
+        if semantic_boundary != "none":
+            logger.info(
+                "funasr_semantic_boundary session_id=%s boundary=%s "
+                "active_audio_ms=%d overlap_ms=%d chunk_start_ms=%d chunk_end_ms=%d",
+                frame.session_id,
+                semantic_boundary,
+                semantic_active_audio_ms,
+                semantic_overlap_ms,
+                frame.start_ms,
+                frame.end_ms,
+            )
         if not text:
             return None
 
@@ -152,6 +189,9 @@ class FunAsrTranscriber(Transcriber):
                 "asr_input_audio_ms": float(audio_ms),
                 "asr_transport_frames": float(chunk.transport_frames),
                 "asr_endpoint_final": 1.0 if is_final else 0.0,
+                "asr_semantic_boundary": _semantic_boundary_metric(semantic_boundary),
+                "asr_semantic_active_audio_ms": float(semantic_active_audio_ms),
+                "asr_semantic_overlap_ms": float(semantic_overlap_ms),
             },
         )
 
@@ -307,6 +347,15 @@ class _PendingAudioBuffer:
 def _pcm_duration_ms(pcm: bytes, sample_rate: int) -> int:
     sample_count = len(pcm) // 2
     return int(round((sample_count / sample_rate) * 1000))
+
+
+def _semantic_boundary_metric(boundary: SemanticBoundary) -> float:
+    return {
+        "none": 0.0,
+        "soft": 1.0,
+        "hard": 2.0,
+        "stream_end": 3.0,
+    }[boundary]
 
 
 @dataclass(frozen=True, slots=True)

@@ -220,17 +220,22 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
    算法收益：在“长 partial 后接 committed”的典型场景里，默认翻译请求从 partial+committed 两次降为 committed 一次；测试用例可观测到 translator 调用数下降 50%，并且日志会出现 `translation_checkpoint_skipped` 作为证据。
 
-8. **FunASR endpoint cache reset + 推理窗口日志**
+8. **SemanticChunker + FunASR endpoint cache reset**
 
-   FunASR 适配器现在把上游 `is_final=true` 当作 endpoint final：先 flush 当前窗口并以 `is_final=True` 调用 FunASR，然后重置 provider cache，让下一句话从干净上下文开始。每次推理都会打印：
+   `services/asr/semantic_chunker.py` 已提供第一版 `SemanticAudioChunker`：支持 soft endpoint、hard cut 和 hard cut 后保留 overlap。这个完整 chunker 适合未来 batch ASR 或非流式模型。
+
+   FunASR 是流式 ASR，不应该为了等待完整语义块牺牲现有 320/600/900ms 推理窗口。因此 FunASR 接的是同文件里的 `SemanticEndpointTracker`：它不缓存音频，只在上游 `is_final=true` 或连续语音超过 hard timeout 时，把当前 frame 标记为 final，触发 FunASR flush 和 cache reset。每次推理都会打印：
 
    ```text
    funasr_inference_chunk session_id=... start_ms=... end_ms=...
-     input_audio_ms=... transport_frames=... final=...
+     input_audio_ms=... transport_frames=... final=... semantic_boundary=...
      latency_ms=... rtf=... text_chars=...
+
+   funasr_semantic_boundary session_id=...
+     boundary=soft|hard|stream_end active_audio_ms=... overlap_ms=...
    ```
 
-   算法收益：80ms 传输帧仍保持实时上行，但 FunASR 推理窗口继续按 320/600/900ms 聚合。以 balanced 的 600ms 窗口估算，模型调用频率从每秒 12.5 次传输帧降到约 1.67 次推理，理论调用压力降低约 86.7%；真实运行时直接看 `transport_frames` 和 `input_audio_ms` 验证是否达到预期。
+   算法收益：80ms 传输帧仍保持实时上行，但 FunASR 推理窗口继续按 320/600/900ms 聚合。以 balanced 的 600ms 窗口估算，模型调用频率从每秒 12.5 次传输帧降到约 1.67 次推理，理论调用压力降低约 86.7%；真实运行时直接看 `transport_frames` 和 `input_audio_ms` 验证是否达到预期。hard endpoint 的证据是 `funasr_semantic_boundary boundary=hard`，它表示连续语音没有自然停顿时也会被强制截断，避免 provider cache 无限延长。
 
 9. **前端空译文 fallback**
 
@@ -268,6 +273,7 @@ current='Feels funny to say that at normal speed,' incoming='but'
 |--------|--------|------|
 | `audio_stream_metrics` | Agent 实时音频入口 | 统计接收帧数、音频时长和 transport 侧吞吐。 |
 | `funasr_inference_chunk` | FunASR 适配器每次模型调用 | 统计一次 ASR 推理吃掉多少音频、聚合了多少传输帧、是否 endpoint final、ASR RTF。 |
+| `funasr_semantic_boundary` | FunASR soft/hard/stream-end endpoint | 判断 endpoint 来自上游静音、强制 hard timeout 还是流结束。 |
 | `translation_checkpoint_queued` | Engine 收到 stable/committed checkpoint | 判断翻译任务是否被 latest-wins 合并或排队；只有显式开启 partial 实验开关时，partial 才会进入这里。 |
 | `translation_checkpoint_skipped` | Engine 跳过不稳定 checkpoint | 默认跳过 partial 翻译时记录，证明 DeepSeek 请求没有被半句话放大。 |
 | `translation_checkpoint_started` | 翻译任务开始 | 记录 `asr_latency_ms`、`merge_wait_ms`、术语命中数。 |
