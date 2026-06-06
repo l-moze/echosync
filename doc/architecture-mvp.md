@@ -302,7 +302,7 @@ AudioFrame 流
 - 桌面端已接入 Electron 主控窗口和悬浮字幕窗，完成音频源选择 IPC 和字幕事件接收。
 - Windows 系统声音已用 Electron display media loopback + Web Audio PCM sender 接入 Agent `8766` 实时链路；音频传输已从 base64 JSON chunk 改为 JSON control + binary PCM frame。稳定版本再替换为 AudioWorklet 或 WASAPI loopback 原生适配器。
 - 麦克风源已改走 `getUserMedia({ audio: true })`，不再复用系统声的 `getDisplayMedia` 分支。
-- renderer 已加轻量音频门控：响度超过阈值后发送约 80ms PCM binary frame，连续静音后给上一块活跃音频标记 `is_final=true`。FunASR 适配器内部按 `FUNASR_CHUNK_MS` 聚合小传输帧，避免把 80ms 网络帧直接等同于模型推理窗。后续如果 ASR 对静音停发敏感，可按调研文档改为持续发送 silence frame 或 keepalive。
+- renderer 已加轻量音频门控：响度超过阈值后发送约 80ms PCM binary frame，连续静音后给上一块活跃音频标记 `is_final=true`。FunASR 适配器内部按 `FUNASR_CHUNK_MS` 聚合小传输帧，避免把 80ms 网络帧直接等同于模型推理窗。Voxtral 这类云端 realtime ASR 不复用 FunASR 的静音停发策略，Agent 侧会补 PCM silence keepalive，避免视频暂停/长静音被 provider 误判为 streaming timeout。
 - Agent 文件源已支持 ffmpeg 流式分帧；Desktop 文件回放和混音入口未形成完整产品链路前应标记为实验入口，避免 UI 误导。
 - LiveKit token、LiveKit Room 和 `LiveKitAgentBridge` 作为后续远程传输适配任务，不阻塞当前 Windows 本地 MVP。
 
@@ -316,7 +316,7 @@ AudioFrame 流
 - 为 DeepL 等非流式翻译器保留 batch-only 路线：只实现 `Translator.translate()`，由级联引擎自动回退，并允许录播/可访问视频场景打时间差。
 - 保持 TTS 默认关闭，避免语音合成增加首版字幕延迟；需要语音播报时可设置 `ECHOSYNC_TTS_PROVIDER=edge-tts` 或 `elevenlabs`。
 - 默认 `mock` 只用于事件演示；真实 PCM 音频测试必须使用 `funasr` 或 `voxtral`。会话级 `audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以覆盖 `.env` 默认 provider，但密钥、voice id、base URL 与模型配置仍由服务端 `.env` 控制。
-- `realtime.error` 与 `realtime.done` 保持互斥：启动失败、provider 不匹配或 pipeline 异常只发 error；正常 `audio.end` 才发 done。
+- `realtime.error` 与 `realtime.done` 保持互斥：启动失败、provider 不匹配或非停止态 pipeline 异常只发 error；正常 `audio.end` 才发 done。`audio.end(reason="user_stop")` 是用户主动停止，后端会取消 pipeline，并把停止期间晚到的 provider timeout/连接异常记录为日志而不是发布到字幕面板。
 - `TranscriptAssembler` 当前按标点、最大约 3.8 秒音频窗口或约 90 字符强制提交，避免中文无标点识别结果长期堆成一个字幕块。
 
 ### 阶段 3：端到端模型预留

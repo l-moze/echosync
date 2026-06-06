@@ -76,7 +76,35 @@ def test_voxtral_stream_sends_pcm_bytes_and_yields_text_delta_segments() -> None
     assert segments[0].source_lang == "en"
     assert segments[0].start_ms == 0
     assert segments[0].end_ms == 1200
-    assert segments[0].metrics["asr_latency_ms"] >= 0
+    assert segments[0].metrics["asr_stream_elapsed_ms"] >= 0
+    assert segments[0].metrics["asr_audio_lag_ms"] >= 0
+
+
+def test_voxtral_stream_does_not_report_stream_elapsed_as_asr_latency() -> None:
+    class FakeRealtimeAudio:
+        async def transcribe_stream(self, **kwargs: Any) -> AsyncIterator[object]:
+            async for _chunk in kwargs["audio_stream"]:
+                pass
+            await asyncio.sleep(0.02)
+            yield FakeTextDelta("hello")
+            yield FakeDone()
+
+    transcriber = VoxtralRealtimeTranscriber(
+        config=VoxtralRealtimeConfig(api_key="test-key"),
+        client_factory=lambda _api_key: _client(FakeRealtimeAudio()),
+        event_types={
+            "session_created": FakeSessionCreated,
+            "text_delta": FakeTextDelta,
+            "done": FakeDone,
+            "error": FakeRealtimeError,
+        },
+    )
+
+    segments = asyncio.run(_collect(transcriber.stream(_frames())))
+
+    assert "asr_latency_ms" not in segments[0].metrics
+    assert segments[0].metrics["asr_stream_elapsed_ms"] >= 20
+    assert segments[0].metrics["asr_audio_lag_ms"] >= 0
 
 
 def test_voxtral_stream_preserves_delta_spacing_for_transcript_assembly() -> None:
@@ -128,6 +156,60 @@ def test_voxtral_stream_raises_runtime_error_for_realtime_error_event() -> None:
         raise AssertionError("RuntimeError was not raised")
 
 
+def test_voxtral_stream_sends_silence_keepalive_while_frames_are_idle() -> None:
+    captured_chunks: list[bytes] = []
+
+    class FakeRealtimeAudio:
+        async def transcribe_stream(self, **kwargs: Any) -> AsyncIterator[object]:
+            async for chunk in kwargs["audio_stream"]:
+                captured_chunks.append(chunk)
+                if chunk == b"\x02\x00":
+                    break
+            yield FakeDone()
+
+    transcriber = VoxtralRealtimeTranscriber(
+        config=VoxtralRealtimeConfig(api_key="test-key", silence_keepalive_ms=10),
+        client_factory=lambda _api_key: _client(FakeRealtimeAudio()),
+        event_types={
+            "session_created": FakeSessionCreated,
+            "text_delta": FakeTextDelta,
+            "done": FakeDone,
+            "error": FakeRealtimeError,
+        },
+    )
+
+    asyncio.run(_collect(transcriber.stream(_delayed_frames())))
+
+    assert captured_chunks[0] == b"\x01\x00"
+    assert b"\x00" * 320 in captured_chunks
+    assert captured_chunks[-1] == b"\x02\x00"
+
+
+def test_voxtral_stream_does_not_send_empty_endpoint_markers_as_audio() -> None:
+    captured_chunks: list[bytes] = []
+
+    class FakeRealtimeAudio:
+        async def transcribe_stream(self, **kwargs: Any) -> AsyncIterator[object]:
+            async for chunk in kwargs["audio_stream"]:
+                captured_chunks.append(chunk)
+            yield FakeDone()
+
+    transcriber = VoxtralRealtimeTranscriber(
+        config=VoxtralRealtimeConfig(api_key="test-key"),
+        client_factory=lambda _api_key: _client(FakeRealtimeAudio()),
+        event_types={
+            "session_created": FakeSessionCreated,
+            "text_delta": FakeTextDelta,
+            "done": FakeDone,
+            "error": FakeRealtimeError,
+        },
+    )
+
+    asyncio.run(_collect(transcriber.stream(_frames_with_empty_final_marker())))
+
+    assert captured_chunks == [b"\x01\x00"]
+
+
 async def _frames() -> AsyncIterator[AudioFrame]:
     yield AudioFrame(
         session_id="sess_voxtral",
@@ -147,6 +229,54 @@ async def _frames() -> AsyncIterator[AudioFrame]:
         channels=1,
         start_ms=600,
         end_ms=1200,
+        source_lang="en",
+        is_final=True,
+    )
+
+
+async def _delayed_frames() -> AsyncIterator[AudioFrame]:
+    yield AudioFrame(
+        session_id="sess_voxtral",
+        seq=1,
+        pcm=b"\x01\x00",
+        sample_rate=16_000,
+        channels=1,
+        start_ms=0,
+        end_ms=600,
+        source_lang="en",
+    )
+    await asyncio.sleep(0.025)
+    yield AudioFrame(
+        session_id="sess_voxtral",
+        seq=2,
+        pcm=b"\x02\x00",
+        sample_rate=16_000,
+        channels=1,
+        start_ms=600,
+        end_ms=1200,
+        source_lang="en",
+    )
+
+
+async def _frames_with_empty_final_marker() -> AsyncIterator[AudioFrame]:
+    yield AudioFrame(
+        session_id="sess_voxtral",
+        seq=1,
+        pcm=b"\x01\x00",
+        sample_rate=16_000,
+        channels=1,
+        start_ms=0,
+        end_ms=600,
+        source_lang="en",
+    )
+    yield AudioFrame(
+        session_id="sess_voxtral",
+        seq=2,
+        pcm=b"",
+        sample_rate=16_000,
+        channels=1,
+        start_ms=600,
+        end_ms=600,
         source_lang="en",
         is_final=True,
     )

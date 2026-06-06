@@ -446,8 +446,11 @@ class _RealtimeWebSocketSession:
             try:
                 await pipeline_task
             except Exception as exc:
-                logger.exception("realtime_pipeline_failed session_id=%s", self.session_id)
-                await self._send_error(str(exc))
+                logger.info(
+                    "realtime_pipeline_exception_suppressed_after_user_stop session_id=%s error=%s",
+                    self.session_id,
+                    exc,
+                )
             return
 
         pipeline_task.cancel()

@@ -164,7 +164,7 @@ Electron getDisplayMedia(loopback) / getUserMedia(microphone)
   -> Voxtral/FunASR stream
 ```
 
-`audio-gate` 已把音频正文发送和 final/turn 边界拆开：活跃音频 chunk 立即发送，连续静音后用 `audio.final` 控制消息触发 Agent 侧 ASR flush。仍然存在的问题是 `ScriptProcessorNode` 还在 renderer 主线程运行、云端 ASR 的 silence frame/keepalive 策略尚未按 provider 拆分、混音和文件回放源还不是完整生产能力。
+`audio-gate` 已把音频正文发送和 final/turn 边界拆开：活跃音频 chunk 立即发送，连续静音后用 `audio.final` 控制消息触发 Agent 侧 ASR flush。当前仍然存在的问题是 `ScriptProcessorNode` 还在 renderer 主线程运行、混音和文件回放源还不是完整生产能力。云端 ASR 的 silence/keepalive 不能和本地 FunASR 一刀切：Voxtral realtime 路径已在 Agent 适配器内部补最小 PCM silence keepalive，避免用户暂停视频时让 provider 误判流超时。
 
 ## 推荐演进路线
 
@@ -177,7 +177,7 @@ Electron getDisplayMedia(loopback) / getUserMedia(microphone)
 - PCM：16kHz、mono、signed int16 little-endian。
 - frame duration：先用 80ms；如果 FunASR/Voxtral 表现不稳，再试 100ms 或 120ms。
 - WebSocket：控制消息 JSON text frame，音频 binary frame。
-- silence：本地 FunASR 路径可以静音停发并用 `audio.final` 表达 endpoint；云端 streaming provider 需要按供应商要求发送 silence frame 或 KeepAlive，不要让 ASR 误以为流断了。
+- silence：本地 FunASR 路径可以静音停发并用 `audio.final` 表达 endpoint；Voxtral 这类云端 streaming provider 需要按供应商要求发送 silence frame 或 KeepAlive，不要让 ASR 误以为流断了。当前 Voxtral 已在 Agent 侧补 PCM silence keepalive，其他云端 ASR 接入时也必须按 provider 单独实现。
 - telemetry：前端记录 capture time、encode time、send time、`bufferedAmount`；后端记录 receive time、queue depth、frame duration、p50/p95 transport latency。
 
 协议草案：
@@ -258,18 +258,21 @@ u32 sent_at_ms_low
 - 连续静音后的 final/turn 边界改为 `audio.final` JSON 控制帧，活跃音频不再为了 final 标记额外等待一帧。
 - Agent `/v1/realtime/sessions/{session_id}` 同时兼容旧 JSON `audio.chunk` 和新 binary frame。
 - Agent 每秒聚合打印 `audio_stream_metrics`，包含 frames、audio_ms、bytes、avg/p95 transport latency 和 queue depth。
+- Desktop renderer 按聚合窗口以 `info` 级别打印 `realtime_audio_capture_metrics`，包含 Web Audio callback 数、输入/重采样样本、发出的 PCM frame 数、编码字节数、平均/p95 callback 间隔、平均/p95 处理耗时、平均/p95 PCM 编码耗时和最大 `socket.bufferedAmount`。这条日志用于证明迁移 AudioWorklet 前后的采集端收益，避免每个 callback 打日志污染主线程。
+- Voxtral 云端 streaming 路径已加入 silence keepalive 第一版：桌面端静音停发时，Agent 侧会按配置向 Voxtral realtime audio stream 补 PCM silence，避免云端流误判断开。FunASR 仍走本地 `audio.final` flush 语义。
+- Voxtral 指标已拆分：`asr_stream_elapsed_ms` / `asr_audio_lag_ms` / `asr_stream_rtf` 是流累计口径，不再伪装为 FunASR 那种单次推理 `asr_latency_ms`。
 
 仍未落地：
 
 - AudioWorklet 采集/重采样。
-- 云端 provider 的 silence frame / KeepAlive 策略。
+- 云端 provider 的 silence frame / KeepAlive 策略需要按供应商继续细化；Voxtral 已有最小 PCM silence keepalive，其他云端 ASR 尚未接入。
 - Windows 原生 WASAPI sidecar。
 
 ## 建议的下一步实现顺序
 
 1. 跑真实视频，比较旧协议和新协议的首字幕时间、ASR 首字时间、翻译首 token 时间。
-2. 如果传输明显改善但主线程仍抖动，再迁移 AudioWorklet。
-3. 如果 ASR 对静音停发敏感，增加 silence frame 或 keepalive 策略。
+2. 用 `realtime_audio_capture_metrics` 判断主线程是否真的抖动：重点看 `p95ProcessingMs`、`p95CallbackIntervalMs` 和 `maxWebsocketBufferedAmount`。如果 p95 callback 明显高于 `2048 / inputSampleRate` 理论值，或处理耗时接近 callback 间隔的一半，再迁移 AudioWorklet。
+3. 如果后续新增云端 ASR，对照供应商协议补 silence frame 或 keepalive 策略；不要把 FunASR 的静音停发策略直接复用到所有 provider。
 4. 如果 Electron/WebAudio 仍无法满足预期，再评估 WASAPI sidecar。
 
 ## 这轮调研对当前决策的影响

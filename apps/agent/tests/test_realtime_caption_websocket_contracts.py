@@ -224,13 +224,13 @@ def test_realtime_session_cancels_pipeline_on_user_stop() -> None:
     asyncio.run(_run_realtime_session_user_stop_cancels_pipeline_test())
 
 
-def test_realtime_session_user_stop_reports_prefailed_pipeline(monkeypatch: Any) -> None:
+def test_realtime_session_user_stop_suppresses_prefailed_pipeline(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "echosync_agent.transport.realtime_ws.build_demo_pipeline",
         lambda **_kwargs: (_FailingPipeline(), object()),
     )
 
-    asyncio.run(_run_realtime_session_user_stop_reports_prefailed_pipeline_test())
+    asyncio.run(_run_realtime_session_user_stop_suppresses_prefailed_pipeline_test())
 
 
 def test_realtime_session_publishes_active_pipeline_failure(monkeypatch: Any) -> None:
@@ -561,7 +561,7 @@ async def _run_realtime_session_start_error_does_not_send_done_test() -> None:
     assert not [event for event in hub.events if event[0] == "realtime.done"]
 
 
-async def _run_realtime_session_user_stop_reports_prefailed_pipeline_test() -> None:
+async def _run_realtime_session_user_stop_suppresses_prefailed_pipeline_test() -> None:
     settings = replace(
         Settings.from_env(),
         asr_provider="mock",
@@ -590,9 +590,8 @@ async def _run_realtime_session_user_stop_reports_prefailed_pipeline_test() -> N
 
     await session.run()
 
-    assert websocket.sent_messages[0]["type"] == "realtime.error"
-    assert "provider connect failed" in websocket.sent_messages[0]["message"]
-    assert hub.events[0][0] == "realtime.error"
+    assert websocket.sent_messages == []
+    assert not [event for event in hub.events if event[0] == "realtime.error"]
     done_messages = [
         message for message in websocket.sent_messages if message["type"] == "realtime.done"
     ]

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +21,7 @@ class VoxtralRealtimeConfig:
     sample_rate: int = 16_000
     encoding: str = "pcm_s16le"
     source_lang: str = "auto"
+    silence_keepalive_ms: int = 480
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +77,7 @@ class VoxtralRealtimeTranscriber(Transcriber):
                     yield self._build_segment(
                         text=text,
                         window=window,
-                        elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+                        stream_elapsed_ms=int((time.perf_counter() - started_at) * 1000),
                     )
                 continue
             if runtime.is_event(event, "done"):
@@ -85,22 +88,46 @@ class VoxtralRealtimeTranscriber(Transcriber):
         frames: AsyncIterator[AudioFrame],
         window: _FrameWindow,
     ) -> AsyncIterator[bytes]:
-        async for frame in frames:
-            if not window.frame_seen:
-                window.session_id = frame.session_id
-                window.start_ms = frame.start_ms
-                window.frame_seen = True
-            window.source_lang = frame.source_lang
-            window.end_ms = frame.end_ms
-            yield frame.pcm
+        frame_iterator = aiter(frames)
+        frame_task = asyncio.create_task(anext(frame_iterator))
+        keepalive_seconds = max(self.config.silence_keepalive_ms, 1) / 1000
+        silence_chunk = _silence_pcm16le(
+            sample_rate=self.config.sample_rate,
+            duration_ms=self.config.silence_keepalive_ms,
+        )
+
+        try:
+            while True:
+                done, _pending = await asyncio.wait({frame_task}, timeout=keepalive_seconds)
+                if frame_task in done:
+                    try:
+                        frame = frame_task.result()
+                    except StopAsyncIteration:
+                        return
+
+                    _update_window(window, frame)
+                    frame_task = asyncio.create_task(anext(frame_iterator))
+                    if frame.pcm:
+                        yield frame.pcm
+                    continue
+
+                if window.frame_seen:
+                    window.end_ms += self.config.silence_keepalive_ms
+                yield silence_chunk
+        finally:
+            if not frame_task.done():
+                frame_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await frame_task
 
     def _build_segment(
         self,
         text: str,
         window: _FrameWindow,
-        elapsed_ms: int,
+        stream_elapsed_ms: int,
     ) -> TranscriptSegment:
         audio_ms = max(window.end_ms - window.start_ms, 1)
+        audio_lag_ms = max(stream_elapsed_ms - audio_ms, 0)
         source_lang = window.source_lang
         if source_lang == "auto":
             source_lang = self.config.source_lang
@@ -116,8 +143,10 @@ class VoxtralRealtimeTranscriber(Transcriber):
             status=SegmentStatus.PARTIAL,
             stability=0.72,
             metrics={
-                "asr_latency_ms": float(elapsed_ms),
-                "asr_rtf": elapsed_ms / audio_ms,
+                "asr_stream_elapsed_ms": float(stream_elapsed_ms),
+                "asr_audio_lag_ms": float(audio_lag_ms),
+                "asr_audio_window_ms": float(audio_ms),
+                "asr_stream_rtf": stream_elapsed_ms / audio_ms,
             },
         )
 
@@ -156,6 +185,20 @@ class _VoxtralRuntime:
 
 def _default_audio_format(config: VoxtralRealtimeConfig) -> _AudioFormat:
     return _AudioFormat(encoding=config.encoding, sample_rate=config.sample_rate)
+
+
+def _update_window(window: _FrameWindow, frame: AudioFrame) -> None:
+    if not window.frame_seen:
+        window.session_id = frame.session_id
+        window.start_ms = frame.start_ms
+        window.frame_seen = True
+    window.source_lang = frame.source_lang
+    window.end_ms = frame.end_ms
+
+
+def _silence_pcm16le(*, sample_rate: int, duration_ms: int) -> bytes:
+    samples = max(1, round(sample_rate * max(duration_ms, 1) / 1000))
+    return b"\x00\x00" * samples
 
 
 def _load_mistral_runtime() -> _VoxtralRuntime:

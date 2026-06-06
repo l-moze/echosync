@@ -245,7 +245,7 @@ current='Feels funny to say that at normal speed,' incoming='but'
    | `FUNASR_VAD_ENABLED=false` | 38 | 9 | 93.0ms | 0.30 | 0.86 | 0 |
    | `FUNASR_VAD_ENABLED=true` | 38 | 9 | 111.6ms | 0.36 | 0.79 | 10 |
 
-   这组数据说明：Silero adapter 当前没有让同一视频产生更多 committed 或更早 soft endpoint，且增加了本地推理开销；因此 MVP 默认 no-VAD，保留 hard timeout 做延迟底线。
+   这组数据说明：Silero adapter 当前没有让同一视频产生更多 committed 或更早 soft endpoint，且增加了本地推理开销；因此 MVP 默认 no-VAD，保留 hard timeout 做延迟底线。需要特别区分：Silero / `SemanticEndpointTracker` 只判断“语音内容是否到达一句话边界”，不能判断用户是否点击停止，也不能解决云端 realtime provider 在长静音期间的连接保活问题。
 
 9. **前端空译文 fallback**
 
@@ -259,12 +259,20 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
 | 层级 | 需要记录 | 日志/指标 |
 |------|----------|-----------|
-| 桌面采集 | `capture_callback_ms`、`encode_ms`、`socket.bufferedAmount` | 后续迁移 AudioWorklet 时补 |
+| 桌面采集 | callback 间隔、处理/编码耗时、`socket.bufferedAmount` | `realtime_audio_capture_metrics` |
 | Agent 接收 | transport avg/p95、queue depth | `audio_stream_metrics` |
 | ASR | 首个 text delta、每个 segment `asr_latency_ms`、`asr_rtf` | `TranscriptSegment.metrics` |
 | 分段聚合 | checkpoint 间隔、weak boundary 命中、force checkpoint 次数 | `merge_wait_ms` + 后续 debug log |
 | 翻译 | 首 token、完整译文、stream delta 数 | `translation_latency_ms` |
 | 字幕输出 | publish 到 Desktop 主进程、renderer receivedAt | `caption_event_published` + 前端 `receivedAtMs` |
+
+2026-06-06 更新：Desktop 健康面板和会后摘要不再把音频时间戳当作延迟。新的 UI 延迟口径是：
+
+```text
+caption_lag_ms = caption_line.receivedAtMs - sessionStartedAtMs - caption_line.endMs
+```
+
+其中 `sessionStartedAtMs` 是 renderer 进入 `session.started` 时记录的本地墙钟，`receivedAtMs` 是 `caption-store` 收到字幕事件时写入的本地墙钟，`endMs` 是该字幕覆盖到的音频时间。这个值表达的是“用户在屏幕上收到这条字幕时，字幕落后当前音频时间线多少毫秒”。如果缺少 `sessionStartedAtMs` 或 `receivedAtMs`，UI 返回 `null`，不再显示伪延迟。会后摘要的 `averageLatencyMs` 也改为所有可计算字幕行的平均 `caption_lag_ms`，没有可计算样本时显示 0。
 
 ## 实时链路日志规范
 
@@ -291,8 +299,14 @@ current='Feels funny to say that at normal speed,' incoming='but'
 | `translation_checkpoint_finished` | 翻译任务结束 | 记录完整翻译耗时、delta 数和译文长度。 |
 | `caption_event_published` | Agent 字幕事件发布到 `/v1/caption/events` | 记录发布时刻 `published_at_ms` 和随事件携带的模型指标。 |
 | `caption_event_renderer_received` | Desktop renderer 收到 `caption:event` | 用 `Date.now() - published_at_ms` 计算 Agent publish 到 renderer receive 的延迟。 |
+| `realtime_audio_capture_metrics` | Desktop renderer 音频采集/编码窗口 | 每个聚合窗口记录 Web Audio callback 数、输入/重采样样本、发出的 PCM frame 数、编码字节数、平均/p95 callback 间隔、平均/p95 处理耗时、平均/p95 PCM 编码耗时和最大 `socket.bufferedAmount`。 |
 
 `published_at_ms` 是 Agent 发布事件时写入的毫秒时间戳。Desktop renderer 不参与 ASR/翻译耗时计算，只负责补上 `agentToRendererMs`，这样可以把“模型慢”和“桌面事件转发慢”拆开看。日志转换集中在 `apps/desktop/src/shared/realtime-telemetry.ts`，React 组件只注入 `electron-log/renderer`，避免日志胶水污染字幕状态机。
+
+需要区分两类延迟：
+
+- `agentToRendererMs = rendererReceivedAt - published_at_ms`：只衡量 Agent 已发布事件到 renderer 收到事件的 IPC/WebSocket 转发延迟。
+- `caption_lag_ms = receivedAtMs - sessionStartedAtMs - endMs`：衡量字幕相对音频时间线的真实显示滞后，适合健康面板和会后平均延迟。
 
 下一步建议直接用 `vido/videoplayback.mp4` 跑三组固定实验：
 
@@ -429,11 +443,21 @@ python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realti
 
 `vido/videoplayback.mp4` 的旧整文件抽取约 `407ms`；当前流式分帧后首个 80ms frame 约 `40-53ms` 产出。文件复盘路径仍要继续接 UI，但 Agent 媒体解码不再是首要性能问题。
 
-### P2：前端字幕显示缓冲目前不是主要瓶颈
+### P2：前端字幕显示缓冲已改为稳定化视觉层
 
-`caption-display-buffer` 当前是 snapshot pass-through，不再做字素级慢放；`caption-store` 按接收时间选择当前字幕行。只要 Agent 发出完整源文/译文快照，前端不会再主动拖慢显示。
+`caption-display-buffer` 不再是 snapshot pass-through。当前前端分成两层：
 
-2026-06-06 追加：字幕窗口的 active-line 选择必须跟显示模式绑定。双语/主字幕模式继续优先显示最新源文草稿，保证识别打字机实时可见；翻译字幕模式改为优先选择最近一条有 `targetText` 的行，避免最新源文草稿抢焦点后主字幕区域空白。驻留/控制态历史区同样按显示模式过滤，翻译字幕模式不渲染源文-only 历史空行。
+- `caption-store` 保存 desired state，并按源文/译文分别记录接收顺序。双语/原文模式按最新源文选择 active line，避免旧段晚到译文抢焦点；翻译模式按最新译文选择。
+- `caption-display-buffer` 负责视觉合成：源文和译文分别以字素队列追赶 desired text，`segment.commit` 后先进入 `settling` 驻留，再进入 history。
+
+2026-06-06 真实日志回放结论：本机 `main.old.log + main.log` 共解析到 `translation.partial=1234`、`transcript.partial=1354`、`segment.commit=57`、`realtime.error=2`。其中译文长度缩短回退 `129` 次，新的策略全部覆盖：`transcript.partial` 不清空已有译文，`translation.partial` 不缩短已可见译文，真正缩短/替换由 `translation.patch` 或 `segment.commit` 负责。源文侧仍允许小范围 ASR 修订，严重前缀回退由 display buffer 保持可见稳定。
+
+停止播放或主动停止时出现的 `RealtimeTranscriptionErrorDetail(... code=3804)` 不应进入字幕文本。根因分两类：
+
+- 用户点击“停止同传”是会话控制边界，Desktop 会发送 `audio.end(reason="user_stop")`。Agent 收到后优先按正常取消处理；即使 pipeline task 已经因为 provider timeout/连接失败结束，也只记录 `realtime_pipeline_exception_suppressed_after_user_stop`，不再发布 `realtime.error` 到 caption hub。
+- 用户暂停视频但同传会话还开着时，Desktop 的 `audio-gate` 会在连续静音后停发音频正文，只发一次 `audio.final`。这对 FunASR 是正确的 flush/cache reset 语义；但 Voxtral 这类云端 realtime ASR 如果长时间收不到任何 bytes，会把空闲流判断为 timeout。因此 Voxtral 适配器内部已增加 PCM silence keepalive，并且不会把 `audio.final` 产生的空 PCM endpoint marker 当作音频正文发给 SDK。
+
+Renderer 侧仍保留 stopping session 集合过滤，作为异常竞态的最后防线；但产品契约应由 Agent 层保证：`user_stop` 之后的 provider late exception 不发布给字幕面板。
 
 ## 下一轮必须补的 telemetry
 
@@ -455,10 +479,66 @@ overlay_rendered_at
 
 最小可落地做法：
 
-1. Desktop binary frame header 继续带 `sentAtMs`，再在 renderer debug log 里记录 resample/encode/send 耗时。
+1. Desktop binary frame header 继续带 `sentAtMs`；renderer 已用 `realtime_audio_capture_metrics` 聚合记录采集端 callback、处理/编码耗时和 WebSocket backlog。
 2. Agent 在 `TranscriptSegment.metrics` 里补 `asr_first_delta_ms` 或 provider 首 delta。
 3. DeepSeek streaming 已拆出首 token 和 final 指标；后续需要把这些指标接入统一诊断面板。
 4. `CaptionEventHub.publish()` 已带 `published_at_ms`，renderer 已能计算 UI 侧接收延迟；后续需要补 `overlay_rendered_at`。
+
+`realtime_audio_capture_metrics` 默认按约 1 秒窗口聚合，而不是每个 `audioprocess` callback 打一条日志，避免日志本身污染 renderer 主线程。判断是否值得迁移 AudioWorklet 时重点看：
+
+- `p95ProcessingMs` 是否接近或超过 callback 间隔的一半；如果是，主线程处理已经在挤占实时预算。
+- `p95CallbackIntervalMs` 是否明显高于 `2048 / inputSampleRate` 的理论值；如果是，ScriptProcessorNode 主线程抖动明显。
+- `maxWebsocketBufferedAmount` 是否持续增长；如果是，问题更像发送背压或 Agent 接收处理慢，而不是采集线程本身。
+- `audioFramesSent / callbacks` 是否稳定；如果波动大，需要先看 audio-gate 静音门控和输入电平，再判断 ASR。
+
+## 2026-06-06 真实测评日志结论与本轮修订
+
+最新真实会话 `sess_dd35bc23e3e6` 持续约 `66.16s`，桌面端共收到 `652` 个字幕事件：
+
+```text
+caption_update=326
+transcript.partial=214
+translation.partial=102
+segment.commit=10
+```
+
+本轮日志结论：
+
+- `agentToRendererMs`：p50 `2ms`，p95 `17ms`。Agent 到 Electron/renderer 不是主要瓶颈。
+- `translationFirstTokenMs`：p50 约 `2.9s`，p95 约 `4.37s`。单次 DeepSeek 请求仍有明显体感延迟。
+- 更大的问题是翻译调度积压：同一字幕段从首次源文到首次译文平均约 `18.2s`，stable 到译文平均约 `17.3s`。66 秒内触发 `21` 个翻译 checkpoint，只覆盖到 `10` 个字幕段，尾部已有源文段没有等到译文。
+- Voxtral 的旧 `asr_latency_ms` 是从 realtime stream 启动到当前 `text_delta` 的累计墙钟时间，不是模型推理耗时。它在 60 秒会话中自然涨到 60s，不能用于 ASR 性能判断。
+
+官方文档核对：
+
+- Mistral Voxtral Realtime 的事件示例暴露 `event.text` 文本增量，`target_streaming_delay_ms` 是延迟/上下文权衡参数；官方没有给每个 text delta 的音频时间戳。因此 EchoSync 不能把共享音频窗口误当成逐 token 时间戳。
+- DeepSeek Chat Completion 是无状态接口；stream 返回 SSE delta。上下文、去重、队列丢旧必须在 EchoSync 应用层完成。
+
+本轮已修订：
+
+1. Voxtral 不再把累计流时间写入 `asr_latency_ms`。新指标为：
+   - `asr_stream_elapsed_ms`：从 Voxtral stream 启动到当前 text delta 的累计墙钟时间。
+   - `asr_audio_window_ms`：当前供应商流累计音频窗口。
+   - `asr_audio_lag_ms`：`stream_elapsed - audio_window` 的保守滞后估计。
+   - `asr_stream_rtf`：流累计口径 RTF，不能和 FunASR 单次推理 `asr_rtf` 混读。
+2. 翻译调度增加队列等待指标 `translation_queue_wait_ms`。
+3. 当同一 `segment_id` 的 committed checkpoint 到达时，尚未开始的 stable/partial checkpoint 会被丢弃；当 stable 到达时，尚未开始的 partial 会被丢弃。已经开始的翻译不强行取消，避免供应商流中断和 UI 回滚复杂度。
+4. Desktop renderer 采集侧 `realtime_audio_capture_metrics` 改为 `info` 级别，真实测评日志应能看到采集 callback、编码耗时、发送帧数和 WebSocket backlog。
+5. Agent caption 发布日志补充 `asr_stream_elapsed_ms`、`asr_audio_lag_ms`、`translation_queue_wait_ms`，同时保留 FunASR 可用的 `asr_latency_ms`。
+
+下一次真实 A/B 证明口径：
+
+```text
+before/after:
+  source_to_first_translation_ms
+  stable_to_first_translation_ms
+  translation_queue_wait_ms p50/p95
+  translation_first_token_ms p50/p95
+  realtime_audio_capture_metrics.p95ProcessingMs
+  realtime_audio_capture_metrics.maxWebsocketBufferedAmount
+```
+
+预期收益不是让单次 DeepSeek TTFT 消失，而是减少重复翻译和队列积压，让尾部字幕不会长时间只有源文没有译文。
 
 ## 已发现的断点
 
@@ -470,16 +550,16 @@ overlay_rendered_at
 **原因**：麦克风源已改用 `getUserMedia({ audio: true })`，Windows 系统声音走 `getDisplayMedia` loopback；Agent 端文件解码已经支持 ffmpeg 流式分帧，但 Desktop 文件回放入口和混音入口仍未形成完整产品链路。
 **处理**：文档中区分“Agent 媒体解码能力”和“Desktop 文件回放 UI 能力”。混音和文件回放入口在 UI 中仍保持“后续/实验”口径，避免用户误以为完整可用。
 
-### 断点 3：错误终止事件必须和正常完成事件互斥
-**原因**：实时链路如果在 `audio.start` 时先启动 pipeline、再校验 ASR provider，mock + 真实 PCM 会先发 `realtime.error`，随后空 pipeline 正常退出又发 `realtime.done`，桌面端会看到矛盾状态。
-**处理**：Agent 现在先应用会话级 ASR 配置和音频源校验，再启动 pipeline。`realtime.error` 表示终止态，启动失败或 pipeline 异常不再追加 `realtime.done`；用户停止时如果 pipeline 已经失败，会优先上报错误。Desktop 收到当前会话错误后会停止本地音频 client、回收主进程采集状态，并退回失败浮层。
+### 断点 3：错误终止、用户停止和长静音必须分层
+**原因**：实时链路如果在 `audio.start` 时先启动 pipeline、再校验 ASR provider，mock + 真实 PCM 会先发 `realtime.error`，随后空 pipeline 正常退出又发 `realtime.done`，桌面端会看到矛盾状态。另一个容易混淆的边界是：`audio.final` / Silero endpoint 只表达语音停顿，不表达用户停止；视频暂停造成的长静音也不是用户停止。
+**处理**：Agent 现在先应用会话级 ASR 配置和音频源校验，再启动 pipeline。`realtime.error` 表示非停止态终止，启动失败、provider 不匹配或运行中 pipeline 异常不再追加 `realtime.done`；`audio.end(reason="user_stop")` 是用户主动停止，停止期间晚到的 provider exception 只进日志，不发布到 caption hub。Voxtral 云端 realtime 路径已补 PCM silence keepalive，避免视频暂停/长静音被 provider timeout 误报成字幕错误。
 
 ## 文件变更清单
 
 | 文件 | 变更 |
 |------|------|
 | `transport/caption_ws.py` | `run_caption_server()` 传 producer；WS handler 每次连接重新运行 producer |
-| `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；支持 `audio.final` 控制帧；`realtime.error` 与 `realtime.done` 保持互斥 |
+| `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；支持 `audio.final` 控制帧；`realtime.error` 与 `realtime.done` 保持互斥；`user_stop` 后的 provider late exception 不发布到字幕面板 |
 | `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数，订阅字幕事件和可选 `tts.audio` |
 | `services/media/ffmpeg_audio_source.py` | MP4/音频文件通过 ffmpeg stdout 流式读取并在线分帧，避免整文件解码阻塞首帧 |
 | `services/asr/factory.py` | FunASR 与 Voxtral 都按 `asr_latency_mode` 映射实际推理窗口/目标延迟 |
