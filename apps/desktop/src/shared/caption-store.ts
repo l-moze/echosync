@@ -63,7 +63,7 @@ export function isRealtimeEventForActiveSession(
 }
 
 export function selectActiveCaptionLine(lines: CaptionLine[]): CaptionLine | undefined {
-  return lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
+  const latestLine = lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
     if (!line.sourceText && !line.targetText) {
       return latest;
     }
@@ -73,6 +73,33 @@ export function selectActiveCaptionLine(lines: CaptionLine[]): CaptionLine | und
     }
     return latest;
   }, undefined)?.line;
+
+  if (!latestLine || latestLine.targetText.trim()) {
+    return latestLine;
+  }
+
+  const fallbackTargetLine = lines.reduce<{ line: CaptionLine; order: number } | undefined>(
+    (latest, line, index) => {
+      if (!line.targetText.trim()) {
+        return latest;
+      }
+      const order = line.receivedAtMs ?? index;
+      if (!latest || order >= latest.order) {
+        return { line, order };
+      }
+      return latest;
+    },
+    undefined
+  )?.line;
+
+  if (!fallbackTargetLine) {
+    return latestLine;
+  }
+
+  return {
+    ...latestLine,
+    targetText: fallbackTargetLine.targetText
+  };
 }
 
 export function selectOverlayHistoryLines(layer: OverlayLayer, lines: CaptionLine[], maxLines = 6): CaptionLine[] {
@@ -91,6 +118,16 @@ function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs:
     return lines;
   }
   if (previousLine && event.rev < previousLine.rev) {
+    if (canFillEmptyTargetFromStaleTranslation(previousLine, event)) {
+      const nextLine = withReceivedAt({
+        ...previousLine,
+        targetText: event.target_text,
+        stability: Math.max(previousLine.stability, event.stability)
+      }, receivedAtMs);
+
+      return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
+    }
+
     return lines;
   }
   const nextLine: CaptionLine = withReceivedAt({
@@ -147,6 +184,17 @@ function shouldHideSourceOnlyDraft(event: CaptionTextEvent): boolean {
   return event.status === "partial" && event.target_text.trim() === "";
 }
 
+function canFillEmptyTargetFromStaleTranslation(
+  previousLine: CaptionLine,
+  event: SubtitleEvent
+): boolean {
+  return (
+    previousLine.targetText.trim() === "" &&
+    event.target_text.trim() !== "" &&
+    countVisibleCharacters(event.source_text) >= 8
+  );
+}
+
 function applyPatch(lines: CaptionLine[], event: SubtitlePatchEvent, receivedAtMs: number): CaptionLine[] {
   return lines.map((line) => {
     if (line.id !== event.segment_id) {
@@ -195,4 +243,8 @@ function mapStatus(status: SubtitleEvent["status"]): CaptionLineState {
   }
 
   return "interim";
+}
+
+function countVisibleCharacters(text: string): number {
+  return Array.from(text).filter((char) => char.trim() !== "").length;
 }

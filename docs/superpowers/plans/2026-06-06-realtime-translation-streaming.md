@@ -15,6 +15,7 @@
 - Agent Tasks 1-4 已完成并通过全量 Agent 测试：`128 passed, 1 warning`。
 - Desktop Task 5 已完成“即时 snapshot 显示”“过期 patch / locked late partial 防护”和“committed partial 不提前锁行”，并通过 focused Vitest 与 typecheck。
 - P0 语义缺口已修复：`translation.partial(status=committed)` 不再映射为 `locked`；真正锁定只由 `segment.commit` 触发，因此 `segment.commit` 前的合法 `translation.patch` 仍可生效。
+- P0 流式体验缺口已修复：Engine 支持足够长的 `partial` 进入预翻译 checkpoint；Desktop 在最新源文草稿暂时无译文时，会用最近可用译文做展示 fallback，避免悬浮字幕长期显示“正在翻译...”。
 - LocalAgreement buffer 和完整 LLM revision manager 仍是后续阶段，不属于本轮已完成范围。
 
 ### Task 1: Central Text Emission Policy

@@ -71,6 +71,10 @@ def test_cascaded_engine_translates_weak_boundary_without_committing_segment() -
     asyncio.run(_assert_cascaded_engine_translates_weak_boundary_without_committing_segment())
 
 
+def test_cascaded_engine_translates_long_partial_before_stable_checkpoint() -> None:
+    asyncio.run(_assert_cascaded_engine_translates_long_partial_before_stable_checkpoint())
+
+
 async def _assert_engine_translates_segments_and_records_latency_metrics() -> None:
     translator = RecordingTranslator()
     engine = CascadedInterpretationEngine(
@@ -270,6 +274,31 @@ async def _assert_cascaded_engine_translates_weak_boundary_without_committing_se
     assert [commit.source_text for commit in commits] == ["The model starts, then finishes."]
 
 
+async def _assert_cascaded_engine_translates_long_partial_before_stable_checkpoint() -> None:
+    first_translated = asyncio.Event()
+    translator = SignalingTranslator(first_translated, asyncio.Event())
+    engine = CascadedInterpretationEngine(
+        transcriber=LongPartialBeforeStableTranscriber(first_translated),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+    )
+
+    events = [event async for event in engine.stream(_frames())]
+    translated = [
+        event
+        for event in events
+        if isinstance(event, TranslationSegment) and event.target_text
+    ]
+
+    assert translator.seen_segments[0].status == SegmentStatus.PARTIAL
+    assert translator.seen_segments[0].text == "今天我们来讲实时翻译"
+    assert any(
+        event.status == SegmentStatus.PARTIAL
+        and event.target_text == "[zh] 今天我们来讲实时翻译"
+        for event in translated
+    )
+
+
 class DeltaTranscriber(Transcriber):
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         async for frame in frames:
@@ -340,6 +369,38 @@ class WeakBoundaryTranscriber(Transcriber):
                     stability=0.72,
                     metrics={"asr_latency_ms": 10.0},
                 )
+
+
+class LongPartialBeforeStableTranscriber(Transcriber):
+    def __init__(self, first_translated: asyncio.Event) -> None:
+        self.first_translated = first_translated
+
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for frame in frames:
+            yield TranscriptSegment(
+                session_id=frame.session_id,
+                segment_id="seg_early_partial_raw",
+                rev=1,
+                start_ms=0,
+                end_ms=640,
+                source_lang="zh",
+                text="今天我们来讲实时翻译",
+                status=SegmentStatus.PARTIAL,
+                stability=0.72,
+            )
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self.first_translated.wait(), timeout=0.05)
+            yield TranscriptSegment(
+                session_id=frame.session_id,
+                segment_id="seg_early_partial_raw",
+                rev=2,
+                start_ms=640,
+                end_ms=960,
+                source_lang="zh",
+                text="。",
+                status=SegmentStatus.PARTIAL,
+                stability=1.0,
+            )
 
 
 class BurstStableTranscriber(Transcriber):

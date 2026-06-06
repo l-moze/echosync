@@ -396,6 +396,42 @@ describe("桌面字幕状态机", () => {
     expect(lines[0].targetText).toBe("");
   });
 
+  it("晚到旧 revision 译文可填补空译文，但不能回滚当前源文", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_live",
+        rev: 3,
+        state: "interim",
+        sourceText: "My name is Evie and I speak quickly",
+        targetText: "",
+        stability: 0.7,
+        startMs: 0,
+        endMs: 2200,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_live",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "My name is Evie",
+      target_text: "我叫 Evie",
+      status: "stable",
+      stability: 0.86,
+      start_ms: 0,
+      end_ms: 1200
+    });
+
+    expect(lines[0].rev).toBe(3);
+    expect(lines[0].sourceText).toBe("My name is Evie and I speak quickly");
+    expect(lines[0].targetText).toBe("我叫 Evie");
+    expect(lines[0].state).toBe("interim");
+  });
+
   it("忽略 base_rev 不匹配的修订补丁，避免晚到 patch 覆盖新译文", () => {
     const initialLines: CaptionLine[] = [
       {
@@ -601,7 +637,11 @@ describe("桌面字幕状态机", () => {
       }
     ];
 
-    expect(selectActiveCaptionLine(lines)?.id).toBe("seg_source_draft");
+    const active = selectActiveCaptionLine(lines);
+
+    expect(active?.id).toBe("seg_source_draft");
+    expect(active?.sourceText).toBe("then another model");
+    expect(active?.targetText).toBe("模型会遵循动态提示词。");
   });
 
   it("按前端接收顺序选择当前字幕，而不是依赖后端音频时间戳", () => {

@@ -45,6 +45,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
         glossary: Glossary | dict[str, str] | None = None,
         stable_refresh_min_audio_ms: int = 1_000,
         stable_refresh_min_chars: int = 12,
+        partial_translation_min_audio_ms: int = 600,
+        partial_translation_min_chars: int = 8,
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
@@ -54,6 +56,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
         self.revision_window_segments = revision_window_segments
         self.stable_refresh_min_audio_ms = stable_refresh_min_audio_ms
         self.stable_refresh_min_chars = stable_refresh_min_chars
+        self.partial_translation_min_audio_ms = partial_translation_min_audio_ms
+        self.partial_translation_min_chars = partial_translation_min_chars
         # 统一转为 Glossary 对象
         if isinstance(glossary, dict):
             self._glossary = Glossary.from_dict(glossary)
@@ -83,6 +87,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment] = {}
         pending_order: deque[tuple[str, SegmentStatus]] = deque()
         stable_checkpoint_history: dict[str, TranscriptSegment] = {}
+        partial_checkpoint_history: dict[str, TranscriptSegment] = {}
         checkpoint_available = asyncio.Event()
         producer_done = False
         assembled_transcripts = self.transcript_assembler.stream(self.transcriber.stream(frames))
@@ -92,36 +97,49 @@ class CascadedInterpretationEngine(InterpretationEngine):
             try:
                 async for transcript in assembled_transcripts:
                     await event_queue.put(self._source_only_translation(transcript))
-                    if transcript.status != SegmentStatus.PARTIAL:
+                    if transcript.status == SegmentStatus.PARTIAL:
+                        if not self._should_queue_partial_checkpoint(
+                            transcript,
+                            partial_checkpoint_history,
+                            stable_checkpoint_history,
+                        ):
+                            continue
+                        partial_checkpoint_history[transcript.segment_id] = transcript
                         checkpoint_key = self._checkpoint_key(transcript)
-                        if transcript.status == SegmentStatus.STABLE:
-                            if not self._should_queue_stable_checkpoint(
-                                transcript,
-                                stable_checkpoint_history,
-                            ):
-                                continue
-                            stable_checkpoint_history[transcript.segment_id] = transcript
-                        else:
-                            stable_checkpoint_history.pop(transcript.segment_id, None)
-
-                        if checkpoint_key not in pending_checkpoints:
-                            pending_order.append(checkpoint_key)
-
-                        pending_checkpoints[checkpoint_key] = transcript
-                        logger.info(
-                            "translation_checkpoint_queued session_id=%s segment_id=%s "
-                            "rev=%d status=%s audio_start_ms=%d audio_end_ms=%d "
-                            "source_chars=%d pending_checkpoints=%d",
-                            transcript.session_id,
-                            transcript.segment_id,
-                            transcript.rev,
-                            transcript.status,
-                            transcript.start_ms,
-                            transcript.end_ms,
-                            len(transcript.text),
-                            len(pending_checkpoints),
+                        self._queue_translation_checkpoint(
+                            pending_checkpoints,
+                            pending_order,
+                            checkpoint_key,
+                            transcript,
                         )
                         checkpoint_available.set()
+                        continue
+
+                    checkpoint_key = self._checkpoint_key(transcript)
+                    partial_checkpoint_history.pop(transcript.segment_id, None)
+                    self._drop_pending_checkpoint(
+                        pending_checkpoints,
+                        pending_order,
+                        (transcript.segment_id, SegmentStatus.PARTIAL),
+                    )
+
+                    if transcript.status == SegmentStatus.STABLE:
+                        if not self._should_queue_stable_checkpoint(
+                            transcript,
+                            stable_checkpoint_history,
+                        ):
+                            continue
+                        stable_checkpoint_history[transcript.segment_id] = transcript
+                    else:
+                        stable_checkpoint_history.pop(transcript.segment_id, None)
+
+                    self._queue_translation_checkpoint(
+                        pending_checkpoints,
+                        pending_order,
+                        checkpoint_key,
+                        transcript,
+                    )
+                    checkpoint_available.set()
             except BaseException as exc:
                 await event_queue.put(exc)
             finally:
@@ -248,6 +266,9 @@ class CascadedInterpretationEngine(InterpretationEngine):
             len(final_translation.target_text),
         )
 
+        if final_translation.status == SegmentStatus.PARTIAL:
+            return
+
         patch = await self.correction_engine.revise(final_translation, context)
         if patch is not None:
             yield patch
@@ -271,9 +292,82 @@ class CascadedInterpretationEngine(InterpretationEngine):
 
     @staticmethod
     def _checkpoint_key(transcript: TranscriptSegment) -> tuple[str, SegmentStatus]:
+        if transcript.status == SegmentStatus.PARTIAL:
+            return (transcript.segment_id, SegmentStatus.PARTIAL)
         if transcript.status == SegmentStatus.STABLE:
             return (transcript.segment_id, SegmentStatus.STABLE)
         return (transcript.segment_id, SegmentStatus.COMMITTED)
+
+    def _should_queue_partial_checkpoint(
+        self,
+        transcript: TranscriptSegment,
+        partial_history: dict[str, TranscriptSegment],
+        stable_history: dict[str, TranscriptSegment],
+    ) -> bool:
+        if transcript.segment_id in stable_history:
+            return False
+
+        text = transcript.text.strip()
+        if _visible_char_count(text) < self.partial_translation_min_chars:
+            return False
+
+        audio_duration_ms = transcript.end_ms - transcript.start_ms
+        if audio_duration_ms < self.partial_translation_min_audio_ms:
+            return False
+
+        previous = partial_history.get(transcript.segment_id)
+        if previous is None:
+            return True
+
+        previous_text = previous.text.strip()
+        if text == previous_text:
+            return False
+
+        audio_gap_ms = transcript.end_ms - previous.end_ms
+        if not text.startswith(previous.text):
+            return audio_gap_ms >= self.partial_translation_min_audio_ms
+
+        delta_chars = _visible_char_count(text[len(previous.text) :])
+        if delta_chars < self.partial_translation_min_chars:
+            return False
+        return audio_gap_ms >= self.partial_translation_min_audio_ms
+
+    @staticmethod
+    def _queue_translation_checkpoint(
+        pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment],
+        pending_order: deque[tuple[str, SegmentStatus]],
+        checkpoint_key: tuple[str, SegmentStatus],
+        transcript: TranscriptSegment,
+    ) -> None:
+        if checkpoint_key not in pending_checkpoints:
+            pending_order.append(checkpoint_key)
+
+        pending_checkpoints[checkpoint_key] = transcript
+        logger.info(
+            "translation_checkpoint_queued session_id=%s segment_id=%s "
+            "rev=%d status=%s audio_start_ms=%d audio_end_ms=%d "
+            "source_chars=%d pending_checkpoints=%d",
+            transcript.session_id,
+            transcript.segment_id,
+            transcript.rev,
+            transcript.status,
+            transcript.start_ms,
+            transcript.end_ms,
+            len(transcript.text),
+            len(pending_checkpoints),
+        )
+
+    @staticmethod
+    def _drop_pending_checkpoint(
+        pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment],
+        pending_order: deque[tuple[str, SegmentStatus]],
+        checkpoint_key: tuple[str, SegmentStatus],
+    ) -> None:
+        pending_checkpoints.pop(checkpoint_key, None)
+        try:
+            pending_order.remove(checkpoint_key)
+        except ValueError:
+            pass
 
     def _should_queue_stable_checkpoint(
         self,
