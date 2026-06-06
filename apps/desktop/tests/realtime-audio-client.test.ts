@@ -230,7 +230,8 @@ describe("renderer realtime audio client", () => {
     expect(JSON.parse(sockets[0]?.sentMessages[0] as string)).toMatchObject({
       type: "audio.start",
       protocol: "pcm16.binary.v1",
-      frame_duration_ms: 80
+      frame_duration_ms: 80,
+      trace_id: "sess_binary_start"
     });
     await client.stop();
   });
@@ -421,6 +422,91 @@ describe("renderer realtime audio client", () => {
     await client.stop();
   });
 
+  it("logs aggregated capture telemetry for callback jitter and websocket backlog", async () => {
+    const audioContext = new FakeAudioContext();
+    FakeAudioContext.nextInstance = audioContext;
+    const stream = createFakeMediaStream();
+    const sockets: FakeWebSocket[] = [];
+    const telemetryEntries: unknown[][] = [];
+    vi.stubGlobal("WebSocket", class extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        this.bufferedAmount = 2048;
+        sockets.push(this);
+      }
+    });
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getDisplayMedia: vi.fn().mockResolvedValue(stream)
+      }
+    });
+    vi.stubGlobal("window", {
+      AudioContext: FakeAudioContext,
+      webkitAudioContext: undefined
+    });
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    let nowMs = 0;
+    vi.stubGlobal("performance", {
+      now: vi.fn(() => {
+        nowMs += 25;
+        return nowMs;
+      }),
+      timeOrigin: 123000
+    });
+
+    const client = createRealtimeAudioClient({
+      endpointBaseUrl: "ws://agent/realtime",
+      sessionId: "sess_capture_metrics",
+      sourceId: "windows-system",
+      telemetryWindowMs: 100,
+      telemetryLogger: {
+        info: (...params: unknown[]) => telemetryEntries.push(params)
+      }
+    });
+
+    await client.start();
+    audioContext.emitAudioProcess(new Float32Array(7680).fill(0.25));
+    expect(telemetryEntries).toEqual([]);
+    audioContext.emitAudioProcess(new Float32Array(7680).fill(0.25));
+
+    expect(telemetryEntries).toEqual([
+      [
+        "realtime_audio_capture_metrics",
+        expect.objectContaining({
+          audioFramesSent: 4,
+          avgCallbackIntervalMs: expect.any(Number),
+          avgDownmixMs: expect.any(Number),
+          avgEncodeMs: expect.any(Number),
+          avgGateMs: expect.any(Number),
+          avgProcessingMs: expect.any(Number),
+          avgResampleMs: expect.any(Number),
+          avgSendMs: expect.any(Number),
+          callbacks: 2,
+          encodedBytes: 10240,
+          finalMarkersSent: 0,
+          inputChannels: 1,
+          inputSampleRate: 48000,
+          inputSamples: 15360,
+          maxWebsocketBufferedAmount: 2048,
+          maxWebsocketBufferedAmountAfterSend: expect.any(Number),
+          maxWebsocketBufferedAmountBeforeSend: expect.any(Number),
+          p95CallbackIntervalMs: expect.any(Number),
+          p95DownmixMs: expect.any(Number),
+          p95EncodeMs: expect.any(Number),
+          p95GateMs: expect.any(Number),
+          p95ProcessingMs: expect.any(Number),
+          p95ResampleMs: expect.any(Number),
+          p95SendMs: expect.any(Number),
+          resampledSamples: 5120,
+          sessionId: "sess_capture_metrics",
+          sourceId: "windows-system",
+          windowMs: expect.any(Number)
+        })
+      ]
+    ]);
+    await client.stop();
+  });
+
   it("sends audio final as a control message after gate silence", async () => {
     const audioContext = new FakeAudioContext();
     FakeAudioContext.nextInstance = audioContext;
@@ -484,6 +570,7 @@ class FakeWebSocket {
   readonly url: string;
   readyState = FakeWebSocket.OPEN;
   closed = false;
+  bufferedAmount = 0;
   sentMessages: Array<string | ArrayBuffer> = [];
   private listeners = new Map<string, Array<() => void>>();
 

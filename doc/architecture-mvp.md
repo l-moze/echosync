@@ -143,7 +143,7 @@ SessionArchiveDraft
 
 - ASR：当前 provider 支持 `mock`、`funasr`、`voxtral`。FunASR 本地 AutoModel 适配器在 `services/asr/funasr_transcriber.py`，会把 80ms 传输帧聚合成推理窗口：`low_latency` 约 320ms、`balanced` 默认 600ms、`accuracy` 约 900ms；Voxtral Realtime 云端适配器在 `services/asr/voxtral_transcriber.py`，并按 `asr_latency_mode` 映射目标等待：`low_latency` 最多 480ms、`balanced` 沿用 `VOXTRAL_TARGET_DELAY_MS`、`accuracy` 至少 1600ms。Deepgram/Azure 属于下一批低延迟/高稳定云端候选，尚未进入可选 provider。媒体文件抽音频由 `services/media/ffmpeg_audio_source.py` 完成，默认使用 ffmpeg stdout 流式读取并在线分帧，避免 MP4 复盘时等待完整文件解码。
 - 翻译：当前 provider 支持 `mock`、`deepseek`。DeepSeek 兼容 OpenAI API 的适配器在 `services/translation/deepseek_translator.py`；Desktop 的“通用模型”不发送覆盖字段，沿用 Agent `.env`，显式选择 `DeepSeek-V3` 时只发送 `translation_provider=deepseek`。Desktop 会通过 capabilities 在启动前发现缺失的 `DEEPSEEK_API_KEY` 或 SDK。
-- TTS：当前 provider 支持 `disabled`、`edge-tts`、`elevenlabs`。`edge-tts` 适配器在 `services/tts/edge_tts_synthesizer.py`；ElevenLabs HTTP streaming 适配器在 `services/tts/elevenlabs_synthesizer.py`，使用 `ELEVENLABS_API_KEY`、`ELEVENLABS_VOICE_ID`、`ELEVENLABS_MODEL` 和 `ELEVENLABS_OUTPUT_FORMAT`。TTS 默认关闭，启用后由 pipeline 旁路消费 committed 译文并发布 `tts.audio`，不阻塞字幕事件。Desktop 启动预检会检查 TTS provider 是否可用，本次会话可通过 `audio.start.tts_provider` 覆盖后端默认值；控制中心窗口负责播放 `tts.audio`，字幕窗只显示字幕，避免双窗口重复播报。
+- TTS：当前 provider 支持 `disabled`、`edge-tts`、`elevenlabs`。`edge-tts` 适配器在 `services/tts/edge_tts_synthesizer.py`；ElevenLabs HTTP streaming 适配器在 `services/tts/elevenlabs_synthesizer.py`，使用 `ELEVENLABS_API_KEY`、`ELEVENLABS_VOICE_ID`、`ELEVENLABS_MODEL` 和 `ELEVENLABS_OUTPUT_FORMAT`。TTS 默认关闭，启用后由 pipeline 旁路消费最终 `segment.commit` 译文并发布 `tts.audio`，不阻塞字幕事件，也不对 DeepSeek committed 流式增量重复合成。ElevenLabs 默认模型是面向实时低延迟的 `eleven_flash_v2_5`；质量优先或长文本播报可用 `.env` 覆盖为 `eleven_multilingual_v2`。`ELEVENLABS_OPTIMIZE_STREAMING_LATENCY` 仅保留兼容，默认不启用；官方已将该参数标记为 deprecated，更推荐 Flash 模型、streaming、就近区域和合适 voice。Desktop 启动预检会检查 TTS provider 是否可用，本次会话可通过 `audio.start.tts_provider` 覆盖后端默认值；控制中心窗口负责播放 `tts.audio`，字幕窗只显示字幕，避免双窗口重复播报。Agent 对 TTS 音频分片立即发布 `final=false`，供应商流结束后再发布一个空音频 `final=true` 结束包，避免为了判断最后一包而增加首音延迟。renderer 优先用 MediaSource 追加播放音频分片并用结束包关闭流，不支持时回退为同一 segment/rev 等结束包后拼接 Blob 播放。每个 TTS 音频事件会携带 `tts_first_audio_ms`、`tts_total_ms`、`tts_audio_chunks` 和 `tts_audio_bytes`，最终用真实 TTFA 判断是否需要升级 ElevenLabs WebSocket TTS。
 
 ElevenLabs 三类服务的项目映射：
 
@@ -202,7 +202,7 @@ ElevenLabs 三类服务的项目映射：
 - SemanticChunker：`services/asr/semantic_chunker.py` 提供完整的 soft cut、hard cut、overlap 语义块实现，供后续 batch ASR 或非流式模型复用。FunASR 这类流式 provider 不等待完整语义块，而是使用 `SemanticEndpointTracker` 标记 soft/hard endpoint，保持 320/600/900ms 推理窗口不被阻塞。`SemanticEndpointTracker` 已支持可插拔 `FrameVadDetector`；当前默认用 `LiveKitSileroFrameVadDetector` 接入 `livekit.plugins.silero`，连续静音达到阈值时可直接触发 soft endpoint；未配置 detector 时继续兼容上游 `is_final`。
 - FunASR endpoint：FunASR 适配器遇到上游 `is_final=true` 会把当前窗口作为 endpoint final 推理，并在之后重置 provider cache，避免上一句上下文污染下一句。连续语音超过 hard timeout 时，endpoint tracker 会强制把当前帧标记为 final，触发 cache reset。每次 ASR 推理都会输出 `funasr_inference_chunk` 日志，包含 `input_audio_ms`、`transport_frames`、`final`、`semantic_boundary`、`latency_ms` 和 `rtf`；soft/hard/stream end 还会输出 `funasr_semantic_boundary`。
 - ASR 分段：`TranscriptAssembler` 维护 `current_text` 增量文本，不再每个 ASR delta 都 `join(buffer)`。输出契约仍保持 `partial/stable/committed` 三态，避免改变字幕 UI 和翻译器边界。
-- 翻译排队：`CascadedInterpretationEngine` 对待翻译 checkpoint 按 `segment_id` 去重，同一活动片段在队列中只保留最新 `rev`。默认跳过 partial 翻译，并输出 `translation_checkpoint_skipped reason=partial_disabled`，让日志能证明 DeepSeek 请求没有被不稳定文本放大。
+- 翻译排队：`CascadedInterpretationEngine` 对待翻译 checkpoint 按 `segment_id` 去重，同一活动片段在队列中只保留最新 `rev`。默认跳过 partial 翻译，并输出 `translation_checkpoint_skipped reason=partial_disabled`，让日志能证明 DeepSeek 请求没有被不稳定文本放大；新增规则级 `SimulTranslationPolicy`，把明显悬空的 stable 尾巴先标记为 `WAIT`，输出 `translation_checkpoint_skipped reason=simul_wait simul_reason=suspended_tail`，避免 “... the/of/to” 这类半句触发 DeepSeek。`translation_checkpoint_started / first_token / finished` 是请求级耗时边界，`caption_event_published` 是发布级边界，真实 A/B 统计以请求级日志为准。
 - 译文显示合帧：DeepSeek 等流式翻译模型可能按中文单字 token 返回。后端 `DeepSeekTranslator` 会按最小可见字符数和标点合并 token 后再发布，前端只即时展示 Agent 已发布的事件文本，不再二次语义切块。最终 `committed` 事件仍完整覆盖字幕。
 - 术语匹配：小词表继续使用预编译 Regex，大词表使用 Aho-Corasick 多模式匹配。后续若 ASR 错词导致术语漏匹配，应先做 normalized text + offset map，再对高优先级术语做轻量近似匹配，避免全量编辑距离扫描。
 
@@ -335,7 +335,7 @@ AudioFrame 流
 
 ### 阶段 5：可选能力
 
-- TTS 音量/语速/延迟控制，以及 edge-tts / ElevenLabs 语音输出的更细粒度可视化开关。当前 Desktop 已能选择 TTS provider 并播放 `tts.audio`；播放策略先缓存同一 segment/rev 的音频 chunk，收到 final 后拼接为 Blob 播放，后续如需更低播报延迟再引入 MediaSource 增量播放。
+- TTS 音量/语速/延迟控制，以及 edge-tts / ElevenLabs 语音输出的更细粒度可视化开关。当前 Desktop 已能选择 TTS provider 并播放 `tts.audio`；播放策略优先走 MediaSource 增量追加，Blob 拼接只作为不支持对应 MIME 时的兼容兜底。更低延迟的文本增量输入后续再接 ElevenLabs WebSocket TTS。
 - 录播课程高准确模式。
 - Redis Streams 会话事件持久化。
 - 离线评估：WER/CER、COMET/SacreBLEU、首字幕延迟、补丁率。

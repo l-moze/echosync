@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import { createRoot } from "react-dom/client";
 import log from "electron-log/renderer";
 
@@ -49,11 +49,13 @@ import { validateRealtimePreflight } from "../shared/realtime-preflight";
 import {
   createInitialSessionUiState,
   reduceSessionUiState,
+  selectAverageCaptionLatencyMs,
   selectSessionHealthMetrics,
   type SessionSummary,
   type StartupUiState,
   type SessionUiEvent
 } from "../shared/session-ui-state";
+import { shouldSurfaceRealtimeError } from "../shared/realtime-error-policy";
 import { selectSessionClockMs } from "../shared/session-clock";
 import {
   defaultSubtitleStyle,
@@ -67,6 +69,19 @@ import {
   type SubtitleStyleState
 } from "../shared/subtitle-style-state";
 import { cleanTranscriptLines, serializeTranscriptMarkdown, serializeTranscriptSrt } from "../shared/session-export";
+import {
+  filterSessionRecordsByTitle,
+  formatDateTimeForRecord,
+  formatDurationForRecord,
+  normalizeSessionRecordSegmentsTiming,
+  selectSessionRecordPlaybackSegmentId,
+  serializeSessionRecordMarkdown,
+  type SessionRecord,
+  type SessionRecordDraftInput,
+  type SessionRecordExportFormat,
+  type SessionRecordListItem,
+  type SessionRecordSegment
+} from "../shared/session-records";
 import {
   buildSessionArchiveDraft,
   selectPlaybackSegmentId,
@@ -92,6 +107,80 @@ import "./styles.css";
 
 const fontOptions = ["System", "Inter", "Segoe UI", "Microsoft YaHei"];
 type NavigationConfirmReason = "active_session" | "startup_cancel" | "dirty_export" | null;
+type SessionArchiveSaveStatus = {
+  message: string;
+  state: "idle" | "saving" | "saved" | "failed";
+};
+const TRANSCRIPT_REVIEW_STACKED_WIDTH_PX = 720;
+
+function releaseSessionArchive(archive: SessionArchiveDraft | null) {
+  if (!archive?.audio?.objectUrl) {
+    return;
+  }
+  URL.revokeObjectURL(archive.audio.objectUrl);
+}
+
+async function buildSessionRecordDraftInput(
+  archive: SessionArchiveDraft,
+  {
+    averageCaptionLagMs,
+    endedAt,
+    startedAt
+  }: {
+    averageCaptionLagMs?: number;
+    endedAt: string;
+    startedAt: string;
+  }
+): Promise<SessionRecordDraftInput> {
+  return {
+    id: archive.id,
+    title: archive.title,
+    createdAt: archive.createdAt,
+    startedAt,
+    endedAt,
+    durationMs: archive.durationMs,
+    sourceLang: "en",
+    targetLang: "zh-CN",
+    averageCaptionLagMs,
+    audio: archive.audio?.blob
+      ? {
+          data: await archive.audio.blob.arrayBuffer(),
+          mimeType: archive.audio.mimeType
+        }
+      : undefined,
+    summary: {
+      status: "pending",
+      text: "",
+      keywords: []
+    },
+    diagnostics: {
+      hasTranslationGap: archive.segments.some(
+        (segment) => Boolean(segment.sourceText.trim()) && !segment.targetText.trim()
+      )
+    },
+    segments: archive.segments.map((segment): SessionRecordSegment => ({
+      id: segment.segmentId,
+      startMs: segment.startMs,
+      endMs: segment.endMs,
+      sourceText: segment.sourceText,
+      targetText: segment.targetText,
+      revisionState: sessionRecordRevisionState(segment.state),
+      patchCount: segment.patchCount
+    }))
+  };
+}
+
+function sessionRecordRevisionState(
+  state: SessionArchiveDraft["segments"][number]["state"]
+): SessionRecordSegment["revisionState"] {
+  if (state === "locked") {
+    return "final";
+  }
+  if (state === "revised") {
+    return "edited";
+  }
+  return "draft";
+}
 
 function useSharedSubtitleStyle() {
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyleState>(defaultSubtitleStyle);
@@ -131,32 +220,120 @@ function App() {
   });
   const [hasRealEvents, setHasRealEvents] = useState(false);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const [sessionRecords, setSessionRecords] = useState<SessionRecordListItem[]>([]);
   const [sessionArchive, setSessionArchive] = useState<SessionArchiveDraft | null>(null);
+  const [sessionArchiveSaveStatus, setSessionArchiveSaveStatus] = useState<SessionArchiveSaveStatus>({
+    message: "等待会话结束后保存",
+    state: "idle"
+  });
   const [navigationConfirmReason, setNavigationConfirmReason] = useState<NavigationConfirmReason>(null);
   const realtimeClientRef = useRef<RealtimeAudioClient | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
   const startupRunIdRef = useRef(0);
   const sessionUiRef = useRef(sessionUi);
+  const sessionArchiveRef = useRef<SessionArchiveDraft | null>(null);
   const terminalRealtimeErrorRef = useRef<string | null>(null);
-  const ttsPlaybackRef = useRef<TtsAudioPlaybackQueue>(createTtsAudioPlaybackQueue());
+  const stoppingSessionIdsRef = useRef<Set<string>>(new Set());
+  const ttsPlaybackRef = useRef<TtsAudioPlaybackQueue | null>(null);
+  ttsPlaybackRef.current ??= createTtsAudioPlaybackQueue();
+  const ttsPlayback = ttsPlaybackRef.current;
+
+  const setSessionArchiveDraft = useCallback((nextArchive: SessionArchiveDraft | null) => {
+    const currentArchive = sessionArchiveRef.current;
+    if (currentArchive?.audio?.objectUrl !== nextArchive?.audio?.objectUrl) {
+      releaseSessionArchive(currentArchive);
+    }
+    sessionArchiveRef.current = nextArchive;
+    setSessionArchive(nextArchive);
+  }, []);
+
+  const refreshSessionRecords = useCallback(async () => {
+    try {
+      const records = await window.echosyncDesktop?.sessionRecords.list();
+      setSessionRecords(records ?? []);
+    } catch (error) {
+      log.warn("[session-records] 读取会议记录失败:", error);
+    }
+  }, []);
+
+  const saveSessionArchiveDraft = useCallback(
+    async (
+      archive: SessionArchiveDraft,
+      {
+        averageCaptionLagMs,
+        endedAt,
+        startedAt
+      }: {
+        averageCaptionLagMs?: number;
+        endedAt: string;
+        startedAt: string;
+      }
+    ) => {
+      try {
+        setSessionArchiveSaveStatus({ message: "正在保存到会议记录...", state: "saving" });
+        const input = await buildSessionRecordDraftInput(archive, { averageCaptionLagMs, endedAt, startedAt });
+        await window.echosyncDesktop?.sessionRecords.saveDraft(input);
+        await refreshSessionRecords();
+        setSessionArchiveSaveStatus({ message: "已保存到会议记录", state: "saved" });
+      } catch (error) {
+        log.warn("[session-records] 保存会议记录草稿失败:", error);
+        setSessionArchiveSaveStatus({ message: "保存失败，可先复制导出文本", state: "failed" });
+      }
+    },
+    [refreshSessionRecords]
+  );
 
   useEffect(() => {
     sessionUiRef.current = sessionUi;
   }, [sessionUi]);
 
   useEffect(() => {
+    return () => {
+      releaseSessionArchive(sessionArchiveRef.current);
+      sessionArchiveRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
     const removeCaptionListener = window.echosyncDesktop?.onRealtimeEvent((event) => {
       if (!isRealtimeEventForActiveSession(activeSessionIdRef.current, event)) {
+        logRealtimeEventTelemetry(log, event, Date.now());
+        if (event.type === "realtime.done") {
+          stoppingSessionIdsRef.current.delete(event.session_id);
+          log.debug("caption_event_renderer_ignored", {
+            activeSessionId: activeSessionIdRef.current,
+            eventSessionId: event.session_id,
+            reason: "inactive_done",
+            type: event.type
+          });
+          return;
+        }
+        if (event.type === "realtime.error" && !shouldSurfaceRealtimeError(event, { stoppingSessionIds: stoppingSessionIdsRef.current })) {
+          log.debug("caption_event_renderer_suppressed", {
+            message: event.message,
+            reason: "user_stop",
+            sessionId: event.session_id
+          });
+          stoppingSessionIdsRef.current.delete(event.session_id);
+          return;
+        }
+        log.debug("caption_event_renderer_ignored", {
+          activeSessionId: activeSessionIdRef.current,
+          eventSessionId: event.session_id,
+          reason: "inactive_session",
+          type: event.type
+        });
         return;
       }
       logRealtimeEventTelemetry(log, event, Date.now());
       if (event.type === "realtime.done") {
+        stoppingSessionIdsRef.current.delete(event.session_id);
         activeSessionIdRef.current = null;
         return;
       }
       if (event.type === "tts.audio") {
         if (role === "control") {
-          void ttsPlaybackRef.current.enqueue(event);
+          void ttsPlayback.enqueue(event);
         }
         setHasRealEvents(true);
         return;
@@ -164,6 +341,15 @@ function App() {
       setLines((current) => applyRealtimeEvent(current, event));
       setHasRealEvents(true);
       if (event.type === "realtime.error") {
+        if (!shouldSurfaceRealtimeError(event, { stoppingSessionIds: stoppingSessionIdsRef.current })) {
+          log.debug("caption_event_renderer_suppressed", {
+            reason: "user_stop",
+            sessionId: event.session_id,
+            message: event.message
+          });
+          stoppingSessionIdsRef.current.delete(event.session_id);
+          return;
+        }
         setRealtimeError(event.message);
         setSnapshot((current) => ({
           ...current,
@@ -175,6 +361,7 @@ function App() {
     });
     const removeCaptureListener = window.echosyncDesktop?.onCaptureState((nextSnapshot) => {
       const terminalError = terminalRealtimeErrorRef.current;
+      const previousSessionId = activeSessionIdRef.current;
       setSnapshot(
         terminalError && nextSnapshot.state === "stopped"
           ? { ...nextSnapshot, state: "error", message: terminalError, sessionId: undefined }
@@ -183,14 +370,18 @@ function App() {
       setSourceId(nextSnapshot.sourceId);
       activeSessionIdRef.current = nextSnapshot.sessionId ?? null;
       if (nextSnapshot.state === "listening") {
+        if (nextSnapshot.sessionId) {
+          stoppingSessionIdsRef.current.delete(nextSnapshot.sessionId);
+        }
         terminalRealtimeErrorRef.current = null;
-        dispatchSessionUi({ type: "session.started" });
+        dispatchSessionUi({ type: "session.started", atMs: Date.now() });
       }
       if (nextSnapshot.state === "error") {
         setRealtimeError(nextSnapshot.message);
       }
       if (nextSnapshot.state === "stopped" || nextSnapshot.state === "error") {
         const currentClient = realtimeClientRef.current;
+        markSessionStopping(currentClient?.sessionId ?? previousSessionId);
         realtimeClientRef.current = null;
         activeSessionIdRef.current = null;
         void currentClient?.stop();
@@ -211,6 +402,10 @@ function App() {
     void refreshAgentCapabilities();
   }, []);
 
+  useEffect(() => {
+    void refreshSessionRecords();
+  }, [refreshSessionRecords]);
+
   const activeLine = useMemo(() => selectActiveCaptionLine(lines), [lines]);
   const currentSource = DESKTOP_AUDIO_SOURCES.find((source) => source.id === sourceId) ?? DESKTOP_AUDIO_SOURCES[1];
 
@@ -218,6 +413,13 @@ function App() {
     const next = reduceSessionUiState(sessionUiRef.current, event);
     sessionUiRef.current = next;
     setSessionUi(next);
+  }
+
+  function markSessionStopping(sessionId: string | null | undefined) {
+    if (sessionId) {
+      stoppingSessionIdsRef.current.add(sessionId);
+      log.debug("realtime_session_marked_stopping", { sessionId });
+    }
   }
 
   async function refreshAgentCapabilities() {
@@ -269,14 +471,16 @@ function App() {
     const startedAtMs = Date.now();
     dispatchSessionUi({ type: "startup.started", phase: "connecting_agent", atMs: startedAtMs });
     if (realtimeClientRef.current) {
+      markSessionStopping(realtimeClientRef.current.sessionId);
       await realtimeClientRef.current.stop();
       realtimeClientRef.current = null;
       activeSessionIdRef.current = null;
     }
     setRealtimeError(null);
     terminalRealtimeErrorRef.current = null;
-    setSessionArchive(null);
-    ttsPlaybackRef.current.clear();
+    setSessionArchiveDraft(null);
+    setSessionArchiveSaveStatus({ message: "等待会话结束后保存", state: "idle" });
+    ttsPlayback.clear();
     setLines(createInitialCaptionLines());
     const capabilities = await refreshAgentCapabilities();
     const preflightMessage = validateRealtimePreflight({
@@ -301,6 +505,7 @@ function App() {
       asrLatencyMode,
       asrProvider: selectedAsrProviderId(asrProvider),
       sourceId: nextSourceId,
+      telemetryLogger: log,
       translationProvider: selectedTranslationProviderId(translationProvider),
       ttsProvider: selectedTtsProviderId(ttsProvider)
     });
@@ -312,6 +517,7 @@ function App() {
         dispatchSessionUi({ type: "startup.phase.changed", phase: "connecting_agent", atMs: Date.now() });
         await client.start();
         if (startupRunIdRef.current !== runId) {
+          markSessionStopping(client.sessionId);
           await client.stop();
           return;
         }
@@ -322,14 +528,14 @@ function App() {
           return;
         }
         dispatchSessionUi({ type: "startup.completed" });
-        dispatchSessionUi({ type: "session.started" });
+        dispatchSessionUi({ type: "session.started", atMs: Date.now() });
       } catch (error) {
         if (startupRunIdRef.current !== runId) {
           return;
         }
         realtimeClientRef.current = null;
         activeSessionIdRef.current = null;
-        ttsPlaybackRef.current.clear();
+        ttsPlayback.clear();
         await window.echosyncDesktop?.stopCapture();
         const message = error instanceof Error ? error.message : "实时音频采集启动失败。";
         setSnapshot({
@@ -340,7 +546,18 @@ function App() {
         dispatchSessionUi({ type: "startup.failed", message });
       }
     } else {
-      dispatchSessionUi({ type: "startup.failed", message: "桌面端没有返回音频采集状态。" });
+      const message = "桌面端没有返回音频采集状态。";
+      markSessionStopping(client.sessionId);
+      realtimeClientRef.current = null;
+      activeSessionIdRef.current = null;
+      ttsPlayback.clear();
+      await client.stop();
+      setSnapshot({
+        sourceId: nextSourceId,
+        state: "error",
+        message
+      });
+      dispatchSessionUi({ type: "startup.failed", message });
     }
   }
 
@@ -350,7 +567,7 @@ function App() {
     const currentClient = realtimeClientRef.current;
     realtimeClientRef.current = null;
     activeSessionIdRef.current = null;
-    ttsPlaybackRef.current.clear();
+    ttsPlayback.clear();
     let nextSnapshot: DesktopCaptureSnapshot | undefined;
 
     try {
@@ -377,32 +594,45 @@ function App() {
 
   async function stopCapture() {
     const currentClient = realtimeClientRef.current;
+    markSessionStopping(currentClient?.sessionId ?? activeSessionIdRef.current);
     realtimeClientRef.current = null;
     activeSessionIdRef.current = null;
-    ttsPlaybackRef.current.clear();
+    ttsPlayback.clear();
     const recording = await currentClient?.stop();
     const nextSnapshot = await window.echosyncDesktop?.stopCapture();
     if (nextSnapshot) {
       setSnapshot(nextSnapshot);
-      if (recording) {
-        const createdAt = new Date();
-        setSessionArchive(
-          buildSessionArchiveDraft({
-            audioMimeType: recording.mimeType,
-            audioObjectUrl: URL.createObjectURL(recording.blob),
-            createdAt: createdAt.toISOString(),
-            durationMs: Math.max(...lines.map((line) => line.endMs), 0),
-            id: currentClient?.sessionId ?? `sess_${createdAt.getTime()}`,
-            lines,
-            title: sessionArchiveTitleFromDate(createdAt)
-          })
-        );
+      const endedAt = new Date();
+      const endedAtIso = endedAt.toISOString();
+      const durationMs = Math.max(...lines.map((line) => line.endMs), 0);
+      const averageCaptionLagMs = selectAverageCaptionLatencyMs(lines, sessionUiRef.current.sessionStartedAtMs) ?? undefined;
+      const hasSessionContent = Boolean(recording) || lines.some((line) => line.sourceText.trim() || line.targetText.trim());
+      if (hasSessionContent) {
+        const archive = buildSessionArchiveDraft({
+          audioBlob: recording?.blob,
+          audioMimeType: recording?.mimeType,
+          audioObjectUrl: recording ? URL.createObjectURL(recording.blob) : undefined,
+          createdAt: endedAtIso,
+          durationMs,
+          id: currentClient?.sessionId ?? nextSnapshot.sessionId ?? `sess_${endedAt.getTime()}`,
+          lines,
+          title: sessionArchiveTitleFromDate(endedAt)
+        });
+        const startedAtMs = sessionUiRef.current.sessionStartedAtMs;
+        setSessionArchiveDraft(archive);
+        void saveSessionArchiveDraft(archive, {
+          averageCaptionLagMs,
+          endedAt: endedAtIso,
+          startedAt: startedAtMs === null ? endedAtIso : new Date(startedAtMs).toISOString()
+        });
+      } else {
+        setSessionArchiveSaveStatus({ message: "本次没有可保存内容", state: "idle" });
       }
       const summary: SessionSummary = {
-        durationMs: Math.max(...lines.map((line) => line.endMs), 0),
+        durationMs,
         segmentCount: lines.length,
         patchCount: lines.reduce((sum, line) => sum + line.patchCount, 0),
-        averageLatencyMs: 920,
+        averageLatencyMs: averageCaptionLagMs ?? 0,
         wordCount: lines.reduce((sum, line) => sum + line.targetText.length, 0)
       };
       dispatchSessionUi({ type: "session.finished", summary });
@@ -427,9 +657,10 @@ function App() {
 
   async function performReturnHome() {
     startupRunIdRef.current += 1;
-    ttsPlaybackRef.current.clear();
+    ttsPlayback.clear();
     if (realtimeClientRef.current || snapshot.state === "listening" || snapshot.state === "requesting" || sessionUi.startup.phase !== "idle") {
       const currentClient = realtimeClientRef.current;
+      markSessionStopping(currentClient?.sessionId ?? activeSessionIdRef.current);
       realtimeClientRef.current = null;
       activeSessionIdRef.current = null;
       await currentClient?.stop();
@@ -440,7 +671,8 @@ function App() {
     }
     setNavigationConfirmReason(null);
     setRealtimeError(null);
-    setSessionArchive(null);
+    setSessionArchiveDraft(null);
+    setSessionArchiveSaveStatus({ message: "等待会话结束后保存", state: "idle" });
     setLines(createInitialCaptionLines());
     dispatchSessionUi({ type: "startup.cancelled" });
     dispatchSessionUi({ type: "session.return_home" });
@@ -463,7 +695,6 @@ function App() {
         lines={lines}
         onSourceStart={(nextSourceId) => void startCapture(nextSourceId)}
         onStop={() => void stopCapture()}
-        realtimeError={realtimeError}
         snapshot={snapshot}
       />
     );
@@ -495,11 +726,14 @@ function App() {
           onTranslationProviderSelect={setTranslationProvider}
           onTtsProviderSelect={setTtsProvider}
           onReturnHome={requestReturnHome}
+          onSessionRecordsChanged={refreshSessionRecords}
           onStart={() => void startCapture()}
           onStop={() => void stopCapture()}
           overlayLocked={overlayLocked}
           dispatchSessionUi={dispatchSessionUi}
           sessionArchive={sessionArchive}
+          sessionArchiveSaveStatus={sessionArchiveSaveStatus}
+          sessionRecords={sessionRecords}
           sessionUi={sessionUi}
           agentCapabilities={agentCapabilities}
           agentCapabilitiesError={agentCapabilitiesError}
@@ -552,7 +786,7 @@ function AppTitleBar({
           </button>
         ) : null}
         <div className="brand">
-          <span className="brandDot" />
+          <span aria-hidden="true" className="appBrandMark" />
           <strong>{pageTitle}</strong>
         </div>
       </div>
@@ -702,11 +936,14 @@ function ControlCenter({
   onTranslationProviderSelect,
   onTtsProviderSelect,
   onReturnHome,
+  onSessionRecordsChanged,
   onStart,
   onStop,
   overlayLocked,
   dispatchSessionUi,
   sessionArchive,
+  sessionArchiveSaveStatus,
+  sessionRecords,
   sessionUi,
   sourceId,
   toggleOverlayLocked,
@@ -727,11 +964,14 @@ function ControlCenter({
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onTtsProviderSelect: (provider: TtsProviderSelection) => void;
   onReturnHome: () => void;
+  onSessionRecordsChanged: () => Promise<void>;
   onStart: () => void;
   onStop: () => void;
   overlayLocked: boolean;
   dispatchSessionUi: (event: SessionUiEvent) => void;
   sessionArchive: SessionArchiveDraft | null;
+  sessionArchiveSaveStatus: SessionArchiveSaveStatus;
+  sessionRecords: SessionRecordListItem[];
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
   sourceId: DesktopAudioSourceId;
   toggleOverlayLocked: () => void;
@@ -753,7 +993,9 @@ function ControlCenter({
           onSourceSelect={onSourceSelect}
           onTranslationProviderSelect={onTranslationProviderSelect}
           onTtsProviderSelect={onTtsProviderSelect}
+          onSessionRecordsChanged={onSessionRecordsChanged}
           onStart={onStart}
+          sessionRecords={sessionRecords}
           sessionUi={sessionUi}
           sourceId={sourceId}
           translationProvider={translationProvider}
@@ -781,6 +1023,8 @@ function ControlCenter({
           lines={lines}
           onStart={onStart}
           sessionArchive={sessionArchive}
+          sessionArchiveSaveStatus={sessionArchiveSaveStatus}
+          sessionRecords={sessionRecords}
           sessionUi={sessionUi}
         />
       ) : null}
@@ -800,7 +1044,9 @@ function IdleDashboard({
   onSourceSelect,
   onTranslationProviderSelect,
   onTtsProviderSelect,
+  onSessionRecordsChanged,
   onStart,
+  sessionRecords,
   sessionUi,
   sourceId,
   translationProvider,
@@ -817,7 +1063,9 @@ function IdleDashboard({
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onTtsProviderSelect: (provider: TtsProviderSelection) => void;
+  onSessionRecordsChanged: () => Promise<void>;
   onStart: () => void;
+  sessionRecords: SessionRecordListItem[];
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
   sourceId: DesktopAudioSourceId;
   translationProvider: TranslationProviderSelection;
@@ -912,7 +1160,12 @@ function IdleDashboard({
         translationProvider={translationProvider}
         ttsProvider={ttsProvider}
       />
-      <SessionRecordsWindow isOpen={recordsOpen} onClose={() => setRecordsOpen(false)} />
+      <SessionRecordsWindow
+        isOpen={recordsOpen}
+        onClose={() => setRecordsOpen(false)}
+        onRecordsChanged={onSessionRecordsChanged}
+        records={sessionRecords}
+      />
     </div>
   );
 }
@@ -1205,12 +1458,16 @@ function FinishedDashboard({
   lines,
   onStart,
   sessionArchive,
+  sessionArchiveSaveStatus,
+  sessionRecords,
   sessionUi
 }: {
   dispatchSessionUi: (event: SessionUiEvent) => void;
   lines: CaptionLine[];
   onStart: () => void;
   sessionArchive: SessionArchiveDraft | null;
+  sessionArchiveSaveStatus: SessionArchiveSaveStatus;
+  sessionRecords: SessionRecordListItem[];
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
 }) {
   const [editableTranscript, setEditableTranscript] = useState(() => transcriptLinesToEditableText(lines));
@@ -1260,7 +1517,7 @@ function FinishedDashboard({
       <section className="summaryPanel">
         <p className="eyebrow">本次复盘</p>
         <h1>{sessionArchive?.title ?? "同传已结束，可以清理后导出"}</h1>
-        {sessionArchive ? (
+        {sessionArchive?.audio ? (
           <section className="archivePlaybackPanel" aria-label="会话录音回放">
             <audio
               controls
@@ -1297,9 +1554,11 @@ function FinishedDashboard({
           <button onClick={cleanUpTranscript}>快速清理</button>
           <button onClick={startNewSession}>开始新会话</button>
         </div>
-        <p className="exportStatus">{exportStatus}{sessionUi.preExportEdit.dirty ? " · 已编辑" : ""}</p>
+        <p className="exportStatus">
+          {exportStatus}{sessionUi.preExportEdit.dirty ? " · 已编辑" : ""} · {sessionArchiveSaveStatus.message}
+        </p>
       </section>
-      <RecentSessionsPanel />
+      <RecentSessionsPanel records={sessionRecords} />
     </div>
   );
 }
@@ -1313,36 +1572,93 @@ function TranscriptReviewGrid({
   lines: CaptionLine[];
   onLineClick: (line: CaptionLine) => void;
 }) {
+  const gridRef = useRef<HTMLElement | null>(null);
+  const [layoutMode, setLayoutMode] = useState<"balanced" | "stacked">("balanced");
+  const columnTemplate = useMemo(() => selectTranscriptReviewColumnTemplate(lines), [lines]);
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current;
+    if (!grid) {
+      return;
+    }
+    const updateLayoutMode = () => {
+      setLayoutMode(grid.clientWidth < TRANSCRIPT_REVIEW_STACKED_WIDTH_PX ? "stacked" : "balanced");
+    };
+    updateLayoutMode();
+    if (!("ResizeObserver" in window)) {
+      return;
+    }
+    const observer = new ResizeObserver(updateLayoutMode);
+    observer.observe(grid);
+    return () => observer.disconnect();
+  }, []);
+
+  function handleReviewSegmentKeyDown(line: CaptionLine, event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    onLineClick(line);
+  }
+
   return (
-    <section className="transcriptReviewGrid" aria-label="双语会话记录">
+    <section
+      className={`transcriptReviewGrid ${layoutMode === "stacked" ? "stacked" : ""}`}
+      style={{ "--review-column-template": columnTemplate } as CSSProperties}
+      ref={gridRef}
+      aria-label="双语会话记录"
+    >
       <div className="reviewColumn">
         <h2>原文</h2>
         {lines.map((line) => (
-          <button
+          <article
             className={line.id === activeSegmentId ? "reviewSegment active" : "reviewSegment"}
             key={`source-${line.id}`}
             onClick={() => onLineClick(line)}
+            onKeyDown={(event) => handleReviewSegmentKeyDown(line, event)}
+            role="button"
+            tabIndex={0}
           >
-            <span>{formatTime(line.startMs)}-{formatTime(line.endMs)}</span>
-            {line.sourceText}
-          </button>
+            <span className="reviewTimestamp">{formatTime(line.startMs)}-{formatTime(line.endMs)}</span>
+            <span className="reviewText">{line.sourceText}</span>
+          </article>
         ))}
       </div>
       <div className="reviewColumn">
         <h2>译文</h2>
         {lines.map((line) => (
-          <button
+          <article
             className={line.id === activeSegmentId ? "reviewSegment active" : "reviewSegment"}
             key={`target-${line.id}`}
             onClick={() => onLineClick(line)}
+            onKeyDown={(event) => handleReviewSegmentKeyDown(line, event)}
+            role="button"
+            tabIndex={0}
           >
-            <span>{formatTime(line.startMs)}-{formatTime(line.endMs)}</span>
-            {line.targetText}
-          </button>
+            <span className="reviewTimestamp">{formatTime(line.startMs)}-{formatTime(line.endMs)}</span>
+            <span className="reviewText">{line.targetText}</span>
+          </article>
         ))}
       </div>
     </section>
   );
+}
+
+function selectTranscriptReviewColumnTemplate(lines: CaptionLine[]) {
+  const sourceWeight = selectReviewTextWeight(lines.map((line) => line.sourceText));
+  const targetWeight = selectReviewTextWeight(lines.map((line) => line.targetText));
+  const totalWeight = Math.max(sourceWeight + targetWeight, 1);
+  const sourceRatio = Math.min(0.62, Math.max(0.38, sourceWeight / totalWeight));
+  const targetRatio = 1 - sourceRatio;
+  return `minmax(280px, ${sourceRatio.toFixed(2)}fr) minmax(260px, ${targetRatio.toFixed(2)}fr)`;
+}
+
+function selectReviewTextWeight(texts: string[]) {
+  return texts.reduce((sum, text) => {
+    const asciiCount = (text.match(/[\w'-]+/g) ?? []).length;
+    const wideCount = (text.match(/[\u4e00-\u9fff]/g) ?? []).length;
+    return sum + asciiCount * 1.15 + wideCount * 0.62 + text.length * 0.05;
+  }, 0);
 }
 
 function PreflightAudioVisualizer({ sessionUi }: { sessionUi: ReturnType<typeof createInitialSessionUiState> }) {
@@ -1555,69 +1871,206 @@ function SessionSummaryPanel({
   );
 }
 
-type SessionRecordListItem = {
-  id: string;
-  title: string;
-  endedAt: string;
-  duration: string;
-  sourceText: string;
-  targetText: string;
-};
-
-const recentSessionRecords: SessionRecordListItem[] = [
-  {
-    id: "record_2",
-    title: "2026年06月06日_记录_2",
-    endedAt: "2026年06月06日 09:57",
-    duration: "4分钟",
-    sourceText: "The speaker is explaining how live captions work.",
-    targetText: "演讲者正在解释实时字幕的工作方式。"
-  },
-  {
-    id: "record_1",
-    title: "2026年06月06日_记录_1",
-    endedAt: "2026年06月06日 09:26",
-    duration: "15分钟",
-    sourceText: "Latency matters for simultaneous interpretation.",
-    targetText: "延迟对同声传译体验非常关键。"
-  },
-  {
-    id: "record_0",
-    title: "2026年06月06日_记录",
-    endedAt: "2026年06月06日 09:10",
-    duration: "1分钟",
-    sourceText: "The session has been saved locally.",
-    targetText: "本次记录已保存在本地。"
-  }
-];
-
-function RecentSessionsPanel() {
+function RecentSessionsPanel({ records }: { records: SessionRecordListItem[] }) {
+  const visibleRecords = records.slice(0, 2);
   return (
     <aside className="dashboardPanel recentRecordsPanel">
       <h2>会议记录</h2>
-      <SessionRecordTable compact records={recentSessionRecords.slice(0, 2)} />
+      <SessionRecordTable compact records={visibleRecords} />
+      {visibleRecords.length === 0 ? <p className="archiveMissing">暂无已保存记录。</p> : null}
     </aside>
   );
 }
 
-function SessionRecordsWindow({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [records, setRecords] = useState(recentSessionRecords);
+function SessionRecordsWindow({
+  isOpen,
+  onClose,
+  onRecordsChanged,
+  records
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onRecordsChanged: () => Promise<void>;
+  records: SessionRecordListItem[];
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<SessionRecord | null>(null);
+  const [selectedRecordLoading, setSelectedRecordLoading] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [exportStatus, setExportStatus] = useState("");
+  const [renameStatus, setRenameStatus] = useState("");
   const [reviewScale, setReviewScale] = useState(1);
-  const selectedRecord = selectedId ? records.find((record) => record.id === selectedId) ?? null : null;
-  const isDetailView = Boolean(selectedRecord);
+  const [recordAudioUrl, setRecordAudioUrl] = useState<string | null>(null);
+  const [playbackMs, setPlaybackMs] = useState(0);
+  const [activeRecordSegmentId, setActiveRecordSegmentId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const recordAudioRef = useRef<HTMLAudioElement | null>(null);
+  const recordSegmentRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const filteredRecords = useMemo(() => filterSessionRecordsByTitle(records, searchQuery), [records, searchQuery]);
+  const selectedListRecord = selectedId ? records.find((record) => record.id === selectedId) ?? null : null;
+  const isDetailView = Boolean(selectedId);
+
+  useEffect(() => {
+    if (!isOpen || !selectedId) {
+      setSelectedRecord(null);
+      setRecordAudioUrl(null);
+      setPlaybackMs(0);
+      setActiveRecordSegmentId(null);
+      setTitleDraft("");
+      return;
+    }
+
+    let cancelled = false;
+    const recordId = selectedId;
+    async function loadRecord() {
+      setSelectedRecordLoading(true);
+      setExportStatus("");
+      setRenameStatus("");
+      try {
+        const record = await window.echosyncDesktop?.sessionRecords.get(recordId);
+        if (cancelled) {
+          return;
+        }
+        if (!record) {
+          setSelectedRecord(null);
+          setRecordAudioUrl(null);
+          setExportStatus("记录不存在");
+          return;
+        }
+        const normalizedRecord = normalizeSessionRecordForReview(record);
+        setSelectedRecord(normalizedRecord);
+        setTitleDraft(normalizedRecord.title);
+        const firstSegmentId = normalizedRecord.segments[0]?.id ?? null;
+        setActiveRecordSegmentId(firstSegmentId);
+        setPlaybackMs(normalizedRecord.segments[0]?.startMs ?? 0);
+        const audioUrl = await window.echosyncDesktop?.sessionRecords.getAudioUrl(recordId);
+        if (!cancelled) {
+          setRecordAudioUrl(audioUrl ?? null);
+        }
+      } catch (error) {
+        log.warn("[session-records] 读取会议记录详情失败:", error);
+        if (!cancelled) {
+          setSelectedRecord(null);
+          setRecordAudioUrl(null);
+          setExportStatus("加载失败");
+        }
+      } finally {
+        if (!cancelled) {
+          setSelectedRecordLoading(false);
+        }
+      }
+    }
+
+    void loadRecord();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, selectedId]);
+
+  useEffect(() => {
+    if (!activeRecordSegmentId) {
+      return;
+    }
+    const node = recordSegmentRefs.current[activeRecordSegmentId];
+    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [activeRecordSegmentId]);
 
   if (!isOpen) {
     return null;
   }
 
-  function deleteRecord(recordId: string) {
-    setRecords((current) => current.filter((record) => record.id !== recordId));
+  async function deleteRecord(recordId: string) {
+    try {
+      await window.echosyncDesktop?.sessionRecords.delete(recordId);
+      await onRecordsChanged();
+      setExportStatus("");
+    } catch (error) {
+      log.warn("[session-records] 删除会议记录失败:", error);
+      setExportStatus("删除失败");
+    }
     setDeleteId(null);
     if (selectedId === recordId) {
       setSelectedId(null);
+      setSelectedRecord(null);
+      setRecordAudioUrl(null);
     }
+  }
+
+  async function exportSelectedRecord(format: SessionRecordExportFormat = "markdown") {
+    if (!selectedRecord) {
+      return;
+    }
+    try {
+      const result = await window.echosyncDesktop?.sessionRecords.export(selectedRecord.id, format);
+      const fallbackText = format === "markdown" ? serializeSessionRecordMarkdown(selectedRecord) : "";
+      await window.echosyncDesktop?.copyText(result?.text ?? fallbackText);
+      setExportStatus(format === "markdown" ? "Markdown 已复制" : `${sessionRecordExportFormatLabel(format)} 已复制`);
+    } catch (error) {
+      log.warn("[session-records] 导出会议记录失败:", error);
+      setExportStatus("导出失败");
+    }
+  }
+
+  async function renameSelectedRecord() {
+    if (!selectedRecord) {
+      return;
+    }
+    const nextTitle = titleDraft.trim();
+    if (!nextTitle || nextTitle === selectedRecord.title) {
+      setTitleDraft(selectedRecord.title);
+      setRenameStatus("");
+      return;
+    }
+    try {
+      setRenameStatus("保存中...");
+      const renamed = await window.echosyncDesktop?.sessionRecords.rename(selectedRecord.id, nextTitle);
+      if (renamed) {
+        const normalizedRecord = normalizeSessionRecordForReview(renamed);
+        setSelectedRecord(normalizedRecord);
+        setTitleDraft(normalizedRecord.title);
+      }
+      await onRecordsChanged();
+      setRenameStatus("已重命名");
+    } catch (error) {
+      log.warn("[session-records] 重命名会议记录失败:", error);
+      setTitleDraft(selectedRecord.title);
+      setRenameStatus("重命名失败");
+    }
+  }
+
+  function handleRecordTitleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void renameSelectedRecord();
+      event.currentTarget.blur();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setTitleDraft(selectedRecord?.title ?? "");
+      setRenameStatus("");
+      event.currentTarget.blur();
+    }
+  }
+
+  function seekToRecordSegment(segment: SessionRecordSegment) {
+    setActiveRecordSegmentId(segment.id);
+    setPlaybackMs(segment.startMs);
+    const audio = recordAudioRef.current;
+    if (!audio) {
+      return;
+    }
+    audio.currentTime = segment.startMs / 1000;
+    void audio.play().catch(() => undefined);
+  }
+
+  function updateRecordPlayback(currentMs: number) {
+    setPlaybackMs(currentMs);
+    if (!selectedRecord) {
+      return;
+    }
+    setActiveRecordSegmentId(selectSessionRecordPlaybackSegmentId(selectedRecord.segments, currentMs));
   }
 
   return (
@@ -1625,78 +2078,200 @@ function SessionRecordsWindow({ isOpen, onClose }: { isOpen: boolean; onClose: (
       <header className={isDetailView ? "recordHeader detail" : "recordHeader"}>
         <div>
           <p>{isDetailView ? "内容自动保存 · 数据安全保护 · 译文由 AI 生成" : "记录"}</p>
-          <h2>{selectedRecord?.title ?? "会议记录"}</h2>
+          {isDetailView ? (
+            <div className="recordTitleEditor">
+              <input
+                aria-label="会议记录名称"
+                className="recordTitleInput"
+                onBlur={() => void renameSelectedRecord()}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                onKeyDown={handleRecordTitleKeyDown}
+                value={titleDraft || selectedListRecord?.title || ""}
+              />
+              {renameStatus ? <span role="status">{renameStatus}</span> : null}
+            </div>
+          ) : (
+            <h2>会议记录</h2>
+          )}
         </div>
         {!isDetailView ? (
           <label>
             <span>搜索会议名称</span>
-            <input aria-label="搜索会议名称" placeholder="搜索会议名称" />
+            <input
+              aria-label="搜索会议名称"
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索会议名称"
+              value={searchQuery}
+            />
           </label>
         ) : null}
-        {isDetailView ? <button className="recordBackButton" onClick={() => setSelectedId(null)}>返回列表</button> : null}
+        {isDetailView ? <button className="recordBackButton" aria-label="返回记录列表" onClick={() => setSelectedId(null)}>←</button> : null}
         <button aria-label="关闭会议记录" onClick={onClose}>×</button>
       </header>
       {!isDetailView ? (
         <>
           <SessionRecordTable
             onDelete={(recordId) => setDeleteId(recordId)}
-            onView={(recordId) => setSelectedId(recordId)}
-            records={records}
+            onView={(recordId) => {
+              setSelectedId(recordId);
+              setExportStatus("");
+            }}
+            records={filteredRecords}
           />
           {deleteId ? (
             <section className="recordDeleteConfirm" role="alert">
               <span>删除后将移除本地记录。</span>
               <button onClick={() => setDeleteId(null)}>取消</button>
-              <button onClick={() => deleteRecord(deleteId)}>确认删除</button>
+              <button onClick={() => void deleteRecord(deleteId)}>确认删除</button>
             </section>
           ) : null}
           {records.length === 0 ? <p className="archiveMissing">暂无已保存记录。</p> : null}
+          {records.length > 0 && filteredRecords.length === 0 ? <p className="archiveMissing">没有匹配的会议记录。</p> : null}
         </>
+      ) : null}
+      {isDetailView && selectedRecordLoading ? (
+        <section className="recordDetailPanel" aria-label="记录详情">
+          <p className="archiveMissing">正在加载记录...</p>
+        </section>
+      ) : null}
+      {isDetailView && !selectedRecordLoading && !selectedRecord ? (
+        <section className="recordDetailPanel" aria-label="记录详情">
+          <p className="archiveMissing">{exportStatus || "没有找到这条会议记录。"}</p>
+        </section>
       ) : null}
       {selectedRecord ? (
         <section className="recordDetailPanel" aria-label="记录详情">
           <header>
             <div>
-              <p>点击片段可定位回放，播放时会高亮对应文本。</p>
+              <p>点击片段可定位回放，播放时会高亮并自然滚动。</p>
               <h3>双语复盘</h3>
             </div>
             <div className="recordDetailActions">
               <button onClick={() => setReviewScale((value) => Math.max(0.9, Number((value - 0.05).toFixed(2))))}>字号 -</button>
               <button onClick={() => setReviewScale((value) => Math.min(1.25, Number((value + 0.05).toFixed(2))))}>字号 +</button>
-              <button className="primaryAction">导出</button>
+              <button onClick={() => void exportSelectedRecord("txt")}>TXT</button>
+              <button onClick={() => void exportSelectedRecord("srt")}>SRT</button>
+              <button className="primaryAction" onClick={() => void exportSelectedRecord()}>导出</button>
+              {exportStatus ? <span className="recordExportStatus" role="status">{exportStatus}</span> : null}
             </div>
           </header>
           <div className="recordAudioPlayer" aria-label="原始音频回放">
-            <button className="roundRecordButton" aria-label="播放原始音频">▶</button>
-            <span>原始音频回放</span>
-            <progress max={100} value={34} />
-            <time>00:00 / {selectedRecord.duration}</time>
+            {recordAudioUrl ? (
+              <audio
+                controls
+                ref={recordAudioRef}
+                src={recordAudioUrl}
+                onTimeUpdate={(event) => updateRecordPlayback(Math.round(event.currentTarget.currentTime * 1000))}
+              />
+            ) : (
+              <span>本地没有保存可回放音频。</span>
+            )}
+            <time>{formatTime(playbackMs)} / {formatTime(selectedRecord.durationMs)}</time>
           </div>
-          <div className="recordTranscriptPair" style={{ fontSize: `${reviewScale}em` }}>
-            <article className="active">
-              <h4>原文</h4>
-              <time>00:00-00:18</time>
-              <p>{selectedRecord.sourceText}</p>
-            </article>
-            <article className="active">
-              <h4>译文</h4>
-              <time>00:00-00:18</time>
-              <p>{selectedRecord.targetText}</p>
-            </article>
-          </div>
-          <details className="recordDiagnostics">
-            <summary>诊断信息</summary>
-            <div>
-              <span>首字幕延迟：按需生成</span>
-              <span>平均识别延迟：按需生成</span>
-              <span>平均翻译延迟：按需生成</span>
-              <span>字幕显示延迟：按需生成</span>
+          <div className="recordDetailLayout">
+            <div className="recordTranscriptList" style={{ fontSize: `${reviewScale}em` }} aria-label="双语片段">
+              {selectedRecord.segments.length > 0 ? (
+                selectedRecord.segments.map((segment) => (
+                  <button
+                    className={segment.id === activeRecordSegmentId ? "recordSegmentPair active" : "recordSegmentPair"}
+                    key={segment.id}
+                    onClick={() => seekToRecordSegment(segment)}
+                    ref={(node) => {
+                      recordSegmentRefs.current[segment.id] = node;
+                    }}
+                    type="button"
+                  >
+                    <time>{formatTime(segment.startMs)}-{formatTime(segment.endMs)}</time>
+                    <p className="recordSegmentSource">{selectedRecordSegmentSourceText(segment) || "原文为空"}</p>
+                    <p className="recordSegmentTarget">{selectedRecordSegmentTargetText(segment) || "译文待补全"}</p>
+                  </button>
+                ))
+              ) : (
+                <p className="archiveMissing">这条记录没有可复盘文本。</p>
+              )}
             </div>
-          </details>
+            <aside className="recordSummaryAside" aria-label="摘要与元数据">
+              <section>
+                <p className="eyebrow">摘要</p>
+                <h3>{sessionRecordSummaryStatusLabel(selectedRecord.summary.status)}</h3>
+                <p>{selectedRecord.summary.text || "摘要暂未生成。保存后仍可先查看完整双语记录。"}</p>
+                {selectedRecord.summary.keywords.length > 0 ? (
+                  <div className="recordKeywordList">
+                    {selectedRecord.summary.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}
+                  </div>
+                ) : null}
+              </section>
+              <section className="recordMetadataGrid">
+                <span>开始</span><strong>{formatDateTimeForRecord(selectedRecord.startedAt)}</strong>
+                <span>结束</span><strong>{formatDateTimeForRecord(selectedRecord.endedAt)}</strong>
+                <span>时长</span><strong>{formatDurationForRecord(selectedRecord.durationMs)}</strong>
+                <span>语言</span><strong>{selectedRecord.sourceLang} → {selectedRecord.targetLang}</strong>
+                <span>片段</span><strong>{selectedRecord.metadata.segmentCount}</strong>
+                <span>修订</span><strong>{selectedRecord.metadata.patchCount}</strong>
+                <span>字符</span><strong>{selectedRecord.metadata.sourceCharCount} / {selectedRecord.metadata.targetCharCount}</strong>
+                <span>平均延迟</span><strong>{formatMetricMs(selectedRecord.metadata.averageCaptionLagMs ?? null)}</strong>
+              </section>
+              <details className="recordDiagnostics">
+                <summary>诊断信息</summary>
+                <div>
+                  <span>时间轴异常：{selectedRecord.diagnostics?.hasTimingAnomaly ? "已校正" : "未发现"}</span>
+                  <span>翻译缺口：{selectedRecord.diagnostics?.hasTranslationGap ? "存在" : "未发现"}</span>
+                  <span>音频：{selectedRecord.audio ? `${Math.round(selectedRecord.audio.sizeBytes / 1024)} KB` : "未保存"}</span>
+                  <span>更新时间：{formatDateTimeForRecord(selectedRecord.updatedAt)}</span>
+                </div>
+              </details>
+            </aside>
+          </div>
         </section>
       ) : null}
     </aside>
   );
+}
+
+function normalizeSessionRecordForReview(record: SessionRecord): SessionRecord {
+  const normalizedTiming = normalizeSessionRecordSegmentsTiming(record.segments);
+  if (!normalizedTiming.hasTimingAnomaly) {
+    return {
+      ...record,
+      segments: normalizedTiming.segments
+    };
+  }
+
+  return {
+    ...record,
+    diagnostics: {
+      hasTimingAnomaly: true,
+      hasTranslationGap: Boolean(record.diagnostics?.hasTranslationGap),
+      logPath: record.diagnostics?.logPath
+    },
+    segments: normalizedTiming.segments
+  };
+}
+
+function selectedRecordSegmentSourceText(segment: SessionRecordSegment) {
+  return segment.sourceEditedText ?? segment.sourceText;
+}
+
+function selectedRecordSegmentTargetText(segment: SessionRecordSegment) {
+  return segment.targetEditedText ?? segment.targetText;
+}
+
+function sessionRecordExportFormatLabel(format: SessionRecordExportFormat) {
+  const labels: Record<SessionRecordExportFormat, string> = {
+    markdown: "Markdown",
+    srt: "SRT",
+    txt: "TXT"
+  };
+  return labels[format];
+}
+
+function sessionRecordSummaryStatusLabel(status: SessionRecord["summary"]["status"]) {
+  const labels: Record<SessionRecord["summary"]["status"], string> = {
+    failed: "摘要生成失败",
+    pending: "摘要待生成",
+    ready: "摘要已生成"
+  };
+  return labels[status];
 }
 
 function SessionRecordTable({
@@ -1712,6 +2287,7 @@ function SessionRecordTable({
   records: SessionRecordListItem[];
   selectedId?: string;
 }) {
+  const hasRecordActions = Boolean(onView || onDelete);
   return (
     <div className={compact ? "recordTable compact" : "recordTable"} role="table" aria-label="会议记录列表">
       <div className="recordTableHead" role="row">
@@ -1724,10 +2300,12 @@ function SessionRecordTable({
           <strong role="cell">{record.title}</strong>
           <span role="cell">{record.endedAt}</span>
           <span role="cell">{record.duration}</span>
-          <span className="recordActions" role="cell">
-            <button onClick={() => onView?.(record.id)}>查看</button>
-            <button onClick={() => onDelete?.(record.id)}>删除</button>
-          </span>
+          {hasRecordActions ? (
+            <span className="recordActions" role="cell">
+              {onView ? <button onClick={() => onView(record.id)}>查看</button> : null}
+              {onDelete ? <button onClick={() => onDelete(record.id)}>删除</button> : null}
+            </span>
+          ) : null}
         </div>
       ))}
     </div>
@@ -1739,14 +2317,12 @@ function OverlayWindow({
   lines,
   onSourceStart,
   onStop,
-  realtimeError,
   snapshot
 }: {
   activeLine?: CaptionLine;
   lines: CaptionLine[];
   onSourceStart: (sourceId: DesktopAudioSourceId) => void;
   onStop: () => void;
-  realtimeError: string | null;
   snapshot: DesktopCaptureSnapshot;
 }) {
   const isListening = snapshot.state === "listening";
@@ -1917,7 +2493,6 @@ function OverlayWindow({
           {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
           {settlingLines.length > 0 ? <OverlayCaptionHistory lines={settlingLines} subtitleStyle={subtitleStyle} variant="settling" /> : null}
           <CaptionText line={captionLineForDisplay} subtitleStyle={subtitleStyle} />
-          {realtimeError ? <p className="overlayError">{realtimeError}</p> : null}
           <div className="overlayMeta">
             <span className={`liveDot state-${snapshot.state}`} />
             <span>{isListening ? "正在同传" : "实时字幕"}</span>

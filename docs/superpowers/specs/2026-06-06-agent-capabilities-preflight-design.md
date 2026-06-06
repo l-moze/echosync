@@ -47,6 +47,8 @@ Provider readiness 使用小而稳定的状态集合：
 
 `mock` ASR 永远可用于演示，但 `real_audio_supported=false`。真实 PCM 音频源（Windows 系统声、麦克风、文件、混音）不能用 `mock` ASR 进入同传。
 
+FunASR 的 readiness 必须覆盖实际运行时导入链：`funasr`、`modelscope`、`torch` 都可发现才算 `ready`。缺少 `torch` 时不能等到实时音频已经开始后再由模型懒加载失败；Agent capabilities 应返回 `missing_dependency`，Desktop preflight 直接阻止启动并展示后端 `reason`。
+
 ## 测试要求
 
 - 后端 capabilities 能反映默认 provider、缺 key、缺依赖和 real audio 支持。

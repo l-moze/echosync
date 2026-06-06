@@ -6,7 +6,7 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from echosync_agent.domain import (
     AudioFrame,
@@ -28,9 +28,22 @@ from echosync_agent.interfaces import (
 )
 from echosync_agent.services.asr.transcript_assembler import TranscriptAssembler
 from echosync_agent.services.realtime.text_regions import split_realtime_text
+from echosync_agent.services.translation.simul_policy import (
+    SimulPolicyAction,
+    SimulPolicyDecision,
+    SimulTranslationPolicy,
+    simul_action_code,
+)
 from echosync_agent.services.translation.terminology import Glossary
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _QueuedCheckpoint:
+    transcript: TranscriptSegment
+    queued_at: float
+    simul_decision: SimulPolicyDecision
 
 
 class CascadedInterpretationEngine(InterpretationEngine):
@@ -50,6 +63,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         partial_translation_min_audio_ms: int = 600,
         partial_translation_min_chars: int = 8,
         translate_partial_checkpoints: bool = False,
+        simul_policy: SimulTranslationPolicy | None = None,
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
@@ -62,6 +76,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         self.partial_translation_min_audio_ms = partial_translation_min_audio_ms
         self.partial_translation_min_chars = partial_translation_min_chars
         self.translate_partial_checkpoints = translate_partial_checkpoints
+        self.simul_policy = simul_policy or SimulTranslationPolicy()
         # 统一转为 Glossary 对象
         if isinstance(glossary, dict):
             self._glossary = Glossary.from_dict(glossary)
@@ -89,7 +104,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[InterpretationEvent]:
         event_queue: asyncio.Queue[InterpretationEvent | BaseException | object] = asyncio.Queue()
         done = object()
-        pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment] = {}
+        pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint] = {}
         pending_order: deque[tuple[str, SegmentStatus]] = deque()
         stable_checkpoint_history: dict[str, TranscriptSegment] = {}
         partial_checkpoint_history: dict[str, TranscriptSegment] = {}
@@ -124,6 +139,9 @@ class CascadedInterpretationEngine(InterpretationEngine):
                             stable_checkpoint_history,
                         ):
                             continue
+                        simul_decision = self._translation_policy_decision(transcript)
+                        if self._should_wait_translation(transcript, simul_decision):
+                            continue
                         partial_checkpoint_history[transcript.segment_id] = transcript
                         checkpoint_key = self._checkpoint_key(transcript)
                         self._queue_translation_checkpoint(
@@ -131,8 +149,10 @@ class CascadedInterpretationEngine(InterpretationEngine):
                             pending_order,
                             checkpoint_key,
                             transcript,
+                            simul_decision,
                         )
                         checkpoint_available.set()
+                        await asyncio.sleep(0)
                         continue
 
                     checkpoint_key = self._checkpoint_key(transcript)
@@ -149,17 +169,23 @@ class CascadedInterpretationEngine(InterpretationEngine):
                             stable_checkpoint_history,
                         ):
                             continue
+                        simul_decision = self._translation_policy_decision(transcript)
+                        if self._should_wait_translation(transcript, simul_decision):
+                            continue
                         stable_checkpoint_history[transcript.segment_id] = transcript
                     else:
                         stable_checkpoint_history.pop(transcript.segment_id, None)
+                        simul_decision = self._translation_policy_decision(transcript)
 
                     self._queue_translation_checkpoint(
                         pending_checkpoints,
                         pending_order,
                         checkpoint_key,
                         transcript,
+                        simul_decision,
                     )
                     checkpoint_available.set()
+                    await asyncio.sleep(0)
             except BaseException as exc:
                 await event_queue.put(exc)
             finally:
@@ -172,10 +198,22 @@ class CascadedInterpretationEngine(InterpretationEngine):
                     await checkpoint_available.wait()
                     while pending_order:
                         checkpoint_key = pending_order.popleft()
-                        item = pending_checkpoints.pop(checkpoint_key, None)
-                        if item is None:
+                        queued = pending_checkpoints.pop(checkpoint_key, None)
+                        if queued is None:
                             continue
-                        async for event in self._translate_checkpoint(item):
+                        queue_wait_ms = max((time.perf_counter() - queued.queued_at) * 1000, 0.0)
+                        item = _with_metric(
+                            _with_simul_policy_decision(
+                                queued.transcript,
+                                queued.simul_decision,
+                            ),
+                            "translation_queue_wait_ms",
+                            queue_wait_ms,
+                        )
+                        async for event in self._translate_checkpoint(
+                            item,
+                            queued.simul_decision,
+                        ):
                             await event_queue.put(event)
                     if producer_done:
                         break
@@ -205,16 +243,20 @@ class CascadedInterpretationEngine(InterpretationEngine):
     async def _translate_checkpoint(
         self,
         transcript: TranscriptSegment,
+        request_decision: SimulPolicyDecision,
     ) -> AsyncIterator[InterpretationEvent]:
         context = self._context(transcript.text, transcript.segment_id)
         translation_started_at = time.perf_counter()
         translation_first_token_ms: float | None = None
         translation_delta_count = 0
         final_translation: TranslationSegment | None = None
+        final_decision: SimulPolicyDecision | None = None
         logger.info(
             "translation_checkpoint_started session_id=%s segment_id=%s rev=%d "
             "status=%s audio_start_ms=%d audio_end_ms=%d source_chars=%d "
-            "asr_latency_ms=%.1f merge_wait_ms=%.1f glossary_terms=%d",
+            "asr_latency_ms=%.1f merge_wait_ms=%.1f translation_queue_wait_ms=%.1f "
+            "glossary_terms=%d "
+            "simul_action=%s simul_reason=%s simul_confidence=%.2f",
             transcript.session_id,
             transcript.segment_id,
             transcript.rev,
@@ -224,28 +266,43 @@ class CascadedInterpretationEngine(InterpretationEngine):
             len(transcript.text),
             _metric_value(transcript.metrics, "asr_latency_ms"),
             _metric_value(transcript.metrics, "merge_wait_ms"),
+            _metric_value(transcript.metrics, "translation_queue_wait_ms"),
             len(context.glossary),
+            request_decision.action,
+            request_decision.reason,
+            request_decision.confidence,
         )
         async for translation in self._stream_translation(transcript, context):
             translation_latency_ms = (time.perf_counter() - translation_started_at) * 1000
             translation_delta_count += 1
+            translation_decision = self.simul_policy.classify_translation(
+                translation,
+                previous_revision=self._latest_segment_revision(translation.segment_id),
+            )
             if translation_first_token_ms is None:
                 translation_first_token_ms = translation_latency_ms
                 logger.info(
                     "translation_checkpoint_first_token session_id=%s segment_id=%s "
-                    "rev=%d status=%s first_token_ms=%.1f target_chars=%d",
+                    "rev=%d status=%s first_token_ms=%.1f target_chars=%d "
+                    "simul_action=%s simul_reason=%s",
                     translation.session_id,
                     translation.segment_id,
                     translation.rev,
                     translation.status,
                     translation_first_token_ms,
                     len(translation.target_text),
+                    translation_decision.action,
+                    translation_decision.reason,
                 )
             translation = replace(
                 translation,
                 metrics={
                     **transcript.metrics,
                     **translation.metrics,
+                    **_simul_policy_metrics(translation_decision),
+                    "simul_policy_request_action": simul_action_code(
+                        request_decision.action
+                    ),
                     "translation_latency_ms": translation_latency_ms,
                     "translation_first_token_ms": translation_first_token_ms,
                     "translation_delta_count": float(translation_delta_count),
@@ -253,6 +310,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
             )
             translation = self._with_text_regions(translation)
             final_translation = translation
+            final_decision = translation_decision
             yield translation
 
         if final_translation is None:
@@ -275,7 +333,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         logger.info(
             "translation_checkpoint_finished session_id=%s segment_id=%s rev=%d "
             "status=%s final_ms=%.1f first_token_ms=%.1f delta_count=%d "
-            "source_chars=%d target_chars=%d",
+            "source_chars=%d target_chars=%d simul_action=%s simul_reason=%s",
             final_translation.session_id,
             final_translation.segment_id,
             final_translation.rev,
@@ -285,6 +343,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
             translation_delta_count,
             len(final_translation.source_text),
             len(final_translation.target_text),
+            final_decision.action if final_decision else request_decision.action,
+            final_decision.reason if final_decision else request_decision.reason,
         )
 
         if final_translation.status == SegmentStatus.PARTIAL:
@@ -316,6 +376,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 source_unstable_text=final_translation.source_unstable_text,
                 target_stable_text=final_translation.target_stable_text,
                 target_unstable_text=final_translation.target_unstable_text,
+                metrics=dict(final_translation.metrics),
             )
 
     @staticmethod
@@ -366,21 +427,77 @@ class CascadedInterpretationEngine(InterpretationEngine):
             return False
         return transcript.end_ms - transcript.start_ms >= self.partial_translation_min_audio_ms
 
+    def _translation_policy_decision(
+        self,
+        transcript: TranscriptSegment,
+    ) -> SimulPolicyDecision:
+        return self.simul_policy.should_translate(
+            transcript,
+            previous_revision=self._latest_segment_revision(transcript.segment_id),
+        )
+
+    def _should_wait_translation(
+        self,
+        transcript: TranscriptSegment,
+        decision: SimulPolicyDecision,
+    ) -> bool:
+        if decision.action != SimulPolicyAction.WAIT:
+            return False
+        logger.info(
+            "translation_checkpoint_skipped session_id=%s segment_id=%s rev=%d "
+            "status=%s reason=simul_wait simul_reason=%s simul_confidence=%.2f "
+            "audio_start_ms=%d audio_end_ms=%d source_chars=%d",
+            transcript.session_id,
+            transcript.segment_id,
+            transcript.rev,
+            transcript.status,
+            decision.reason,
+            decision.confidence,
+            transcript.start_ms,
+            transcript.end_ms,
+            len(transcript.text),
+        )
+        return True
+
     @staticmethod
     def _queue_translation_checkpoint(
-        pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment],
+        pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint],
         pending_order: deque[tuple[str, SegmentStatus]],
         checkpoint_key: tuple[str, SegmentStatus],
         transcript: TranscriptSegment,
+        simul_decision: SimulPolicyDecision,
     ) -> None:
+        if transcript.status == SegmentStatus.COMMITTED:
+            CascadedInterpretationEngine._drop_pending_checkpoint(
+                pending_checkpoints,
+                pending_order,
+                (transcript.segment_id, SegmentStatus.STABLE),
+            )
+            CascadedInterpretationEngine._drop_pending_checkpoint(
+                pending_checkpoints,
+                pending_order,
+                (transcript.segment_id, SegmentStatus.PARTIAL),
+            )
+        elif transcript.status == SegmentStatus.STABLE:
+            CascadedInterpretationEngine._drop_pending_checkpoint(
+                pending_checkpoints,
+                pending_order,
+                (transcript.segment_id, SegmentStatus.PARTIAL),
+            )
+
         if checkpoint_key not in pending_checkpoints:
             pending_order.append(checkpoint_key)
 
-        pending_checkpoints[checkpoint_key] = transcript
+        pending_checkpoints[checkpoint_key] = _QueuedCheckpoint(
+            transcript=transcript,
+            queued_at=time.perf_counter(),
+            simul_decision=simul_decision,
+        )
         logger.info(
             "translation_checkpoint_queued session_id=%s segment_id=%s "
             "rev=%d status=%s audio_start_ms=%d audio_end_ms=%d "
-            "source_chars=%d pending_checkpoints=%d",
+            "source_chars=%d pending_checkpoints=%d simul_action=%s "
+            "simul_reason=%s simul_confidence=%.2f",
             transcript.session_id,
             transcript.segment_id,
             transcript.rev,
@@ -389,11 +506,14 @@ class CascadedInterpretationEngine(InterpretationEngine):
             transcript.end_ms,
             len(transcript.text),
             len(pending_checkpoints),
+            simul_decision.action,
+            simul_decision.reason,
+            simul_decision.confidence,
         )
 
     @staticmethod
     def _drop_pending_checkpoint(
-        pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment],
+        pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint],
         pending_order: deque[tuple[str, SegmentStatus]],
         checkpoint_key: tuple[str, SegmentStatus],
     ) -> None:
@@ -490,6 +610,12 @@ class CascadedInterpretationEngine(InterpretationEngine):
         )
         history.append(translation)
 
+    def _latest_segment_revision(self, segment_id: str) -> TranslationSegment | None:
+        revisions = self._segment_revisions.get(segment_id)
+        if not revisions:
+            return None
+        return revisions[-1]
+
     def _context(self, current_source_text: str, current_segment_id: str) -> CorrectionContext:
         """构建翻译上下文，包含基于流式窗口的术语匹配。
 
@@ -546,3 +672,29 @@ def _metric_value(metrics: dict[str, float], key: str) -> float:
     if value is None:
         return -1.0
     return float(value)
+
+
+def _with_metric(
+    transcript: TranscriptSegment,
+    key: str,
+    value: float,
+) -> TranscriptSegment:
+    return replace(transcript, metrics={**transcript.metrics, key: value})
+
+
+def _with_simul_policy_decision(
+    transcript: TranscriptSegment,
+    decision: SimulPolicyDecision,
+) -> TranscriptSegment:
+    return replace(
+        transcript,
+        metrics={**transcript.metrics, **_simul_policy_metrics(decision)},
+    )
+
+
+def _simul_policy_metrics(decision: SimulPolicyDecision) -> dict[str, float]:
+    return {
+        "simul_policy_action": simul_action_code(decision.action),
+        "simul_policy_confidence": decision.confidence,
+        "simul_policy_source_span_end": float(decision.source_span_end),
+    }

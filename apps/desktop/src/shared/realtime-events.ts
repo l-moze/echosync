@@ -8,6 +8,34 @@ export type CaptionUpdateText = {
   language: string;
 };
 
+export type RealtimeEventMetrics = {
+  asr_latency_ms?: number;
+  asr_queue_wait_ms?: number;
+  asr_stream_elapsed_ms?: number;
+  asr_audio_lag_ms?: number;
+  asr_audio_window_ms?: number;
+  asr_stream_rtf?: number;
+  asr_rtf?: number;
+  caption_send_failures?: number;
+  caption_send_ms?: number;
+  llm_delta_count?: number;
+  llm_request_ms?: number;
+  llm_stream_ms?: number;
+  llm_ttft_ms?: number;
+  merge_wait_ms?: number;
+  translation_queue_wait_ms?: number;
+  translation_delta_count?: number;
+  translation_first_token_ms?: number;
+  translation_latency_ms?: number;
+  translation_final_ms?: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
+  tts_first_audio_ms?: number;
+  tts_total_ms?: number;
+  tts_audio_chunks?: number;
+  tts_audio_bytes?: number;
+};
+
 export type CaptionUpdateEvent = {
   type: "caption_update";
   session_id: string;
@@ -20,7 +48,10 @@ export type CaptionUpdateEvent = {
     start_ms: number;
     end_ms: number;
   };
+  metrics?: RealtimeEventMetrics;
   published_at_ms?: number;
+  trace_id?: string;
+  span_id?: string;
 };
 
 export type CaptionTextEvent = {
@@ -41,13 +72,9 @@ export type CaptionTextEvent = {
   end_ms: number;
   speaker?: string | null;
   published_at_ms?: number;
-  metrics?: {
-    asr_latency_ms?: number;
-    merge_wait_ms?: number;
-    translation_delta_count?: number;
-    translation_first_token_ms?: number;
-    translation_latency_ms?: number;
-  };
+  metrics?: RealtimeEventMetrics;
+  trace_id?: string;
+  span_id?: string;
 };
 
 export type SubtitleEvent = CaptionTextEvent & {
@@ -87,6 +114,8 @@ export type SubtitlePatchEvent = {
   reason: "revision_window" | "context_revision" | "terminology";
   stability: number;
   published_at_ms?: number;
+  trace_id?: string;
+  span_id?: string;
 };
 
 export type SubtitleCommitEvent = {
@@ -106,7 +135,10 @@ export type SubtitleCommitEvent = {
   target_unstable_text?: string;
   speaker?: string | null;
   final: boolean;
+  metrics?: RealtimeEventMetrics;
   published_at_ms?: number;
+  trace_id?: string;
+  span_id?: string;
 };
 
 export type RealtimeErrorEvent = {
@@ -114,12 +146,16 @@ export type RealtimeErrorEvent = {
   session_id: string;
   message: string;
   published_at_ms?: number;
+  trace_id?: string;
+  span_id?: string;
 };
 
 export type RealtimeDoneEvent = {
   type: "realtime.done";
   session_id: string;
   published_at_ms?: number;
+  trace_id?: string;
+  span_id?: string;
 };
 
 export type TtsAudioEvent = {
@@ -134,7 +170,10 @@ export type TtsAudioEvent = {
   mime_type: string;
   sample_rate: number | null;
   final: boolean;
+  metrics?: RealtimeEventMetrics;
   published_at_ms?: number;
+  trace_id?: string;
+  span_id?: string;
 };
 
 export type RealtimeEvent =

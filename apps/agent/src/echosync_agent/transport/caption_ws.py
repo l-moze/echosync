@@ -39,37 +39,76 @@ class CaptionEventHub:
     async def publish(self, event_type: str, payload: dict[str, Any]) -> None:
         """向所有已连接的 Desktop 客户端推送事件。"""
         published_at_ms = int(time.time() * 1000)
-        message = {"type": event_type, **payload, "published_at_ms": published_at_ms}
         metrics = payload.get("metrics")
         if not isinstance(metrics, dict):
             metrics = {}
-        logger.info(
-            "caption_event_published type=%s clients=%d session_id=%s "
-            "segment_id=%s published_at_ms=%d asr_latency_ms=%.1f "
-            "merge_wait_ms=%.1f translation_first_token_ms=%.1f "
-            "translation_latency_ms=%.1f source=%s target=%s",
-            event_type,
-            self.client_count,
-            payload.get("session_id", ""),
-            payload.get("segment_id", ""),
-            published_at_ms,
-            _metric(metrics, "asr_latency_ms"),
-            _metric(metrics, "merge_wait_ms"),
-            _metric(metrics, "translation_first_token_ms"),
-            _metric(metrics, "translation_latency_ms"),
-            _snippet(payload.get("source_text", "")),
-            _snippet(payload.get("target_text", "")),
-        )
+        else:
+            metrics = dict(metrics)
+        trace_id = str(payload.get("trace_id") or payload.get("session_id") or "")
+        span_id = str(payload.get("span_id") or "")
+        message = {
+            "type": event_type,
+            **payload,
+            "metrics": metrics,
+            "published_at_ms": published_at_ms,
+            "trace_id": trace_id,
+            "span_id": span_id,
+        }
         async with self._lock:
+            clients_before = len(self._clients)
+            delivered_clients = 0
             dead_clients: list[WebSocket] = []
+            send_started_at = time.perf_counter()
             for ws in self._clients:
                 try:
                     await ws.send_json(message)
+                    delivered_clients += 1
                 except Exception:
                     dead_clients.append(ws)
-            # 清理断开的连接
+            caption_send_ms = max((time.perf_counter() - send_started_at) * 1000, 0.0)
+            caption_send_failures = len(dead_clients)
             for ws in dead_clients:
                 self._clients.remove(ws)
+            clients_after = len(self._clients)
+
+        logger.info(
+            "caption_event_published type=%s clients_before=%d clients_after=%d "
+            "delivered_clients=%d dead_clients=%d session_id=%s segment_id=%s "
+            "published_at_ms=%d caption_send_ms=%.1f caption_send_failures=%d "
+            "asr_latency_ms=%.1f asr_stream_elapsed_ms=%.1f asr_audio_lag_ms=%.1f "
+            "merge_wait_ms=%.1f translation_queue_wait_ms=%.1f "
+            "translation_first_token_ms=%.1f translation_latency_ms=%.1f "
+            "tts_first_audio_ms=%.1f tts_total_ms=%.1f "
+            "tts_audio_chunks=%.1f tts_audio_bytes=%.1f "
+            "simul_policy_action=%.1f simul_policy_request_action=%.1f "
+            "simul_policy_confidence=%.2f source=%s target=%s",
+            event_type,
+            clients_before,
+            clients_after,
+            delivered_clients,
+            len(dead_clients),
+            payload.get("session_id", ""),
+            payload.get("segment_id", ""),
+            published_at_ms,
+            caption_send_ms,
+            caption_send_failures,
+            _metric(metrics, "asr_latency_ms"),
+            _metric(metrics, "asr_stream_elapsed_ms"),
+            _metric(metrics, "asr_audio_lag_ms"),
+            _metric(metrics, "merge_wait_ms"),
+            _metric(metrics, "translation_queue_wait_ms"),
+            _metric(metrics, "translation_first_token_ms"),
+            _metric(metrics, "translation_latency_ms"),
+            _metric(metrics, "tts_first_audio_ms"),
+            _metric(metrics, "tts_total_ms"),
+            _metric(metrics, "tts_audio_chunks"),
+            _metric(metrics, "tts_audio_bytes"),
+            _metric(metrics, "simul_policy_action"),
+            _metric(metrics, "simul_policy_request_action"),
+            _metric(metrics, "simul_policy_confidence"),
+            _snippet(payload.get("source_text", "")),
+            _snippet(payload.get("target_text", "")),
+        )
 
     async def register(self, ws: WebSocket) -> None:
         async with self._lock:

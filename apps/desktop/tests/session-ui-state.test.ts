@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  selectAverageCaptionLatencyMs,
   createInitialSessionUiState,
   reduceSessionUiState,
   selectSessionHealthMetrics,
@@ -35,14 +36,16 @@ describe("主页 Stateful Hybrid 状态模型", () => {
     expect(state.preflight.warning).toBeNull();
   });
 
-  it("开始会话后进入 Active 并显示驾驶舱", () => {
+  it("开始会话后进入 Active 并记录本地会话开始墙钟", () => {
     const state = reduceSessionUiState(createInitialSessionUiState({ platform: "windows" }), {
-      type: "session.started"
+      type: "session.started",
+      atMs: 1000
     });
 
     expect(state.lifecycle).toBe("active");
     expect(state.activePanel).toBe("transcript-monitor");
     expect(state.controlBarVisible).toBe(true);
+    expect(state.sessionStartedAtMs).toBe(1000);
   });
 
   it("结束会话后进入 Finished 并开启导出前清理入口", () => {
@@ -205,8 +208,12 @@ describe("主页 Stateful Hybrid 状态模型", () => {
     expect(synced.terms[0]?.status).toBe("active");
   });
 
-  it("根据字幕行和音频状态计算驾驶舱健康度", () => {
-    const state = reduceSessionUiState(createInitialSessionUiState({ platform: "windows" }), {
+  it("根据字幕行到达墙钟和音频时间戳计算真实字幕滞后", () => {
+    const active = reduceSessionUiState(createInitialSessionUiState({ platform: "windows" }), {
+      type: "session.started",
+      atMs: 1000
+    });
+    const state = reduceSessionUiState(active, {
       type: "audio.level.changed",
       peak: 0.42,
       rms: 0.18
@@ -221,6 +228,7 @@ describe("主页 Stateful Hybrid 状态模型", () => {
         stability: 1,
         startMs: 120,
         endMs: 900,
+        receivedAtMs: 2600,
         patchCount: 0
       },
       {
@@ -232,6 +240,7 @@ describe("主页 Stateful Hybrid 状态模型", () => {
         stability: 0.72,
         startMs: 1100,
         endMs: 2400,
+        receivedAtMs: 3900,
         patchCount: 2
       }
     ];
@@ -239,11 +248,75 @@ describe("主页 Stateful Hybrid 状态模型", () => {
     const metrics = selectSessionHealthMetrics({ lines, sessionUi: state, sourceLabel: "Windows 系统声音" });
 
     expect(metrics.inputSource).toBe("Windows 系统声音");
-    expect(metrics.firstCaptionLatencyMs).toBe(120);
-    expect(metrics.stableCommitLatencyMs).toBe(780);
+    expect(metrics.firstCaptionLatencyMs).toBe(700);
+    expect(metrics.stableCommitLatencyMs).toBe(700);
     expect(metrics.patchCount).toBe(2);
     expect(metrics.audioLevel).toBe("active");
     expect(metrics.confidenceLabel).toBe("基于稳定度推断");
     expect(metrics.averageStability).toBe(0.86);
+  });
+
+  it("缺少墙钟信息时不把音频时间戳伪装成延迟", () => {
+    const state = createInitialSessionUiState({ platform: "windows" });
+    const lines: CaptionLine[] = [
+      {
+        id: "seg_1",
+        rev: 1,
+        state: "locked",
+        sourceText: "Hello",
+        targetText: "你好",
+        stability: 1,
+        startMs: 120,
+        endMs: 900,
+        patchCount: 0
+      }
+    ];
+
+    const metrics = selectSessionHealthMetrics({ lines, sessionUi: state, sourceLabel: "Windows 系统声音" });
+
+    expect(metrics.firstCaptionLatencyMs).toBeNull();
+    expect(metrics.stableCommitLatencyMs).toBeNull();
+  });
+
+  it("按真实字幕滞后计算平均延迟，忽略缺少到达时间的行", () => {
+    const lines: CaptionLine[] = [
+      {
+        id: "seg_1",
+        rev: 1,
+        state: "locked",
+        sourceText: "Hello",
+        targetText: "你好",
+        stability: 1,
+        startMs: 0,
+        endMs: 1000,
+        receivedAtMs: 2500,
+        patchCount: 0
+      },
+      {
+        id: "seg_2",
+        rev: 1,
+        state: "stable",
+        sourceText: "World",
+        targetText: "世界",
+        stability: 0.8,
+        startMs: 1000,
+        endMs: 2000,
+        receivedAtMs: 3300,
+        patchCount: 0
+      },
+      {
+        id: "seg_3",
+        rev: 1,
+        state: "interim",
+        sourceText: "Ignored",
+        targetText: "",
+        stability: 0.5,
+        startMs: 2000,
+        endMs: 2600,
+        patchCount: 0
+      }
+    ];
+
+    expect(selectAverageCaptionLatencyMs(lines, 1000)).toBe(400);
   });
 });

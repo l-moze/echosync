@@ -67,9 +67,13 @@ def _funasr_capability(
     settings: Settings,
     dependency_available: DependencyAvailable,
 ) -> dict[str, Any]:
-    has_funasr = dependency_available("funasr")
-    has_modelscope = dependency_available("modelscope")
-    ready = has_funasr and has_modelscope
+    dependencies = {
+        "funasr": dependency_available("funasr"),
+        "modelscope": dependency_available("modelscope"),
+        "torch": dependency_available("torch"),
+    }
+    missing_dependencies = [name for name, available in dependencies.items() if not available]
+    ready = not missing_dependencies
     return {
         "id": "funasr",
         "label": "FunASR 本地",
@@ -78,7 +82,7 @@ def _funasr_capability(
         "available": ready,
         "default": settings.asr_provider == "funasr",
         "real_audio_supported": True,
-        "reason": "" if ready else "缺少 funasr 或 modelscope 依赖。",
+        "reason": "" if ready else f"缺少 {'、'.join(missing_dependencies)} 依赖。",
         "model": settings.funasr_model,
     }
 

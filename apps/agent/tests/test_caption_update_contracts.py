@@ -58,6 +58,10 @@ def test_caption_update_from_translated_segment_includes_target_regions() -> Non
             target_text="我觉得这个模块应该能用",
             status=SegmentStatus.STABLE,
             stability=0.9,
+            metrics={
+                "translation_first_token_ms": 140.0,
+                "translation_queue_wait_ms": 8.0,
+            },
             source_stable_text="I think this module",
             source_unstable_text="should work",
             target_stable_text="我觉得这个模块",
@@ -72,6 +76,10 @@ def test_caption_update_from_translated_segment_includes_target_regions() -> Non
         "stable_text": "我觉得这个模块",
         "unstable_text": "应该能用",
         "language": "zh-CN",
+    }
+    assert event["metrics"] == {
+        "translation_first_token_ms": 140.0,
+        "translation_queue_wait_ms": 8.0,
     }
 
 
@@ -112,6 +120,7 @@ def test_caption_update_from_commit_is_final() -> None:
             target_text="最终字幕已经准备好了。",
             source_stable_text="The final caption is ready.",
             target_stable_text="最终字幕已经准备好了。",
+            metrics={"translation_latency_ms": 220.0},
         )
     )
 
@@ -119,3 +128,4 @@ def test_caption_update_from_commit_is_final() -> None:
     assert event["revision"] == 7
     assert event["source"]["stable_text"] == "The final caption is ready."
     assert event["target"]["stable_text"] == "最终字幕已经准备好了。"
+    assert event["metrics"]["translation_latency_ms"] == 220.0

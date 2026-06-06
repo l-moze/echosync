@@ -57,7 +57,7 @@ class Settings:
             edge_tts_voice=getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural"),
             elevenlabs_api_key=getenv("ELEVENLABS_API_KEY", ""),
             elevenlabs_voice_id=getenv("ELEVENLABS_VOICE_ID", ""),
-            elevenlabs_model=getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+            elevenlabs_model=getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5"),
             elevenlabs_output_format=getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128"),
             elevenlabs_optimize_streaming_latency=_optional_int(
                 getenv("ELEVENLABS_OPTIMIZE_STREAMING_LATENCY", "")

@@ -59,6 +59,10 @@ def test_cascaded_engine_coalesces_pending_translation_checkpoints() -> None:
     asyncio.run(_assert_cascaded_engine_coalesces_pending_translation_checkpoints())
 
 
+def test_cascaded_engine_drops_pending_stable_when_committed_arrives() -> None:
+    asyncio.run(_assert_cascaded_engine_drops_pending_stable_when_committed_arrives())
+
+
 def test_cascaded_engine_refreshes_stable_translation_for_long_segment() -> None:
     asyncio.run(_assert_cascaded_engine_refreshes_stable_translation_for_long_segment())
 
@@ -89,6 +93,23 @@ def test_cascaded_engine_skips_partial_translation_by_default(caplog) -> None:
         if record.name == "echosync_agent.services.engine.cascaded_engine"
     ]
     assert any("translation_checkpoint_skipped" in message for message in messages)
+
+
+def test_cascaded_engine_waits_on_suspended_stable_tail(caplog) -> None:
+    caplog.set_level(
+        logging.INFO,
+        logger="echosync_agent.services.engine.cascaded_engine",
+    )
+
+    asyncio.run(_assert_cascaded_engine_waits_on_suspended_stable_tail())
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "echosync_agent.services.engine.cascaded_engine"
+    ]
+    assert any("reason=simul_wait" in message for message in messages)
+    assert any("simul_reason=suspended_tail" in message for message in messages)
 
 
 def test_cascaded_engine_populates_caption_text_regions() -> None:
@@ -188,7 +209,8 @@ async def _assert_cascaded_engine_streams_source_hypotheses_and_translation_delt
     translations = [event for event in events if isinstance(event, TranslationSegment)]
     commits = [event for event in events if isinstance(event, SegmentCommit)]
 
-    assert [(item.source_text, item.target_text, item.status) for item in translations] == [
+    observed = [(item.source_text, item.target_text, item.status) for item in translations]
+    expected = [
         ("Hello", "", SegmentStatus.PARTIAL),
         ("Hello,", "", SegmentStatus.STABLE),
         ("Hello, world", "", SegmentStatus.PARTIAL),
@@ -198,6 +220,7 @@ async def _assert_cascaded_engine_streams_source_hypotheses_and_translation_delt
         ("Hello, world.", "[zh]", SegmentStatus.COMMITTED),
         ("Hello, world.", "[zh] Hello, world.", SegmentStatus.COMMITTED),
     ]
+    assert all(item in observed for item in expected)
     assert len({item.segment_id for item in translations}) == 1
     assert [item.text for item in translator.seen_segments] == ["Hello,", "Hello, world."]
     assert len(commits) == 1
@@ -223,6 +246,10 @@ async def _assert_cascaded_engine_records_translation_streaming_metrics() -> Non
     assert translated[0].metrics["translation_delta_count"] == 1
     assert translated[1].metrics["translation_delta_count"] == 2
     assert translated[-1].metrics["translation_first_token_ms"] >= 0
+    commits = [event for event in events if isinstance(event, SegmentCommit)]
+    assert commits[0].metrics["translation_first_token_ms"] >= 0
+    assert commits[0].metrics["translation_queue_wait_ms"] >= 0
+    assert commits[0].metrics["simul_policy_request_action"] == 2.0
 
 
 async def _assert_cascaded_engine_does_not_block_source_hypotheses_on_slow_translation() -> None:
@@ -286,6 +313,34 @@ async def _assert_cascaded_engine_coalesces_pending_translation_checkpoints() ->
         "third committed",
     ]
     assert any(event.target_text == "[zh] third committed" for event in translations)
+
+
+async def _assert_cascaded_engine_drops_pending_stable_when_committed_arrives() -> None:
+    translator = BlockingTranslator()
+    engine = CascadedInterpretationEngine(
+        transcriber=BackloggedStableCommittedTranscriber(),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    stream = engine.stream(_frames())
+    first = await anext(stream)
+    assert isinstance(first, TranslationSegment)
+    assert first.source_text == "blocking segment."
+
+    await asyncio.wait_for(translator.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+    translator.release.set()
+    remaining = [event async for event in stream]
+    translations = [event for event in remaining if isinstance(event, TranslationSegment)]
+
+    assert [segment.text for segment in translator.seen_segments] == [
+        "blocking segment.",
+        "latest committed.",
+    ]
+    latest = next(event for event in translations if event.target_text == "[zh] latest committed.")
+    assert latest.metrics["translation_queue_wait_ms"] >= 0
 
 
 async def _assert_cascaded_engine_refreshes_stable_translation_for_long_segment() -> None:
@@ -402,6 +457,40 @@ async def _assert_cascaded_engine_skips_partial_translation_by_default() -> None
     assert all(event.status != SegmentStatus.PARTIAL for event in translated)
 
 
+async def _assert_cascaded_engine_waits_on_suspended_stable_tail() -> None:
+    translator = RecordingTranslator()
+    engine = CascadedInterpretationEngine(
+        transcriber=SuspendedStableTailTranscriber(),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    events = [event async for event in engine.stream(_frames())]
+    translated = [
+        event
+        for event in events
+        if isinstance(event, TranslationSegment) and event.target_text
+    ]
+    commits = [event for event in events if isinstance(event, SegmentCommit)]
+
+    assert [segment.text for segment in translator.seen_segments] == [
+        "We need to talk about the model."
+    ]
+    assert any(
+        event.source_text == "We need to talk about the"
+        and event.target_text == ""
+        and event.status == SegmentStatus.STABLE
+        for event in events
+        if isinstance(event, TranslationSegment)
+    )
+    assert [event.target_text for event in translated] == [
+        "[zh] We need to talk about the model."
+    ]
+    assert commits[0].target_text == "[zh] We need to talk about the model."
+    assert commits[0].metrics["simul_policy_request_action"] == 2.0
+
+
 class DeltaTranscriber(Transcriber):
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         async for frame in frames:
@@ -506,6 +595,33 @@ class LongPartialBeforeStableTranscriber(Transcriber):
             )
 
 
+class SuspendedStableTailTranscriber(Transcriber):
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for frame in frames:
+            yield TranscriptSegment(
+                session_id=frame.session_id,
+                segment_id="seg_suspended_tail",
+                rev=1,
+                start_ms=0,
+                end_ms=1_200,
+                source_lang="en",
+                text="We need to talk about the",
+                status=SegmentStatus.STABLE,
+                stability=0.9,
+            )
+            yield TranscriptSegment(
+                session_id=frame.session_id,
+                segment_id="seg_suspended_tail",
+                rev=2,
+                start_ms=0,
+                end_ms=1_800,
+                source_lang="en",
+                text="We need to talk about the model.",
+                status=SegmentStatus.COMMITTED,
+                stability=1.0,
+            )
+
+
 class BurstStableTranscriber(Transcriber):
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         async for frame in frames:
@@ -521,6 +637,29 @@ class BurstStableTranscriber(Transcriber):
                     segment_id="seg_burst",
                     rev=index + 1,
                     start_ms=0,
+                    end_ms=(index + 1) * 600,
+                    source_lang="en",
+                    text=text,
+                    status=status,
+                    stability=0.9 if status == SegmentStatus.STABLE else 1.0,
+                )
+
+
+class BackloggedStableCommittedTranscriber(Transcriber):
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for frame in frames:
+            for index, (segment_id, text, status) in enumerate(
+                (
+                    ("seg_blocking", "blocking segment.", SegmentStatus.COMMITTED),
+                    ("seg_backlog", "latest stable", SegmentStatus.STABLE),
+                    ("seg_backlog", "latest committed.", SegmentStatus.COMMITTED),
+                )
+            ):
+                yield TranscriptSegment(
+                    session_id=frame.session_id,
+                    segment_id=segment_id,
+                    rev=index + 1,
+                    start_ms=index * 600,
                     end_ms=(index + 1) * 600,
                     source_lang="en",
                     text=text,

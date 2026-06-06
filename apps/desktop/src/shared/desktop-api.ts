@@ -2,6 +2,13 @@ import type { RealtimeEvent } from "./realtime-events";
 import type { DesktopAudioSource, DesktopAudioSourceId } from "./audio-source-catalog";
 import type { AgentCapabilities } from "./agent-capabilities";
 import type { SubtitleStyleState } from "./subtitle-style-state";
+import type {
+  SessionRecord,
+  SessionRecordDraftInput,
+  SessionRecordExportFormat,
+  SessionRecordExportResult,
+  SessionRecordListItem
+} from "./session-records";
 
 export type DesktopWindowRole = "control" | "overlay" | "subtitle-style";
 
@@ -22,6 +29,15 @@ export type DesktopWindowBounds = {
 };
 
 export type DesktopApi = {
+  sessionRecords: {
+    list: () => Promise<SessionRecordListItem[]>;
+    get: (id: string) => Promise<SessionRecord | null>;
+    saveDraft: (input: SessionRecordDraftInput) => Promise<SessionRecord>;
+    rename: (id: string, title: string) => Promise<SessionRecord>;
+    delete: (id: string) => Promise<void>;
+    export: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
+    getAudioUrl: (id: string) => Promise<string | null>;
+  };
   getAgentCapabilities: () => Promise<AgentCapabilities>;
   listAudioSources: () => Promise<DesktopAudioSource[]>;
   getCaptureState: () => Promise<DesktopCaptureSnapshot>;

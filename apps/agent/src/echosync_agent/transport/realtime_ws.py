@@ -70,9 +70,11 @@ class _RealtimeWebSocketSession:
     ) -> None:
         self.websocket = websocket
         self.session_id = session_id
+        self.trace_id = session_id
         self.settings = settings
         self.caption_event_bus = caption_event_bus
         self.queue: asyncio.Queue[AudioFrame | None] = asyncio.Queue()
+        self._frame_queued_at_by_id: dict[int, float] = {}
         self.source_lang = "auto"
         self.sample_rate = 16_000
         self.channels = 1
@@ -177,6 +179,9 @@ class _RealtimeWebSocketSession:
             frame = await self.queue.get()
             if frame is None:
                 return
+            queued_at = self._frame_queued_at_by_id.pop(id(frame), None)
+            if queued_at is not None:
+                self._metrics.record_asr_queue_wait((time.perf_counter() - queued_at) * 1000)
             yield frame
 
     async def _handle_message(self, message: dict[str, Any]) -> bool:
@@ -218,29 +223,30 @@ class _RealtimeWebSocketSession:
                 return True
             self._start_pipeline()
             logger.info(
-            "audio_stream_started session_id=%s source_kind=%s device_id=%s "
-            "sample_rate=%d channels=%d source_lang=%s asr=%s mode=%s translator=%s tts=%s",
+                "audio_stream_started session_id=%s trace_id=%s source_kind=%s device_id=%s "
+                "sample_rate=%d channels=%d source_lang=%s asr=%s mode=%s translator=%s tts=%s",
                 self.session_id,
+                self.trace_id,
                 self.source_kind,
                 self.device_id,
                 self.sample_rate,
                 self.channels,
                 self.source_lang,
-            self.settings.asr_provider,
-            self.settings.asr_latency_mode,
-            self.settings.translator_provider,
-            self.settings.tts_provider,
-        )
+                self.settings.asr_provider,
+                self.settings.asr_latency_mode,
+                self.settings.translator_provider,
+                self.settings.tts_provider,
+            )
             return False
         if message_type == "audio.chunk":
             frame = await self._build_audio_frame(message)
             if frame is not None:
-                await self.queue.put(frame)
+                await self._queue_audio_frame(frame)
                 self._record_audio_frame(frame)
             return False
         if message_type == "audio.final":
             frame = self._build_audio_final_frame(message)
-            await self.queue.put(frame)
+            await self._queue_audio_frame(frame)
             logger.info(
                 "audio_stream_final_marker session_id=%s seq=%d end_ms=%d",
                 self.session_id,
@@ -263,7 +269,7 @@ class _RealtimeWebSocketSession:
     async def _handle_binary_frame(self, packet: bytes) -> bool:
         frame = await self._build_binary_audio_frame(packet)
         if frame is not None:
-            await self.queue.put(frame)
+            await self._queue_audio_frame(frame)
             self._record_audio_frame(frame)
         return False
 
@@ -286,6 +292,8 @@ class _RealtimeWebSocketSession:
             self.settings,
             tts_provider=message.get("tts_provider"),
         )
+        trace_id = message.get("trace_id", self.trace_id)
+        self.trace_id = self.session_id if trace_id is None else str(trace_id)
         self.source_lang = str(message.get("source_lang", self.source_lang))
         self.sample_rate = int(message.get("sample_rate", self.sample_rate))
         self.channels = int(message.get("channels", self.channels))
@@ -383,26 +391,37 @@ class _RealtimeWebSocketSession:
             is_final=bool(flags & AUDIO_FRAME_FLAG_FINAL),
         )
 
+    async def _queue_audio_frame(self, frame: AudioFrame) -> None:
+        self._frame_queued_at_by_id[id(frame)] = time.perf_counter()
+        await self.queue.put(frame)
+
     def _record_audio_frame(self, frame: AudioFrame) -> None:
         self._chunk_count += 1
         self._queued_audio_ms += max(frame.end_ms - frame.start_ms, 0)
-        self._metrics.record_audio_frame(frame)
+        self._metrics.record_audio_frame(frame, queue_depth=self.queue.qsize())
         if not self._metrics.should_log():
             return
 
         snapshot = self._metrics.snapshot_and_reset(
             queue_depth=self.queue.qsize(),
             session_id=self.session_id,
+            trace_id=self.trace_id,
         )
         logger.info(
-            "audio_stream_metrics session_id=%s frames=%d audio_ms=%d bytes=%d "
-            "avg_transport_ms=%.1f p95_transport_ms=%.1f queue_depth=%d",
+            "audio_stream_metrics session_id=%s trace_id=%s frames=%d audio_ms=%d bytes=%d "
+            "avg_transport_ms=%.1f p95_transport_ms=%.1f "
+            "avg_asr_queue_wait_ms=%.1f p95_asr_queue_wait_ms=%.1f "
+            "max_queue_depth=%d queue_depth=%d",
             snapshot.session_id,
+            snapshot.trace_id,
             snapshot.frames,
             snapshot.audio_ms,
             snapshot.bytes_received,
             snapshot.avg_transport_latency_ms,
             snapshot.p95_transport_latency_ms,
+            snapshot.avg_asr_queue_wait_ms,
+            snapshot.p95_asr_queue_wait_ms,
+            snapshot.max_queue_depth,
             snapshot.queue_depth,
         )
 
@@ -410,6 +429,7 @@ class _RealtimeWebSocketSession:
         payload = {
             "type": "realtime.error",
             "session_id": self.session_id,
+            "trace_id": self.trace_id,
             "message": message,
         }
         try:
@@ -419,7 +439,7 @@ class _RealtimeWebSocketSession:
         await self._publish_caption_event("realtime.error", payload)
 
     async def _send_done(self) -> None:
-        payload = {"type": "realtime.done", "session_id": self.session_id}
+        payload = {"type": "realtime.done", "session_id": self.session_id, "trace_id": self.trace_id}
         try:
             await self.websocket.send_json(payload)
         except Exception:
@@ -474,11 +494,15 @@ class _RealtimeWebSocketSession:
 @dataclass(frozen=True, slots=True)
 class _RealtimeTransportMetricsSnapshot:
     session_id: str
+    trace_id: str
     frames: int
     audio_ms: int
     bytes_received: int
     avg_transport_latency_ms: float
     p95_transport_latency_ms: float
+    avg_asr_queue_wait_ms: float
+    p95_asr_queue_wait_ms: float
+    max_queue_depth: int
     queue_depth: int
 
 
@@ -489,12 +513,18 @@ class _RealtimeTransportMetrics:
         self.frames = 0
         self.audio_ms = 0
         self.bytes_received = 0
+        self.max_queue_depth = 0
         self.transport_latencies_ms: list[float] = []
+        self.asr_queue_waits_ms: list[float] = []
 
-    def record_audio_frame(self, frame: AudioFrame) -> None:
+    def record_audio_frame(self, frame: AudioFrame, *, queue_depth: int = 0) -> None:
         self.frames += 1
         self.audio_ms += max(frame.end_ms - frame.start_ms, 0)
         self.bytes_received += len(frame.pcm)
+        self.max_queue_depth = max(self.max_queue_depth, queue_depth)
+
+    def record_asr_queue_wait(self, wait_ms: float) -> None:
+        self.asr_queue_waits_ms.append(max(wait_ms, 0.0))
 
     def record_transport_latency(self, sent_at_ms: int) -> None:
         if sent_at_ms <= 0:
@@ -510,21 +540,28 @@ class _RealtimeTransportMetrics:
         *,
         queue_depth: int,
         session_id: str,
+        trace_id: str | None = None,
     ) -> _RealtimeTransportMetricsSnapshot:
         snapshot = _RealtimeTransportMetricsSnapshot(
             session_id=session_id,
+            trace_id=trace_id or session_id,
             frames=self.frames,
             audio_ms=self.audio_ms,
             bytes_received=self.bytes_received,
             avg_transport_latency_ms=_avg(self.transport_latencies_ms),
             p95_transport_latency_ms=_p95(self.transport_latencies_ms),
+            avg_asr_queue_wait_ms=_avg(self.asr_queue_waits_ms),
+            p95_asr_queue_wait_ms=_p95(self.asr_queue_waits_ms),
+            max_queue_depth=max(self.max_queue_depth, queue_depth),
             queue_depth=queue_depth,
         )
         self.last_log_at = time.perf_counter()
         self.frames = 0
         self.audio_ms = 0
         self.bytes_received = 0
+        self.max_queue_depth = 0
         self.transport_latencies_ms = []
+        self.asr_queue_waits_ms = []
         return snapshot
 
 

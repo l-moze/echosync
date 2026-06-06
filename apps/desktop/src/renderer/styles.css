@@ -8,12 +8,16 @@
   --text: #252a33;
   --muted: #687383;
   --quiet: #9aa5b3;
+  --brand-ink: #25282d;
+  --brand-sync: #e85a2a;
   --blue: #2569e8;
   --blue-soft: #eaf2ff;
   --cyan: #24bdd3;
   --mint: #34c79a;
   --gold: #caa04d;
   --shadow: 0 18px 44px rgba(28, 42, 68, 0.08);
+  --success: #0f8c6b;
+  --danger: #a64242;
   color-scheme: light;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
@@ -115,14 +119,19 @@ button:focus-visible {
   min-width: 0;
 }
 
-.brandDot {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background:
-    radial-gradient(circle at 63% 34%, #101827 0 33%, transparent 35%),
-    conic-gradient(from 210deg, #2f6dff, #28e4ad, #7c5dff, #2f6dff);
-  box-shadow: 0 6px 16px rgba(36, 107, 255, 0.16);
+.appBrandMark {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background-color: #ffffff;
+  background-image: url("./assets/icons/app-mark-64.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 22px 22px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.78) inset,
+    0 8px 18px rgba(28, 42, 68, 0.1);
 }
 
 .brand strong {
@@ -151,10 +160,42 @@ button:focus-visible {
 }
 
 .windowActions button {
-  min-width: 36px;
+  display: inline-grid;
+  place-items: center;
+  min-height: 32px;
   padding: 0 12px;
+  border-color: rgba(214, 222, 233, 0.88);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
   color: #3f4652;
-  font-size: 15px;
+  font-size: 13px;
+  font-weight: 740;
+  line-height: 1;
+}
+
+.windowActions button:first-child {
+  min-width: 84px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #526070;
+  font-size: 12px;
+}
+
+.windowActions button:not(:first-child) {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 16px;
+}
+
+.windowActions button:hover,
+.windowActions button:focus-visible {
+  border-color: rgba(40, 120, 255, 0.26);
+  background: var(--blue-soft);
 }
 
 .modalScrim,
@@ -351,16 +392,20 @@ button:focus-visible {
   position: relative;
   display: grid;
   min-height: calc(100vh - 108px);
-  place-items: center;
-  padding: 8px 0 24px;
+  align-items: start;
+  justify-items: center;
+  padding: 10px 0 24px;
 }
 
 .launcherSurface {
   display: grid;
-  width: min(100%, 820px);
+  width: min(100%, 780px);
+  max-height: calc(100vh - 92px);
   min-width: 0;
-  gap: 20px;
-  padding: 34px 42px 30px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  gap: 12px;
+  padding: 22px 30px 18px;
   border: 1px solid rgba(221, 226, 234, 0.94);
   border-radius: 16px;
   background: #ffffff;
@@ -378,7 +423,7 @@ button:focus-visible {
   max-width: 620px;
   margin: 0;
   color: #202936;
-  font-size: 32px;
+  font-size: 30px;
   font-weight: 780;
   line-height: 1.16;
   letter-spacing: 0;
@@ -396,10 +441,10 @@ button:focus-visible {
 .launcherState {
   min-height: auto;
   padding: 4px 10px;
-  border: 1px solid rgba(52, 199, 154, 0.2);
+  border: 1px solid rgba(15, 140, 107, 0.18);
   border-radius: 999px;
-  background: #edf9f5;
-  color: #13765f;
+  background: #eef8f4;
+  color: var(--success);
   font-size: 12px;
   font-weight: 760;
 }
@@ -420,7 +465,7 @@ button:focus-visible {
   grid-template-columns: 86px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 50px;
+  min-height: 48px;
   min-width: 0;
   padding: 10px 12px 10px 18px;
   border: 0;
@@ -531,7 +576,7 @@ button:focus-visible {
 
 .subtitlePreview {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   width: min(100%, 680px);
   justify-self: center;
 }
@@ -546,10 +591,10 @@ button:focus-visible {
 .previewCaptionBubble {
   display: grid;
   gap: 8px;
-  min-height: 132px;
+  min-height: 104px;
   align-content: center;
   overflow: hidden;
-  padding: 24px 28px;
+  padding: 18px 24px;
   border: 1px solid rgba(255, 255, 255, 0.13);
   border-radius: 12px;
   background: rgba(17, 24, 36, 0.88);
@@ -821,14 +866,15 @@ button:focus-visible {
   inset: 12px auto auto 50%;
   z-index: 9;
   display: grid;
-  width: min(960px, calc(100vw - 64px));
-  max-height: calc(100vh - 116px);
-  overflow: auto;
+  width: min(1040px, calc(100vw - 48px));
+  max-height: calc(100vh - 92px);
+  overflow: hidden;
+  scrollbar-gutter: stable;
   gap: 14px;
   min-width: 0;
   padding: 20px;
   border: 1px solid rgba(220, 226, 235, 0.98);
-  border-radius: 14px;
+  border-radius: 12px;
   background: #ffffff;
   box-shadow: 0 24px 68px rgba(28, 42, 68, 0.16);
   transform: translateX(-50%);
@@ -850,8 +896,7 @@ button:focus-visible {
 .recordWindow header p,
 .recordWindow header h2,
 .recordDetailPanel header p,
-.recordDetailPanel header h3,
-.recordTranscriptPair h4 {
+.recordDetailPanel header h3 {
   margin: 0;
 }
 
@@ -867,6 +912,37 @@ button:focus-visible {
   color: var(--text);
   font-size: 20px;
   line-height: 1.2;
+}
+
+.recordTitleEditor {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.recordTitleEditor span {
+  color: var(--quiet);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.recordTitleInput {
+  max-width: 560px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f7f9fc;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.recordTitleInput:focus {
+  border-color: rgba(37, 105, 232, 0.28);
+  outline: 0;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 105, 232, 0.08);
 }
 
 .recordWindow header label {
@@ -898,13 +974,13 @@ button:focus-visible {
 }
 
 .recordWindow > header > .recordBackButton {
-  min-width: 78px;
-  padding: 0 12px;
+  min-width: 34px;
+  padding: 0;
   border: 1px solid rgba(224, 229, 237, 0.96);
-  border-radius: 999px;
+  border-radius: 8px;
   background: #ffffff;
   color: #526070;
-  font-size: 12px;
+  font-size: 18px;
   font-weight: 760;
 }
 
@@ -938,6 +1014,10 @@ button:focus-visible {
   border-bottom: 1px solid rgba(235, 239, 245, 0.92);
   color: #2e3542;
   font-size: 13px;
+}
+
+.recordTableRow:hover {
+  background: #f8fbff;
 }
 
 .recordTableRow:last-child {
@@ -984,6 +1064,7 @@ button:focus-visible {
 
 .recordDetailPanel {
   display: grid;
+  min-height: 0;
   gap: 12px;
   padding: 14px;
   border: 1px solid rgba(226, 231, 238, 0.92);
@@ -1004,9 +1085,16 @@ button:focus-visible {
   color: #ffffff;
 }
 
+.recordExportStatus {
+  align-self: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
 .recordAudioPlayer {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -1019,71 +1107,153 @@ button:focus-visible {
   font-weight: 740;
 }
 
-.roundRecordButton {
-  display: inline-grid;
-  width: 30px;
-  min-width: 30px;
-  height: 30px;
-  min-height: 30px;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: var(--blue);
-  color: #ffffff;
-  font-size: 11px;
-}
-
-.recordAudioPlayer progress {
+.recordAudioPlayer audio {
   width: 100%;
   min-width: 0;
+  height: 34px;
 }
 
-.recordTranscriptPair {
+.recordDetailLayout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.36fr);
   gap: 12px;
+  min-height: min(56vh, 520px);
+  overflow: hidden;
 }
 
-.recordTranscriptPair article {
+.recordTranscriptList {
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 10px;
   min-width: 0;
-  padding: 14px;
+  overflow: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.recordSegmentPair {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 6px;
+  padding: 12px 14px;
   border: 1px solid rgba(226, 231, 238, 0.92);
   border-radius: 8px;
   background: #ffffff;
+  color: #26303d;
+  text-align: left;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-.recordTranscriptPair article.active {
+.recordSegmentPair:hover,
+.recordSegmentPair:focus-visible {
+  border-color: rgba(37, 105, 232, 0.28);
+  outline: 0;
+  background: #f8fbff;
+}
+
+.recordSegmentPair.active {
   border-color: rgba(37, 105, 232, 0.22);
   background: #f6f9ff;
+  box-shadow: inset 3px 0 0 rgba(37, 105, 232, 0.7);
 }
 
-.recordTranscriptPair h4 {
+.recordSegmentPair time {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.recordSegmentPair p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.recordSegmentSource {
+  color: #26303d;
+  font-size: 1em;
+  font-weight: 710;
+  line-height: 1.56;
+}
+
+.recordSegmentTarget {
+  color: #445060;
+  font-size: 0.95em;
+  line-height: 1.65;
+}
+
+.recordSummaryAside {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  overflow: auto;
+}
+
+.recordSummaryAside section,
+.recordMetadataGrid,
+.recordDiagnostics {
+  border: 1px solid rgba(226, 231, 238, 0.92);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.recordSummaryAside section {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.recordSummaryAside h3,
+.recordSummaryAside p {
+  margin: 0;
+}
+
+.recordSummaryAside h3 {
+  color: #26303d;
+  font-size: 15px;
+}
+
+.recordSummaryAside p {
+  color: #5b6674;
+  font-size: 13px;
+  line-height: 1.62;
+}
+
+.recordKeywordList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.recordKeywordList span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #315dba;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.recordMetadataGrid {
+  display: grid;
+  grid-template-columns: minmax(72px, 0.42fr) minmax(0, 1fr);
+  gap: 8px 10px;
+  padding: 12px;
   color: var(--muted);
   font-size: 12px;
-  font-weight: 800;
 }
 
-.recordTranscriptPair time {
-  color: var(--quiet);
-  font-size: 11px;
-  font-weight: 720;
-}
-
-.recordTranscriptPair p {
-  margin: 0;
-  color: #26303d;
-  line-height: 1.65;
+.recordMetadataGrid strong {
+  min-width: 0;
+  color: #2e3542;
+  font-weight: 760;
   overflow-wrap: anywhere;
 }
 
 .recordDiagnostics {
   padding: 10px 12px;
-  border: 1px solid rgba(226, 231, 238, 0.92);
-  border-radius: 10px;
-  background: #ffffff;
+  min-width: 0;
 }
 
 .recordDiagnostics summary {
@@ -1095,11 +1265,30 @@ button:focus-visible {
 
 .recordDiagnostics div {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px 12px;
   padding-top: 10px;
   color: var(--muted);
   font-size: 12px;
+}
+
+@media (max-width: 980px) {
+  .recordWindow {
+    width: min(960px, calc(100vw - 32px));
+    max-height: calc(100vh - 68px);
+    padding: 14px;
+  }
+
+  .recordDetailLayout {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .recordTranscriptList,
+  .recordSummaryAside {
+    max-height: none;
+  }
 }
 
 .recordDeleteConfirm {
@@ -1232,7 +1421,7 @@ button:focus-visible {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--mint);
+  background: var(--success);
   min-width: 3px;
 }
 
@@ -1248,6 +1437,23 @@ button:focus-visible {
   gap: 10px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.activeToolbar button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(224, 229, 237, 0.96);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #526070;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.activeToolbar button.selected {
+  border-color: rgba(232, 90, 42, 0.22);
+  background: #fff3ee;
+  color: var(--brand-sync);
 }
 
 .activeToolbar .centerPill {
@@ -1404,8 +1610,9 @@ button:focus-visible {
 }
 
 .transcriptReviewGrid {
+  --review-column-template: minmax(0, 1fr) minmax(0, 1fr);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: var(--review-column-template);
   min-height: 360px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -1413,19 +1620,31 @@ button:focus-visible {
   background: #ffffff;
 }
 
+.transcriptReviewGrid.stacked {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .reviewColumn {
-  display: grid;
-  align-content: start;
-  gap: 0;
+  display: block;
   min-width: 0;
   max-height: min(52vh, 520px);
   overflow: auto;
+  scrollbar-gutter: stable;
   padding: 0;
 }
 
 .reviewColumn + .reviewColumn {
   border-left: 1px solid var(--line);
   background: #fcfdff;
+}
+
+.transcriptReviewGrid.stacked .reviewColumn {
+  max-height: min(34vh, 360px);
+}
+
+.transcriptReviewGrid.stacked .reviewColumn + .reviewColumn {
+  border-top: 1px solid var(--line);
+  border-left: 0;
 }
 
 .reviewColumn h2 {
@@ -1442,8 +1661,11 @@ button:focus-visible {
 }
 
 .reviewSegment {
-  display: block;
+  display: grid;
+  align-content: start;
+  gap: 5px;
   width: 100%;
+  height: auto;
   min-height: 44px;
   padding: 12px 18px;
   border: 0;
@@ -1451,6 +1673,8 @@ button:focus-visible {
   border-radius: 0;
   background: transparent;
   color: #2e3542;
+  cursor: pointer;
+  font: inherit;
   font-size: 14px;
   text-align: left;
   white-space: normal;
@@ -1458,12 +1682,26 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.reviewSegment span {
+.reviewSegment:focus-visible {
+  outline: 2px solid rgba(40, 120, 255, 0.2);
+  outline-offset: -2px;
+}
+
+.reviewTimestamp {
   display: block;
   margin-bottom: 3px;
   color: var(--quiet);
   font-size: 11px;
   font-weight: 720;
+  line-height: 1.2;
+}
+
+.reviewText {
+  display: block;
+  margin: 0;
+  color: inherit;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 .reviewSegment:hover,
@@ -1578,10 +1816,11 @@ button:focus-visible {
   display: flex;
   justify-content: space-between;
   gap: 12px;
+  align-items: baseline;
   min-width: 0;
-  padding: 10px;
+  padding: 9px 0;
   border-radius: 10px;
-  background: #f5f8fe;
+  border-bottom: 1px solid rgba(226, 231, 238, 0.82);
 }
 
 .healthMetric span {
@@ -1610,7 +1849,7 @@ button:focus-visible {
   min-height: 200px;
   overflow: hidden;
   border: 1px solid #dce7fa;
-  border-radius: 14px;
+  border-radius: 12px;
   background: linear-gradient(135deg, #d9e7ff, #f2f7ff 58%, #ffffff);
   box-shadow: 0 10px 28px rgba(48, 103, 184, 0.08);
 }
@@ -1956,271 +2195,6 @@ button:focus-visible {
   background: #ff6f6f;
 }
 
-.overlayShell {
-  display: grid;
-  width: 100%;
-  height: 100%;
-  place-items: center;
-  padding: 8px 12px;
-  background: transparent;
-}
-
-.floatingCaption {
-  -webkit-app-region: drag;
-  --caption-radius: 18px;
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  width: min(100%, 1088px);
-  min-height: 84px;
-  padding: 12px 28px 14px;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0);
-  border-radius: var(--caption-radius);
-  background:
-    linear-gradient(90deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.08) 18%, rgba(0, 0, 0, 0.08) 82%, rgba(0, 0, 0, 0));
-  box-shadow: none;
-  backdrop-filter: blur(2px) saturate(1.02);
-  opacity: 0.96;
-  transition:
-    transform 180ms ease,
-    min-height 180ms ease,
-    border-color 180ms ease,
-    background 180ms ease,
-    opacity 180ms ease,
-    box-shadow 180ms ease,
-    backdrop-filter 180ms ease;
-}
-
-.floatingCaption:hover,
-.floatingCaption:focus-visible {
-  min-height: 104px;
-  border-color: rgba(255, 255, 255, 0.2);
-  border-radius: var(--caption-radius);
-  background:
-    linear-gradient(180deg, rgba(18, 22, 30, 0.78), rgba(8, 10, 14, 0.72)),
-    rgba(12, 14, 18, 0.74);
-  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(26px) saturate(1.22);
-  opacity: 1;
-  transform: translateY(-2px);
-}
-
-.floatingCaption.layer-default {
-  pointer-events: auto;
-}
-
-.floatingCaption.layer-controls,
-.floatingCaption.layer-pinned {
-  pointer-events: auto;
-}
-
-.floatingCaption.layer-pinned {
-  align-items: start;
-  grid-template-columns: 1fr;
-  min-height: 190px;
-  background:
-    linear-gradient(180deg, rgba(18, 22, 30, 0.84), rgba(8, 10, 14, 0.78)),
-    rgba(12, 14, 18, 0.76);
-}
-
-.captionText {
-  min-width: 0;
-}
-
-.overlayMeta {
-  position: absolute;
-  right: 26px;
-  bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: rgba(255, 255, 255, 0);
-  font-size: 12px;
-  font-weight: 720;
-  opacity: 0;
-  transition: opacity 160ms ease, color 160ms ease;
-}
-
-.floatingCaption:hover .overlayMeta,
-.floatingCaption:focus-visible .overlayMeta {
-  color: rgba(255, 255, 255, 0.72);
-  opacity: 1;
-}
-
-.overlaySource {
-  margin: 0 0 5px;
-  color: rgba(255, 255, 255, 0.56);
-  font-size: 19px;
-  font-weight: 540;
-  line-height: 1.24;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  -webkit-text-stroke: 0.35px rgba(0, 0, 0, 0.64);
-  text-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.98),
-    0 0 8px rgba(0, 0, 0, 0.82),
-    0 3px 18px rgba(0, 0, 0, 0.52);
-  transition: color 160ms ease, font-size 160ms ease;
-}
-
-.floatingCaption h1 {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.84);
-  font-size: clamp(25px, 3vw, 33px);
-  font-weight: 780;
-  line-height: 1.16;
-  letter-spacing: 0;
-  -webkit-text-stroke: 0.55px rgba(0, 0, 0, 0.7);
-  text-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.98),
-    0 0 10px rgba(0, 0, 0, 0.88),
-    0 4px 22px rgba(0, 0, 0, 0.68);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: color 160ms ease, font-size 160ms ease;
-}
-
-.floatingCaption:hover .overlaySource,
-.floatingCaption:focus-visible .overlaySource {
-  color: rgba(255, 255, 255, 0.94);
-  font-size: 20px;
-}
-
-.floatingCaption:hover h1,
-.floatingCaption:focus-visible h1 {
-  color: rgba(255, 255, 255, 0.96);
-  font-size: clamp(24px, 3.1vw, 34px);
-}
-
-.focusMeter {
-  -webkit-app-region: no-drag;
-  display: grid;
-  grid-auto-flow: column;
-  gap: 4px;
-  align-items: center;
-  justify-content: center;
-  width: 70px;
-  opacity: 0.5;
-  transition: opacity 160ms ease;
-}
-
-.floatingCaption:hover .focusMeter,
-.floatingCaption:focus-visible .focusMeter {
-  opacity: 1;
-}
-
-.focusMeter span {
-  display: block;
-  width: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
-  transform-origin: center;
-}
-
-.focusMeter.active span {
-  animation: meterPulse 1180ms ease-in-out infinite;
-}
-
-.focusMeter span:nth-child(1) {
-  height: 16px;
-}
-
-.focusMeter span:nth-child(2) {
-  height: 26px;
-  animation-delay: 120ms;
-}
-
-.focusMeter span:nth-child(3) {
-  height: 20px;
-  animation-delay: 240ms;
-}
-
-.focusMeter span:nth-child(4) {
-  height: 31px;
-  animation-delay: 360ms;
-}
-
-.focusMeter span:nth-child(5) {
-  height: 18px;
-  animation-delay: 480ms;
-}
-
-.overlayControls {
-  -webkit-app-region: no-drag;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.overlayControls button {
-  min-height: 28px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  color: rgba(255, 255, 255, 0.82);
-  background: rgba(255, 255, 255, 0.09);
-  font-size: 12px;
-}
-
-.overlayControls button.selected {
-  color: #07100f;
-  background: linear-gradient(135deg, var(--mint), var(--cyan));
-}
-
-.pinnedCaptionStack {
-  display: grid;
-  gap: 8px;
-  width: 100%;
-  margin-top: 12px;
-}
-
-.pinnedLine {
-  padding: 8px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.pinnedLine:not(.current) {
-  opacity: 0.62;
-}
-
-.pinnedLine.revised .overlayTarget {
-  text-decoration: underline;
-  text-decoration-color: rgba(255, 210, 132, 0.7);
-  text-decoration-thickness: 2px;
-}
-
-.pinnedLine.locked {
-  opacity: 0.54;
-}
-
-.overlayTarget {
-  margin: 5px 0 0;
-  color: rgba(255, 255, 255, 0.92);
-  font-size: clamp(20px, 2.3vw, 28px);
-  font-weight: 780;
-  line-height: 1.22;
-  text-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.98),
-    0 0 10px rgba(0, 0, 0, 0.88),
-    0 4px 22px rgba(0, 0, 0, 0.68);
-}
-
-.overlayStateBadge {
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 11px;
-}
-
 @keyframes meterPulse {
   0%,
   100% {
@@ -2239,6 +2213,12 @@ button:focus-visible {
   .audioLoadingBars.active span,
   .historyLine {
     animation: none;
+  }
+}
+
+@media (max-width: 1120px) {
+  .controlCenter.lifecycle-finished .dashboardGrid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -3337,20 +3317,6 @@ button:focus-visible {
 
 .historyLine.current {
   opacity: 0.96;
-}
-
-.overlayStateBadge {
-  display: inline-flex;
-  align-items: center;
-  justify-self: start;
-  height: 22px;
-  margin-bottom: 7px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.66);
-  font-size: 11px;
-  font-weight: 720;
 }
 
 @keyframes historyLineLift {

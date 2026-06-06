@@ -99,6 +99,7 @@ def test_event_audio_sink_publishes_tts_audio_as_base64_event() -> None:
                 audio=b"audio-bytes",
                 mime_type="audio/mpeg",
                 final=True,
+                metrics={"tts_first_audio_ms": 120.0},
             )
         )
         return event_bus
@@ -120,6 +121,7 @@ def test_event_audio_sink_publishes_tts_audio_as_base64_event() -> None:
                 "mime_type": "audio/mpeg",
                 "sample_rate": None,
                 "final": True,
+                "metrics": {"tts_first_audio_ms": 120.0},
             },
         )
     ]

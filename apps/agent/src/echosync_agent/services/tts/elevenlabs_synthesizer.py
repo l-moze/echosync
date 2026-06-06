@@ -120,7 +120,7 @@ class ElevenLabsStreamingClient:
 class ElevenLabsTtsSynthesizer(TtsSynthesizer):
     api_key: str
     voice_id: str
-    model: str = "eleven_multilingual_v2"
+    model: str = "eleven_flash_v2_5"
     output_format: str = "mp3_44100_128"
     optimize_streaming_latency: int | None = None
     client: ElevenLabsStreamingClient | None = None

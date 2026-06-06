@@ -27,11 +27,13 @@ def caption_update_from_translation(segment: TranslationSegment) -> dict[str, An
             "unstable_text": segment.target_unstable_text,
             "language": segment.target_lang,
         }
+    if segment.metrics:
+        event["metrics"] = dict(segment.metrics)
     return event
 
 
 def caption_update_from_commit(commit: SegmentCommit) -> dict[str, Any]:
-    return {
+    event = {
         "type": "caption_update",
         "session_id": commit.session_id,
         "segment_id": commit.segment_id,
@@ -51,6 +53,9 @@ def caption_update_from_commit(commit: SegmentCommit) -> dict[str, Any]:
         },
         "timing": {"start_ms": commit.start_ms, "end_ms": commit.end_ms},
     }
+    if commit.metrics:
+        event["metrics"] = dict(commit.metrics)
+    return event
 
 
 def _state_from_status(status: SegmentStatus) -> str:

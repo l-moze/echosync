@@ -15,9 +15,10 @@ export type SessionArchiveDraft = {
   title: string;
   createdAt: string;
   durationMs: number;
-  audio: {
+  audio?: {
     mimeType: string;
     objectUrl: string;
+    blob?: Blob;
   };
   segments: SessionArchiveSegment[];
 };
@@ -27,8 +28,9 @@ export type BuildSessionArchiveDraftInput = {
   title: string;
   createdAt: string;
   durationMs: number;
-  audioMimeType: string;
-  audioObjectUrl: string;
+  audioMimeType?: string;
+  audioObjectUrl?: string;
+  audioBlob?: Blob;
   lines: CaptionLine[];
 };
 
@@ -41,6 +43,7 @@ export function sessionArchiveTitleFromDate(date: Date): string {
 
 export function buildSessionArchiveDraft({
   audioMimeType,
+  audioBlob,
   audioObjectUrl,
   createdAt,
   durationMs,
@@ -53,10 +56,13 @@ export function buildSessionArchiveDraft({
     title,
     createdAt,
     durationMs,
-    audio: {
-      mimeType: audioMimeType,
-      objectUrl: audioObjectUrl
-    },
+    audio: audioObjectUrl
+      ? {
+          mimeType: audioMimeType ?? audioBlob?.type ?? "audio/webm",
+          objectUrl: audioObjectUrl,
+          blob: audioBlob
+        }
+      : undefined,
     segments: lines.map((line) => ({
       segmentId: line.id,
       startMs: line.startMs,

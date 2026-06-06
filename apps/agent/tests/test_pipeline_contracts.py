@@ -28,12 +28,16 @@ def test_pipeline_emits_translation_and_commit_events() -> None:
 
 
 def test_pipeline_emits_tts_audio_when_provider_enabled(monkeypatch: Any) -> None:
+    synthesized_segments: list[Any] = []
+
     class FakeEdgeTtsSynthesizer:
         def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural") -> None:
             self.voice = voice
 
-        async def synthesize(self, _segment: object) -> AsyncIterator[bytes]:
-            yield b"tts-audio"
+        async def synthesize(self, segment: object) -> AsyncIterator[bytes]:
+            synthesized_segments.append(segment)
+            yield b"tts-"
+            yield b"audio"
 
     monkeypatch.setattr(
         "echosync_agent.services.tts.factory.EdgeTtsSynthesizer",
@@ -59,8 +63,14 @@ def test_pipeline_emits_tts_audio_when_provider_enabled(monkeypatch: Any) -> Non
         "segment.commit",
         "caption_update",
     ]
-    tts_event = next(payload for event_type, payload in events if event_type == "tts.audio")
-    assert tts_event["audio_base64"] == "dHRzLWF1ZGlv"
+    tts_events = [payload for event_type, payload in events if event_type == "tts.audio"]
+    assert [event["audio_base64"] for event in tts_events] == ["dHRzLQ==", "YXVkaW8=", ""]
+    assert [event["final"] for event in tts_events] == [False, False, True]
+    assert tts_events[0]["metrics"]["tts_first_audio_ms"] >= 0
+    assert tts_events[-1]["metrics"]["tts_total_ms"] >= 0
+    assert tts_events[-1]["metrics"]["tts_audio_chunks"] == 2.0
+    assert synthesized_segments[0].metrics["translation_first_token_ms"] >= 0
+    assert synthesized_segments[0].metrics["translation_queue_wait_ms"] >= 0
 
 
 def test_pipeline_forwards_caption_update_events_to_caption_event_bus() -> None:

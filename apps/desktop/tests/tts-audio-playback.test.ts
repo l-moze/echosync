@@ -4,7 +4,51 @@ import { createTtsAudioPlaybackQueue } from "../src/renderer/tts-audio-playback"
 import type { TtsAudioEvent } from "../src/shared/realtime-events";
 
 describe("TTS 音频播放队列", () => {
-  it("等待 final chunk 后拼接同一分段音频并播放", async () => {
+  it("支持流式播放时收到首个非 final chunk 就立即追加", async () => {
+    const appended: Array<{ size: number; final: boolean }> = [];
+    const queue = createTtsAudioPlaybackQueue({
+      createStreamingSession: () => ({
+        append: vi.fn(async (chunk: ArrayBuffer, final: boolean) => {
+          appended.push({ size: chunk.byteLength, final });
+        }),
+        abort: vi.fn()
+      }),
+      revokeObjectUrl: vi.fn()
+    });
+
+    await queue.enqueue(ttsEvent({ audio_base64: "aGVs", final: false }));
+    await queue.enqueue(ttsEvent({ audio_base64: "bG8=", final: true }));
+
+    expect(appended).toEqual([
+      { size: 3, final: false },
+      { size: 2, final: true }
+    ]);
+  });
+
+  it("支持流式播放时用空 final 包结束当前分段", async () => {
+    const appended: Array<{ size: number; final: boolean }> = [];
+    const queue = createTtsAudioPlaybackQueue({
+      createStreamingSession: () => ({
+        append: vi.fn(async (chunk: ArrayBuffer, final: boolean) => {
+          appended.push({ size: chunk.byteLength, final });
+        }),
+        abort: vi.fn()
+      }),
+      revokeObjectUrl: vi.fn()
+    });
+
+    await queue.enqueue(ttsEvent({ audio_base64: "aGVs", final: false }));
+    await queue.enqueue(ttsEvent({ audio_base64: "bG8=", final: false }));
+    await queue.enqueue(ttsEvent({ audio_base64: "", final: true }));
+
+    expect(appended).toEqual([
+      { size: 3, final: false },
+      { size: 2, final: false },
+      { size: 0, final: true }
+    ]);
+  });
+
+  it("不支持流式播放时等待空 final 包后拼接同一分段音频并播放", async () => {
     const playedUrls: string[] = [];
     const objectUrlSizes: number[] = [];
     const queue = createTtsAudioPlaybackQueue({
@@ -18,26 +62,29 @@ describe("TTS 音频播放队列", () => {
           play: vi.fn().mockResolvedValue(undefined)
         };
       },
+      createStreamingSession: () => null,
       revokeObjectUrl: vi.fn()
     });
 
     await queue.enqueue(ttsEvent({ audio_base64: "aGVs", final: false }));
-    await queue.enqueue(ttsEvent({ audio_base64: "bG8=", final: true }));
+    await queue.enqueue(ttsEvent({ audio_base64: "bG8=", final: false }));
+    await queue.enqueue(ttsEvent({ audio_base64: "", final: true }));
 
     expect(objectUrlSizes).toEqual([5]);
     expect(playedUrls).toEqual(["blob:5"]);
   });
 
-  it("清空队列时丢弃尚未 final 的分段", async () => {
+  it("清空队列时丢弃尚未 final 的兜底分段", async () => {
     const createObjectUrl = vi.fn((blob: Blob) => {
       void blob;
-      return "blob:never";
+      return "blob:pending";
     });
     const queue = createTtsAudioPlaybackQueue({
       createObjectUrl,
       createPlayer: () => ({
         play: vi.fn().mockResolvedValue(undefined)
       }),
+      createStreamingSession: () => null,
       revokeObjectUrl: vi.fn()
     });
 
@@ -61,6 +108,7 @@ describe("TTS 音频播放队列", () => {
     const queue = createTtsAudioPlaybackQueue({
       createObjectUrl: () => "blob:playing",
       createPlayer: () => player,
+      createStreamingSession: () => null,
       revokeObjectUrl
     });
 
@@ -81,6 +129,7 @@ describe("TTS 音频播放队列", () => {
     }> = [];
     const queue = createTtsAudioPlaybackQueue({
       createObjectUrl: (blob) => `blob:${blob.size}:${players.length}`,
+      createStreamingSession: () => null,
       createPlayer(url) {
         const player = {
           onended: null,

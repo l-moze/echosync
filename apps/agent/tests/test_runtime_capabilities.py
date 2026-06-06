@@ -12,7 +12,13 @@ def test_capabilities_report_defaults_and_provider_readiness() -> None:
             mistral_api_key="",
             deepseek_api_key="",
         ),
-        dependency_available=lambda name: name in {"edge_tts", "funasr", "modelscope", "openai"},
+        dependency_available=lambda name: name in {
+            "edge_tts",
+            "funasr",
+            "modelscope",
+            "openai",
+            "torch",
+        },
     )
 
     assert capabilities["defaults"] == {
@@ -49,6 +55,18 @@ def test_capabilities_report_missing_dependencies_without_importing_sdks() -> No
         == "missing_dependency"
     )
     assert _provider(capabilities["tts_providers"], "edge-tts")["status"] == "missing_dependency"
+
+
+def test_capabilities_mark_funasr_unavailable_when_torch_is_missing() -> None:
+    capabilities = build_realtime_capabilities(
+        _settings(asr_provider="funasr"),
+        dependency_available=lambda name: name in {"funasr", "modelscope"},
+    )
+
+    funasr = _provider(capabilities["asr_providers"], "funasr")
+    assert funasr["status"] == "missing_dependency"
+    assert funasr["available"] is False
+    assert "torch" in str(funasr["reason"])
 
 
 def _provider(providers: list[dict[str, object]], provider_id: str) -> dict[str, object]:

@@ -45,7 +45,7 @@
 
 后端仍兼容旧 JSON `audio.chunk` / `pcm_base64`，主要用于旧测试、纯 ASR 调试和过渡期兼容；当前 Desktop 真实链路默认不走 base64 JSON。
 
-仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Desktop preflight 会先拦截；如果绕过 preflight，Agent 仍会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥、voice id 和模型配置仍来自 Agent 端 `.env`。
+仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Desktop preflight 会先拦截；如果绕过 preflight，Agent 仍会在启动 pipeline 前返回 `realtime.error` 并结束会话。FunASR readiness 按真实导入链检查 `funasr`、`modelscope` 和 `torch`，缺少 `torch` 时也会在 capabilities 阶段返回 `missing_dependency`，不会等音频流启动后才懒加载失败。`audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥、voice id 和模型配置仍来自 Agent 端 `.env`。
 
 `8765` 与 `8766` 的边界：
 
@@ -210,16 +210,32 @@ current='Feels funny to say that at normal speed,' incoming='but'
 7. **stable-only DeepSeek 调度**
 
    `CascadedInterpretationEngine` 默认不再把 `partial` 送进翻译模型。`partial` 只负责源文实时吐字；DeepSeek 只处理 `stable/committed` checkpoint，避免半句话触发错译、Token 浪费和字幕回滚。低延迟实验仍可通过 `translate_partial_checkpoints=True` 显式打开，但不是默认主链路。
+   2026-06-06 本轮补充：新增规则级 `SimulTranslationPolicy`，作为论文里 source/draft/policy 三流思想的应用层 MVP。它不增加额外 LLM 请求，只在调度前把明显悬空的 stable 尾巴先 `WAIT`，例如英文稳定文本以 `the/of/to/because/if` 等连接词结尾时，记录 `translation_checkpoint_skipped reason=simul_wait simul_reason=suspended_tail`，等待下一次 stable 或最终 committed 再翻译。
 
    ```text
    transcript.partial
      -> translation_checkpoint_skipped reason=partial_disabled
+     -> transcript.stable
+        -> translation_checkpoint_skipped reason=simul_wait  # 明显半句
      -> transcript.stable / transcript.committed
      -> translation.partial(稳定翻译)
      -> segment.commit(最终锁定)
    ```
 
-   算法收益：在“长 partial 后接 committed”的典型场景里，默认翻译请求从 partial+committed 两次降为 committed 一次；测试用例可观测到 translator 调用数下降 50%，并且日志会出现 `translation_checkpoint_skipped` 作为证据。
+   算法收益：在“长 partial 后接 committed”的典型场景里，默认翻译请求从 partial+committed 两次降为 committed 一次；在“stable 尾部仍是半句”的场景里，请求从 stable+committed 两次降为 committed 一次。对应测试可观测到 translator 只接收最终 committed 文本，并且日志会出现 `translation_checkpoint_skipped reason=simul_wait` 作为证据。
+
+   2026-06-06 量化校正：当前仓库可检索到的 desktop/web 日志没有 Agent 请求级 `translation_checkpoint_started / first_token / finished`，运行 `realtime_log_summary` 得到 `translation_started=0`、`translation_first_token_ms=n:0`、`translation_latency_ms=n:0`。因此不能宣称真实 DeepSeek 翻译延迟已经下降。已补充 `translation_strategy_benchmark` 合成基准，只证明调度压力变化：在 fake translator `first_token_ms=35ms,total_ms=90ms` 下，`long_partial_then_committed` 从 2 次请求降为 1 次，估算请求工作量 180ms -> 90ms，committed 首个译文从约 150.3ms -> 51.1ms；`suspended_stable_tail_then_committed` 从 2 次请求降为 1 次，估算请求工作量 180ms -> 90ms，committed 首个译文从约 161.1ms -> 39.0ms。这个结果不是 DeepSeek 网络 A/B，只能作为策略基准。
+
+   2026-06-06 真正 Agent paced A/B：新增 `real_agent_translation_benchmark`，默认按真实音频时间送媒体 frame，先用真实 `MediaAudioSource -> VoxtralRealtimeTranscriber -> TranscriptAssembler` 采集 assembled transcripts 和到达时间，再用同一批 transcript 按到达节奏分别回放给旧式调度和当前调度，两边都调用真实 `DeepSeekTranslator`。样本为 `vido/videoplayback.mp4` 前 30 秒，`.env` 为 `voxtral + deepseek-v4-flash`。
+
+   | 顺序 | 策略 | DeepSeek 请求 | 跳过 checkpoint | simul_wait | 首 token avg / p95 | final avg / p95 | queue avg / p95 |
+   |------|------|--------------:|----------------:|-----------:|-------------------:|----------------:|----------------:|
+   | old -> current | old-like | 20 | 0 | 0 | 714.3 / 1300.1ms | 799.2 / 1443.3ms | 110.2 / 631.8ms |
+   | old -> current | current | 17 | 59 | 4 | 698.2 / 1203.8ms | 874.5 / 1237.7ms | 129.6 / 926.6ms |
+   | current -> old | current | 17 | 56 | 3 | 773.7 / 1350.8ms | 907.4 / 1510.2ms | 107.8 / 838.9ms |
+   | current -> old | old-like | 20 | 0 | 0 | 622.7 / 1062.7ms | 781.3 / 1240.9ms | 80.6 / 696.7ms |
+
+   结论：当前策略可以稳定减少 3 次 DeepSeek 请求，并跳过 56-59 个不稳定 checkpoint，减少半句翻译和 UI 回滚风险；但两组顺序对照不能证明真实翻译延迟下降。`old-current` 中 current 首 token 略快但 final 平均更慢；`current-old` 中 current 首 token 和 final 都更慢。后续优化不能再声称“翻译耗时降低”，除非新的 Agent paced A/B 在反转顺序后仍稳定降低 `translation_first_token_ms` 和 `translation_latency_ms`。
 
 8. **SemanticChunker + FunASR endpoint cache reset**
 
@@ -293,11 +309,15 @@ caption_lag_ms = caption_line.receivedAtMs - sessionStartedAtMs - caption_line.e
 | `funasr_inference_chunk` | FunASR 适配器每次模型调用 | 统计一次 ASR 推理吃掉多少音频、聚合了多少传输帧、是否 endpoint final、ASR RTF。 |
 | `funasr_semantic_boundary` | FunASR soft/hard/stream-end endpoint | 判断 endpoint 来自上游静音、强制 hard timeout 还是流结束。 |
 | `translation_checkpoint_queued` | Engine 收到 stable/committed checkpoint | 判断翻译任务是否被 latest-wins 合并或排队；只有显式开启 partial 实验开关时，partial 才会进入这里。 |
-| `translation_checkpoint_skipped` | Engine 跳过不稳定 checkpoint | 默认跳过 partial 翻译时记录，证明 DeepSeek 请求没有被半句话放大。 |
-| `translation_checkpoint_started` | 翻译任务开始 | 记录 `asr_latency_ms`、`merge_wait_ms`、术语命中数。 |
+| `translation_checkpoint_skipped` | Engine 跳过不稳定 checkpoint | 默认跳过 partial 翻译时记录 `reason=partial_disabled`；Simul 策略等待半句时记录 `reason=simul_wait`。 |
+| `translation_checkpoint_started` | 翻译任务开始 | 请求级边界，记录 `asr_latency_ms`、`merge_wait_ms`、`translation_queue_wait_ms`、术语命中数和 `simul_action`。 |
 | `translation_checkpoint_first_token` | 翻译流首个 delta | 定位模型首 token 慢还是完整输出慢。 |
 | `translation_checkpoint_finished` | 翻译任务结束 | 记录完整翻译耗时、delta 数和译文长度。 |
-| `caption_event_published` | Agent 字幕事件发布到 `/v1/caption/events` | 记录发布时刻 `published_at_ms` 和随事件携带的模型指标。 |
+| `tts_synthesis_started` | committed 译文进入 TTS 旁路 | 记录目标文本长度和 TTS provider，用来确认 TTS 只消费最终译文。 |
+| `tts_synthesis_first_audio` | TTS provider 返回首个音频包 | 记录 `tts_first_audio_ms`，这是语音播报体感延迟的核心指标。 |
+| `tts_synthesis_finished` | TTS provider 流结束 | 记录 `tts_total_ms`、`tts_audio_chunks` 和 `tts_audio_bytes`，判断是首音慢还是完整合成慢。 |
+| `tts_synthesis_failed` | TTS provider 失败 | 统计 provider、网络或格式异常，避免只看 started/finished 差值猜原因。 |
+| `caption_event_published` | Agent 字幕事件发布到 `/v1/caption/events` | 发布级边界，记录 `published_at_ms`、投递耗时和随事件携带的模型指标；不用于请求级延迟分布统计。 |
 | `caption_event_renderer_received` | Desktop renderer 收到 `caption:event` | 用 `Date.now() - published_at_ms` 计算 Agent publish 到 renderer receive 的延迟。 |
 | `realtime_audio_capture_metrics` | Desktop renderer 音频采集/编码窗口 | 每个聚合窗口记录 Web Audio callback 数、输入/重采样样本、发出的 PCM frame 数、编码字节数、平均/p95 callback 间隔、平均/p95 处理耗时、平均/p95 PCM 编码耗时和最大 `socket.bufferedAmount`。 |
 
@@ -528,17 +548,51 @@ segment.commit=10
 
 下一次真实 A/B 证明口径：
 
+真实测评必须保存 Agent stdout/stderr，不能只看 Desktop 日志。建议启动 Agent 时重定向：
+
+```powershell
+cd apps/agent
+python -m echosync_agent.transport.caption_ws *> ..\..\agent-live.log
+```
+
+跑完同一段视频或网课后再汇总：
+
+```powershell
+python -m echosync_agent.diagnostics.realtime_log_summary ..\..\agent-live.log
+```
+
+只有 before/after 都有 `translation_checkpoint_started / first_token / finished` 时，才能比较翻译真实延迟。
+
 ```text
 before/after:
+  translation_started
+  translation_skipped
+  skipped_reasons(partial_disabled/simul_wait)
   source_to_first_translation_ms
   stable_to_first_translation_ms
   translation_queue_wait_ms p50/p95
   translation_first_token_ms p50/p95
+  tts_first_audio_ms p50/p95
+  tts_total_ms p50/p95
   realtime_audio_capture_metrics.p95ProcessingMs
   realtime_audio_capture_metrics.maxWebsocketBufferedAmount
 ```
 
-预期收益不是让单次 DeepSeek TTFT 消失，而是减少重复翻译和队列积压，让尾部字幕不会长时间只有源文没有译文。
+请求级翻译指标用 `translation_checkpoint_started / first_token / finished` 计算；TTS 指标用 `tts_synthesis_started / first_audio / finished / failed` 计算；发布级 `caption_event_published` 只用于观察 Agent 到 Desktop 的事件投递和字幕事件数量。真实测评后可运行：
+
+```powershell
+python -m echosync_agent.diagnostics.realtime_log_summary path\to\agent.log
+```
+
+或安装入口脚本后运行：
+
+```powershell
+echosync-log-summary path\to\agent.log
+```
+
+当前真实 Agent paced A/B 已经证明：收益不是让单次 DeepSeek TTFT 消失，也没有稳定降低 `translation_first_token_ms` / `translation_latency_ms`；当前收益是减少重复请求、半句翻译和后续回滚风险。下一刀优化必须用同样的 `real_agent_translation_benchmark` 做反转顺序 A/B，只有当两种执行顺序下 current 都稳定降低首 token、final 或字幕相对音频时间线滞后，才允许写“延迟降低”。
+
+2026-06-06 TTS 补充：ElevenLabs 官方延迟建议把 Flash 模型、streaming、地域就近和 voice 选择作为主要手段；Flash v2.5 的约 75ms 是模型推理时间，不等于 EchoSync 端到端首音。当前链路只把 committed 译文送入 TTS，因此 HTTP streaming 是 MVP 默认路径；WebSocket TTS 更适合 LLM 文本边生成边输入，只有当真实日志显示 `tts_first_audio_ms` 已成为主要瓶颈时再升级，避免提前引入输入流切块和音频缓冲复杂度。
 
 ## 已发现的断点
 
@@ -565,7 +619,7 @@ before/after:
 | `services/asr/factory.py` | FunASR 与 Voxtral 都按 `asr_latency_mode` 映射实际推理窗口/目标延迟 |
 | `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；应用退出时清理重连计时器并关闭 WS |
 | `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame + `audio.final` 控制帧；只在用户显式选择时覆盖 ASR/翻译/TTS provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
-| `desktop/src/renderer/tts-audio-playback.ts` | 拼接 `tts.audio` 分片并按 final 播放；`clear()` 后忽略旧播放器晚到回调，避免新队列并发播放 |
+| `desktop/src/renderer/tts-audio-playback.ts` | 优先用 MediaSource 追加播放 `tts.audio` 分片；Agent 音频分片立即以 `final=false` 推送，流结束再用空音频 `final=true` 结束包收尾；不支持对应 MIME 时回退到同一 segment/rev 等结束包后拼接 Blob；`clear()` 后忽略旧播放器晚到回调，避免新队列并发播放 |
 | `desktop/src/renderer/main.tsx` | 移除 demoEvents，新增 `hasRealEvents` 状态；收到当前会话 `realtime.error` 时停止本地音频并回收采集状态 |
 | `desktop/src/shared/subtitle-style-state.ts` | 字幕显示模式迁移为双语、主字幕、翻译字幕三态，兼容旧 `line/split` 配置 |
 
@@ -574,7 +628,7 @@ before/after:
 ### P0：真实 ASR 配置与健康检查
 1. 启动 `8766` 完整同传服务。
 2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr` 或 `voxtral` 作为默认值，设置 `ECHOSYNC_TRANSLATOR_PROVIDER=deepseek` 作为真实翻译默认值；也可以由 Desktop 在 `audio.start.asr_provider` / `audio.start.translation_provider` / `audio.start.tts_provider` 中选择本次会话 provider。
-3. Desktop 已在开始同传前读取 `/v1/realtime/capabilities`，并阻止 mock+真实音频、缺 key、缺 SDK 和未完整接入音频源这类组合；后续还需要把能力结果做成更细的设置页和诊断页。
+3. Desktop 已在开始同传前读取 `/v1/realtime/capabilities`，并阻止 mock+真实音频、缺 key、缺 SDK/本地依赖和未完整接入音频源这类组合；FunASR 会显式检查 `funasr`、`modelscope`、`torch`。后续还需要把能力结果做成更细的设置页和诊断页。
 
 ### P1：音频源分支补实
 1. Windows 系统声音继续使用 Electron display media loopback。

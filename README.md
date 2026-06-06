@@ -21,7 +21,7 @@ EchoSync 当前初始化为一个小型 monorepo：
 - 翻译器最小契约是 `Translator.translate()`，DeepL 这类非流式 API 可以直接接入；支持 token stream 的 DeepSeek / OpenAI-compatible 适配器再额外实现 `StreamingTranslator.stream_translate()`。
 - 端到端链路依赖 `InterpretationEngine`，可以直接输出字幕事件、修订补丁、提交事件和译文音频块。
 - 字幕输出和译文音频输出分离为 `SubtitleSink` 与 `TranslatedAudioSink`，避免一个接口承担无关职责。
-- TTS 默认关闭；Agent 侧已接入 `edge-tts` 和 ElevenLabs provider，启用后作为旁路 `tts.audio` 事件输出，不阻塞字幕；Desktop 可在本次会话选择语音播报 provider，并在控制中心窗口播放返回音频。
+- TTS 默认关闭；Agent 侧已接入 `edge-tts` 和 ElevenLabs provider，启用后作为旁路 `tts.audio` 事件输出，不阻塞字幕；Desktop 可在本次会话选择语音播报 provider，并在控制中心窗口播放返回音频。语音合成仍在 Agent 侧，API key、voice id 和 provider 逻辑不下放到前端。
 
 ## 初始功能范围
 
@@ -35,7 +35,7 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和模拟链路测试骨架。当前地基同时支持 ASR→翻译→修正的级联模型，以及未来 OpenAI Realtime、Qwen LiveTranslate、Azure Speech Translation 等端到端模型适配。
 
-ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`；TTS provider 当前支持 `disabled`、`edge-tts`、`elevenlabs`。Desktop 会在启动前读取 Agent `/v1/realtime/capabilities`，显示后端默认 provider、缺失密钥或缺失 SDK，并在本次会话中声明 `asr_latency_mode`；只有用户显式选择 provider 时才额外发送 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值。API key、base URL、voice id 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批 ASR 候选，不是已接入的可选 provider。
+ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`；TTS provider 当前支持 `disabled`、`edge-tts`、`elevenlabs`。Desktop 会在启动前读取 Agent `/v1/realtime/capabilities`，显示后端默认 provider、缺失密钥或缺失 SDK/本地依赖，并在本次会话中声明 `asr_latency_mode`；只有用户显式选择 provider 时才额外发送 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值。API key、base URL、voice id 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批 ASR 候选，不是已接入的可选 provider。
 
 当前 Web 工作台已按 `doc/UI设计调研.md` 的 MVP 方向实现：
 
@@ -92,7 +92,7 @@ npm run dev:desktop
 
 3. 打开视频或网课音频，桌面端选择“Windows 系统声音”，点击“开始同传”。
 
-真实识别前请在 `.env` 中设置：
+真实识别前请确保 Agent 环境安装了对应 provider 依赖。FunASR 运行时需要 `funasr`、`modelscope` 和 `torch`，缺任一项都会在 `/v1/realtime/capabilities` 中显示为 `missing_dependency`，Desktop 会在开始采集前拦截。随后在 `.env` 中设置：
 
 ```powershell
 ECHOSYNC_ASR_PROVIDER=funasr
@@ -112,12 +112,13 @@ ECHOSYNC_TTS_PROVIDER=disabled   # disabled / edge-tts / elevenlabs
 EDGE_TTS_VOICE=zh-CN-XiaoxiaoNeural
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=
-ELEVENLABS_MODEL=eleven_multilingual_v2
+# 同传优先低延迟；质量优先可改为 eleven_multilingual_v2。
+ELEVENLABS_MODEL=eleven_flash_v2_5
 ELEVENLABS_OUTPUT_FORMAT=mp3_44100_128
 ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=
 ```
 
-`edge-tts` 需要安装对应 Python 依赖；`elevenlabs` 必须配置 `ELEVENLABS_API_KEY` 和 `ELEVENLABS_VOICE_ID`。启用后，Agent 只消费已经 committed 的译文，合成结果通过 `tts.audio` 事件推给 Desktop 播放队列；字幕事件仍按原链路实时发布。
+`edge-tts` 需要安装对应 Python 依赖；`elevenlabs` 必须配置 `ELEVENLABS_API_KEY` 和 `ELEVENLABS_VOICE_ID`。启用后，Agent 只在最终 `segment.commit` 后消费 committed 译文，避免 DeepSeek committed 流式增量触发重复合成；合成结果通过 `tts.audio` 事件推给 Desktop 播放队列，字幕事件仍按原链路实时发布。ElevenLabs 默认使用更适合实时场景的 `eleven_flash_v2_5`；如果更重视长文本数字规范化和播报质量，可在 `.env` 改回 `eleven_multilingual_v2`。`ELEVENLABS_OPTIMIZE_STREAMING_LATENCY` 保留兼容但默认不设置，因为官方已不推荐把它作为新方案。Agent 收到 TTS 音频分片后立即推送 `final=false`，不为了标记结束而压住首个音频包；供应商流结束时再发送空 `audio_base64` 的 `final=true` 结束包。renderer 优先用 MediaSource 追加播放分片并用结束包关闭流；运行环境不支持对应 MIME 时，回退为同一 segment/rev 等到结束包后拼接 Blob 播放。`tts.audio` 会携带 `tts_first_audio_ms`、`tts_total_ms`、`tts_audio_chunks`、`tts_audio_bytes` 等 metrics，便于区分 TTS 首音慢、总合成慢还是前端播放慢。
 
 如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
 
@@ -129,14 +130,23 @@ ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=
 - `audio_stream_final_marker`：Desktop 音频门控检测到连续静音后发送 `audio.final` 控制消息，Agent 将其转为空 PCM 的 `is_final=True` frame，用于 flush ASR cache。
 - `funasr_inference_chunk`：FunASR 每次模型推理的真实窗口，包含 `input_audio_ms`、`transport_frames`、`final`、`latency_ms`、`rtf`，用于证明 80ms 传输帧没有被直接变成 80ms 模型调用。
 - `funasr_semantic_boundary`：FunASR 遇到 soft endpoint、hard endpoint 或 stream end 时打印，包含 `boundary`、`active_audio_ms`、`overlap_ms` 和当前 chunk 时间范围。
-- `translation_checkpoint_skipped`：默认跳过 `partial` 翻译时出现，表示 DeepSeek 没有收到不稳定半句话。
+- `translation_checkpoint_skipped`：跳过不稳定翻译 checkpoint 时出现；`reason=partial_disabled` 表示默认不翻 partial，`reason=simul_wait` 表示 Simul 策略认为 stable 尾部仍悬空。
+- `translation_checkpoint_started / first_token / finished`：请求级翻译耗时日志，包含 `translation_queue_wait_ms`、首 token 和最终耗时，是判断 DeepSeek 调度是否变快的主要依据。
+- `tts_synthesis_started / first_audio / finished`：TTS 旁路耗时日志，分别定位 provider 启动、首个音频包和完整合成耗时；`tts_synthesis_failed` 用于发现 provider 或网络失败。
 - `caption_event_published`：ASR/翻译后的字幕事件已推给桌面端，并带 `published_at_ms` 与模型指标；`transcript.partial` 是源文草稿，`translation.partial` 是译文更新。
+- `python -m echosync_agent.diagnostics.realtime_log_summary <log>` 或 `echosync-log-summary <log>`：离线汇总真实测评日志，统计音频传输、ASR 队列、FunASR RTF、翻译请求、跳过原因、`simul_wait`、DeepSeek 首 token、TTS 首音和总合成分布。
+- `python -m echosync_agent.diagnostics.translation_strategy_benchmark`：可重复的合成调度基准，用固定延迟 fake translator 对比“旧式 partial/stable 都翻”和“当前 partial 默认不翻 + Simul wait”的请求数、跳过数和估算请求工作量。这个脚本只能证明调度压力变化，不能替代真实 DeepSeek/ElevenLabs 网络 A/B。
+- `python -m echosync_agent.diagnostics.real_agent_translation_benchmark .\vido\videoplayback.mp4 --duration-ms 30000 --asr-provider voxtral --translator-provider deepseek --log-file .tmp\agent-ab.log`：真正走 Agent 组件的翻译 A/B。默认按真实音频时间送媒体 frame，记录 Voxtral + `TranscriptAssembler` 产出的真实 transcript 到达时间，再用同一批 transcript 按到达节奏分别回放给旧式调度和当前调度，两边都真实调用 DeepSeek。可用 `--order current-old` 反转顺序排查网络波动和 provider cache 偏差。
+
+截至 2026-06-06，仓库中可检索到的 desktop/web 日志没有 Agent 请求级 `translation_checkpoint_started / first_token / finished` 记录；用现有日志汇总时 `translation_started=0`、`translation_first_token_ms=n:0`。因此当前不能宣称“真实 DeepSeek 翻译延迟已经低于之前版本”。已可量化的是策略基准：在 `first_token_ms=35ms,total_ms=90ms` 的合成 translator 下，`long_partial_then_committed` 和 `suspended_stable_tail_then_committed` 两个典型场景都从 2 次翻译请求降为 1 次，估算请求工作量从 180ms 降为 90ms；真实提升必须通过重定向 Agent 日志后再跑 `realtime_log_summary` 验证。
+
+2026-06-06 已补真实 Agent paced A/B。样本为 `vido/videoplayback.mp4` 前 30 秒，`.env` 使用 `voxtral + deepseek-v4-flash`，翻译 A/B 保留 ASR transcript 到达节奏。两组顺序对照结果一致证明：当前策略把 DeepSeek 请求从 `20` 次降到 `17` 次，并跳过 `56-59` 个不稳定 checkpoint；但真实延迟没有稳定降低。`old-current` 顺序下 current 的首 token 平均 `698.2ms` vs old `714.3ms`，final 平均 `874.5ms` vs old `799.2ms`；`current-old` 顺序下 current 的首 token 平均 `773.7ms` vs old `622.7ms`，final 平均 `907.4ms` vs old `781.3ms`。所以当前可确认收益是“减少无效请求和回滚风险”，不能确认“翻译耗时更低”。
 
 当前 MVP 的采集节点使用 `ScriptProcessorNode` 做快速验证；后续会替换为 `AudioWorklet` 或 WASAPI loopback，以降低抖动和长期运行风险。
 
 当前 renderer 已加轻量门控：低于响度阈值时不发送音频块；活跃音频会立即以 80ms binary PCM frame 发送，不再为了 final 语义等待下一帧。连续静音后 renderer 发送 `audio.final` 控制消息，Agent 侧把它转成空 PCM 的 `is_final=True` frame，触发 FunASR flush/cache reset，避免静音时持续打满 ASR。字幕弹窗会显示当前片段时间范围。
 
-实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝，并把“音频正文发送”和“final/turn 边界”拆开，活跃音频不再承担一帧 lookahead。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理；遇到上游 endpoint final 会以 `is_final=True` flush 并重置 FunASR cache。Agent 已新增 `SemanticAudioChunker`，支持 soft cut、hard cut 和 overlap；FunASR 流式路径使用轻量 `SemanticEndpointTracker`，连续语音超过 hard timeout 时会强制 endpoint 并重置 cache，不等待说话人自然停顿；`LiveKitSileroFrameVadDetector` 已接入但默认关闭，作为后续 soft endpoint 调参实验。Voxtral 会按同一 `asr_latency_mode` 映射 `target_streaming_delay_ms`：`low_latency` 最多 480ms，`balanced` 沿用 `.env`，`accuracy` 至少 1600ms。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 默认只处理 `stable/committed`，`partial` 只显示源文并通过 `translation_checkpoint_skipped` 记录跳过原因；待翻译项仍按 `segment_id` 合并，降低模型慢响应时的队列积压。MP4/音频文件源使用 ffmpeg stdout 流式分帧，真实样本 `vido/videoplayback.mp4` 的首个 80ms PCM frame 约 40ms 产出，不再等待完整文件解码。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
+实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝，并把“音频正文发送”和“final/turn 边界”拆开，活跃音频不再承担一帧 lookahead。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理；遇到上游 endpoint final 会以 `is_final=True` flush 并重置 FunASR cache。Agent 已新增 `SemanticAudioChunker`，支持 soft cut、hard cut 和 overlap；FunASR 流式路径使用轻量 `SemanticEndpointTracker`，连续语音超过 hard timeout 时会强制 endpoint 并重置 cache，不等待说话人自然停顿；`LiveKitSileroFrameVadDetector` 已接入但默认关闭，作为后续 soft endpoint 调参实验。Voxtral 会按同一 `asr_latency_mode` 映射 `target_streaming_delay_ms`：`low_latency` 最多 480ms，`balanced` 沿用 `.env`，`accuracy` 至少 1600ms。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 默认只处理 `stable/committed`，`partial` 只显示源文；新增的规则级 Simul 策略会把明显悬空的 stable 尾巴先 `WAIT`，避免把 “... the/of/to” 这类半句送进 DeepSeek。待翻译项仍按 `segment_id` 合并，降低模型慢响应时的队列积压。MP4/音频文件源使用 ffmpeg stdout 流式分帧，真实样本 `vido/videoplayback.mp4` 的首个 80ms PCM frame 约 40ms 产出，不再等待完整文件解码。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
 
 实时控制事件语义：`realtime.error` 表示本次会话启动失败或 pipeline 失败，客户端应进入错误态并停止本地媒体流；`realtime.done` 只表示正常完成。用户主动停止时，如果 pipeline 已经失败，Agent 会优先上报错误；如果仍在处理队列，则取消未完成的 pipeline，避免停止后继续推送晚到字幕。
 

@@ -35,6 +35,7 @@ export type StartupUiState = {
 
 export type SessionUiState = {
   lifecycle: SessionLifecycle;
+  sessionStartedAtMs: number | null;
   selectedPreset: ScenarioPresetId;
   selectedSourceId: DesktopAudioSourceId | "tab";
   audioActivity: AudioActivityState;
@@ -80,7 +81,7 @@ export type SessionUiEvent =
   | { type: "audio.level.changed"; peak: number; rms: number }
   | { type: "audio.permission_denied" }
   | { type: "audio.device_missing" }
-  | { type: "session.started" }
+  | { type: "session.started"; atMs?: number }
   | { type: "session.finished"; summary: SessionSummary }
   | { type: "session.reset" }
   | { type: "session.return_home" }
@@ -113,6 +114,7 @@ export function selectDefaultSourceForPlatform(platform: RuntimePlatform): Deskt
 export function createInitialSessionUiState({ platform }: { platform: RuntimePlatform }): SessionUiState {
   return {
     lifecycle: "idle",
+    sessionStartedAtMs: null,
     selectedPreset: "video-course",
     selectedSourceId: selectDefaultSourceForPlatform(platform),
     audioActivity: "silent",
@@ -184,6 +186,7 @@ export function reduceSessionUiState(state: SessionUiState, event: SessionUiEven
     return {
       ...state,
       lifecycle: "active",
+      sessionStartedAtMs: state.sessionStartedAtMs ?? event.atMs ?? null,
       activePanel: "transcript-monitor",
       controlBarVisible: true,
       autoScroll: { mode: "following", newContentAvailable: false },
@@ -386,11 +389,39 @@ export function selectSessionHealthMetrics({
 
   return {
     inputSource: sourceLabel,
-    firstCaptionLatencyMs: firstLine?.startMs ?? null,
-    stableCommitLatencyMs: firstCommittedLine ? Math.max(0, firstCommittedLine.endMs - firstCommittedLine.startMs) : null,
+    firstCaptionLatencyMs: firstLine ? captionLatencyMs(firstLine, sessionUi.sessionStartedAtMs) : null,
+    stableCommitLatencyMs: firstCommittedLine
+      ? captionLatencyMs(firstCommittedLine, sessionUi.sessionStartedAtMs)
+      : null,
     patchCount: lines.reduce((sum, line) => sum + line.patchCount, 0),
     audioLevel: sessionUi.audioActivity,
     confidenceLabel: sessionUi.confidence.label,
     averageStability: lines.length > 0 ? Number((stabilityTotal / lines.length).toFixed(2)) : null
   };
+}
+
+export function selectAverageCaptionLatencyMs(
+  lines: CaptionLine[],
+  sessionStartedAtMs: number | null
+): number | null {
+  const latencies = lines
+    .map((line) => captionLatencyMs(line, sessionStartedAtMs))
+    .filter((latency): latency is number => latency !== null);
+
+  if (latencies.length === 0) {
+    return null;
+  }
+
+  return Math.round(latencies.reduce((sum, latency) => sum + latency, 0) / latencies.length);
+}
+
+function captionLatencyMs(
+  line: Pick<CaptionLine, "endMs" | "receivedAtMs">,
+  sessionStartedAtMs: number | null
+): number | null {
+  if (sessionStartedAtMs === null || typeof line.receivedAtMs !== "number") {
+    return null;
+  }
+
+  return Math.max(0, line.receivedAtMs - sessionStartedAtMs - line.endMs);
 }

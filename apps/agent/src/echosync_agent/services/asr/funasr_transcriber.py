@@ -220,7 +220,8 @@ class FunAsrTranscriber(Transcriber):
             from funasr import AutoModel
         except ImportError as exc:
             raise RuntimeError(
-                "未安装 FunASR。请先在 apps/agent 环境中安装 funasr 和 modelscope。"
+                "未安装 FunASR 运行依赖。请先在 apps/agent 环境中安装 "
+                "funasr、modelscope 和 torch。"
             ) from exc
 
         resolved_device = resolve_funasr_device(self.config.device)

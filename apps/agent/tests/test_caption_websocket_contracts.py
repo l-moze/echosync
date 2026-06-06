@@ -41,6 +41,44 @@ def test_caption_websocket_starts_producer_for_connected_client() -> None:
     assert message["type"] == "translation.partial"
     assert message["target_text"] == "[zh] Hello from the caption pipeline."
     assert isinstance(message["published_at_ms"], int)
+    assert message["span_id"] == ""
+    assert "caption_send_ms" not in message["metrics"]
+    assert "caption_send_failures" not in message["metrics"]
+
+
+def test_caption_websocket_handles_missing_span_id_without_crashing() -> None:
+    async def publish_demo_caption(hub: CaptionEventHub) -> None:
+        await hub.publish(
+            "translation.partial",
+            {
+                "session_id": "sess_caption_demo",
+                "segment_id": "seg_caption_demo",
+                "rev": 1,
+                "source_lang": "en",
+                "target_lang": "zh-CN",
+                "source_text": "Hello from the caption pipeline.",
+                "target_text": "[zh] Hello from the caption pipeline.",
+                "status": "committed",
+                "stability": 1.0,
+                "start_ms": 0,
+                "end_ms": 1600,
+                "metrics": {
+                    "asr_latency_ms": 80.0,
+                    "translation_first_token_ms": 120.0,
+                    "translation_latency_ms": 180.0,
+                },
+            },
+        )
+
+    app = create_caption_app(producer=publish_demo_caption)
+    client = TestClient(app)
+
+    with client.websocket_connect("/v1/caption/events") as websocket:
+        message: dict[str, Any] = websocket.receive_json()
+
+    assert message["type"] == "translation.partial"
+    assert message["target_text"] == "[zh] Hello from the caption pipeline."
+    assert isinstance(message["published_at_ms"], int)
 
 
 def test_caption_server_does_not_start_demo_producer_by_default(monkeypatch) -> None:

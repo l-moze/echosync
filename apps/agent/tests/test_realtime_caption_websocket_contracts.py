@@ -69,7 +69,7 @@ def test_realtime_websocket_publishes_translated_captions_to_caption_clients() -
         else:
             raise AssertionError("expected final caption_update before websocket test timeout")
 
-    assert done == {"type": "realtime.done", "session_id": "sess_realtime"}
+    assert done == {"type": "realtime.done", "session_id": "sess_realtime", "trace_id": "sess_realtime"}
     first_caption = received[0]
     assert first_caption["type"] == "transcript.partial"
     assert first_caption["session_id"] == "sess_realtime"
@@ -200,17 +200,25 @@ def test_realtime_transport_metrics_aggregates_and_resets_audio_frames() -> None
         _audio_frame(seq=2, pcm=b"abcdef", start_ms=80, end_ms=160)
     )
     metrics.transport_latencies_ms = [1.0, 2.0, 30.0]
+    metrics.record_asr_queue_wait(4.0)
+    metrics.record_asr_queue_wait(16.0)
 
-    snapshot = metrics.snapshot_and_reset(queue_depth=3, session_id="sess_metrics")
+    snapshot = metrics.snapshot_and_reset(queue_depth=3, session_id="sess_metrics", trace_id="trace_metrics")
 
+    assert snapshot.session_id == "sess_metrics"
+    assert snapshot.trace_id == "trace_metrics"
     assert snapshot.frames == 2
     assert snapshot.audio_ms == 160
     assert snapshot.bytes_received == 10
     assert snapshot.avg_transport_latency_ms == 11.0
     assert snapshot.p95_transport_latency_ms == 30.0
+    assert snapshot.avg_asr_queue_wait_ms == 10.0
+    assert snapshot.p95_asr_queue_wait_ms == 16.0
+    assert snapshot.max_queue_depth == 3
     assert snapshot.queue_depth == 3
     assert metrics.frames == 0
     assert metrics.audio_ms == 0
+    assert metrics.asr_queue_waits_ms == []
 
 
 def test_transport_latency_uses_low_32_bit_timestamp() -> None:
@@ -356,7 +364,7 @@ async def _run_realtime_session_stop_without_done_test() -> None:
 
     await session.run()
 
-    assert websocket.sent_messages == [{"type": "realtime.done", "session_id": "sess_stop"}]
+    assert websocket.sent_messages == [{"type": "realtime.done", "session_id": "sess_stop", "trace_id": "sess_stop"}]
 
 
 async def _run_realtime_session_pipeline_error_publish_test() -> None:

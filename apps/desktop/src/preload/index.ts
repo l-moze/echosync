@@ -5,6 +5,15 @@ import type { RealtimeEvent } from "../shared/realtime-events";
 import type { SubtitleStyleState } from "../shared/subtitle-style-state";
 
 const desktopApi: DesktopApi = {
+  sessionRecords: {
+    list: () => ipcRenderer.invoke("session-records:list"),
+    get: (id) => ipcRenderer.invoke("session-records:get", id),
+    saveDraft: (input) => ipcRenderer.invoke("session-records:save-draft", input),
+    rename: (id, title) => ipcRenderer.invoke("session-records:rename", id, title),
+    delete: (id) => ipcRenderer.invoke("session-records:delete", id),
+    export: (id, format) => ipcRenderer.invoke("session-records:export", id, format),
+    getAudioUrl: (id) => ipcRenderer.invoke("session-records:get-audio-url", id)
+  },
   getAgentCapabilities: () => ipcRenderer.invoke("agent:get-capabilities"),
   listAudioSources: () => ipcRenderer.invoke("audio:list-sources"),
   getCaptureState: () => ipcRenderer.invoke("audio:get-state"),

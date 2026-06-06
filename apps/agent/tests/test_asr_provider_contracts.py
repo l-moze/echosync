@@ -40,6 +40,26 @@ def test_settings_default_disables_funasr_vad(monkeypatch: pytest.MonkeyPatch) -
     assert settings.funasr_vad_enabled is False
 
 
+def test_settings_default_prefers_low_latency_elevenlabs_tts_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ELEVENLABS_MODEL", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.elevenlabs_model == "eleven_flash_v2_5"
+
+
+def test_settings_allows_elevenlabs_tts_model_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_MODEL", "eleven_multilingual_v2")
+
+    settings = Settings.from_env()
+
+    assert settings.elevenlabs_model == "eleven_multilingual_v2"
+
+
 def test_asr_factory_injects_funasr_vad_detector_when_enabled() -> None:
     detector = StubVadDetector()
 

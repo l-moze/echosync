@@ -19,8 +19,20 @@ describe("实时事件遥测", () => {
         start_ms: 0,
         end_ms: 1000,
         published_at_ms: 1700,
+        trace_id: "trace_demo",
+        span_id: "translation:seg_demo:1",
         metrics: {
           asr_latency_ms: 80,
+          asr_queue_wait_ms: 12,
+          asr_stream_elapsed_ms: 900,
+          asr_audio_lag_ms: 120,
+          caption_send_failures: 0,
+          caption_send_ms: 3,
+          llm_delta_count: 4,
+          llm_request_ms: 18,
+          llm_stream_ms: 240,
+          llm_ttft_ms: 110,
+          translation_queue_wait_ms: 45,
           translation_first_token_ms: 120,
           translation_latency_ms: 180
         }
@@ -28,14 +40,26 @@ describe("实时事件遥测", () => {
       1755
     );
 
-    expect(telemetry).toEqual({
+    expect(telemetry).toMatchObject({
       type: "translation.partial",
       sessionId: "sess_demo",
       segmentId: "seg_demo",
       status: "stable",
+      traceId: "trace_demo",
+      spanId: "translation:seg_demo:1",
       agentToRendererMs: 55,
       asrLatencyMs: 80,
+      asrQueueWaitMs: 12,
+      asrStreamElapsedMs: 900,
+      asrAudioLagMs: 120,
+      captionSendFailures: 0,
+      captionSendMs: 3,
+      llmDeltaCount: 4,
+      llmRequestMs: 18,
+      llmStreamMs: 240,
+      llmTtftMs: 110,
       mergeWaitMs: undefined,
+      translationQueueWaitMs: 45,
       translationFirstTokenMs: 120,
       translationLatencyMs: 180
     });
@@ -71,22 +95,18 @@ describe("实时事件遥测", () => {
       2115
     );
 
-    expect(entries).toEqual([
-      [
-        "caption_event_renderer_received",
-        {
-          type: "translation.partial",
-          sessionId: "sess_demo",
-          segmentId: "seg_demo",
-          status: "stable",
-          agentToRendererMs: 115,
-          asrLatencyMs: undefined,
-          mergeWaitMs: 40,
-          translationFirstTokenMs: 95,
-          translationLatencyMs: undefined
-        }
-      ]
-    ]);
+    expect(entries[0]?.[0]).toBe("caption_event_renderer_received");
+    expect(entries[0]?.[1]).toMatchObject({
+      type: "translation.partial",
+      sessionId: "sess_demo",
+      segmentId: "seg_demo",
+      status: "stable",
+      agentToRendererMs: 115,
+      asrLatencyMs: undefined,
+      mergeWaitMs: 40,
+      translationFirstTokenMs: 95,
+      translationLatencyMs: undefined
+    });
   });
 
   it("记录 TTS 音频事件的到达延迟和分段信息", () => {
@@ -103,12 +123,18 @@ describe("实时事件遥测", () => {
         mime_type: "audio/mpeg",
         sample_rate: null,
         final: true,
+        metrics: {
+          tts_first_audio_ms: 180,
+          tts_total_ms: 420,
+          tts_audio_chunks: 3,
+          tts_audio_bytes: 12288
+        },
         published_at_ms: 3000
       },
       3088
     );
 
-    expect(telemetry).toEqual({
+    expect(telemetry).toMatchObject({
       type: "tts.audio",
       sessionId: "sess_voice",
       segmentId: "seg_voice",
@@ -117,7 +143,61 @@ describe("实时事件遥测", () => {
       asrLatencyMs: undefined,
       mergeWaitMs: undefined,
       translationFirstTokenMs: undefined,
-      translationLatencyMs: undefined
+      translationLatencyMs: undefined,
+      ttsFirstAudioMs: 180,
+      ttsTotalMs: 420,
+      ttsAudioChunks: 3,
+      ttsAudioBytes: 12288
+    });
+  });
+
+  it("记录可复盘的字幕事件文本摘要、版本和时间窗", () => {
+    const telemetry = buildRealtimeEventTelemetry(
+      {
+        type: "translation.partial",
+        session_id: "sess_trace",
+        segment_id: "seg_trace",
+        rev: 7,
+        source_lang: "en",
+        target_lang: "zh-CN",
+        source_text: "So for people who are not familiar with that, you can",
+        target_text: "所以对于不熟悉这个的人来说，你可以",
+        status: "stable",
+        stability: 0.88,
+        start_ms: 1800,
+        end_ms: 3600,
+        published_at_ms: 5000
+      },
+      5120
+    );
+
+    expect(telemetry).toMatchObject({
+      endMs: 3600,
+      revision: 7,
+      sourcePreview: "So for people who are not familiar with that, you can",
+      sourceTextLength: 53,
+      startMs: 1800,
+      targetPreview: "所以对于不熟悉这个的人来说，你可以",
+      targetTextLength: 17
+    });
+  });
+
+  it("记录 realtime.error 消息但不需要字幕文本", () => {
+    const telemetry = buildRealtimeEventTelemetry(
+      {
+        type: "realtime.error",
+        session_id: "sess_error",
+        message: "Realtime pipeline cancelled after user stop",
+        published_at_ms: 6000
+      },
+      6015
+    );
+
+    expect(telemetry).toMatchObject({
+      agentToRendererMs: 15,
+      message: "Realtime pipeline cancelled after user stop",
+      sessionId: "sess_error",
+      type: "realtime.error"
     });
   });
 });

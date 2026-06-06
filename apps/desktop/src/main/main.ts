@@ -11,6 +11,8 @@ import {
   agentHttpBaseUrlFromCaptionWsUrl,
   fetchAgentCapabilities
 } from "./agent-capabilities-client";
+import { buildRealtimeEventTelemetry } from "../shared/realtime-telemetry";
+import type { SessionRecordDraftInput, SessionRecordExportFormat } from "../shared/session-records";
 import { createCaptionEventBuffer } from "./caption-event-buffer";
 import { resolveAppIconPath } from "./desktop-resources";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
@@ -26,6 +28,7 @@ import {
   type OverlayWindowSizeState,
   type OverlayWindowState
 } from "./overlay-window-state";
+import { createSessionRecordStore } from "./session-record-store";
 import { CONTROL_WINDOW_PRESET, OVERLAY_WINDOW_PRESET, type DesktopWindowPreset } from "./window-config";
 import { sendToWindow, sendToWindows } from "./window-ipc";
 import { shouldCreateWindowAtStartup, shouldRevealWindowOnReady } from "./window-lifecycle";
@@ -131,6 +134,7 @@ async function loadRenderer(window: BrowserWindow, role: "control" | "overlay" |
 }
 
 function broadcastCaptionEvent(event: RealtimeEvent) {
+  log.info("[caption-event] main_forwarded", buildRealtimeEventTelemetry(event, Date.now()));
   captionEventBuffer.push(event);
   sendToWindows([controlWindow, overlayWindow], "caption:event", event);
 }
@@ -206,6 +210,24 @@ function applyOverlayLayout(layer: OverlayUiLayer) {
 }
 
 function registerIpc() {
+  const sessionRecordStore = createSessionRecordStore(path.join(app.getPath("userData"), "echosync-data"));
+
+  ipcMain.handle("session-records:list", () => sessionRecordStore.list());
+  ipcMain.handle("session-records:get", (_event, id: string) => sessionRecordStore.get(id));
+  ipcMain.handle("session-records:save-draft", (_event, input: SessionRecordDraftInput) =>
+    sessionRecordStore.saveDraft(input)
+  );
+  ipcMain.handle("session-records:rename", (_event, id: string, title: string) =>
+    sessionRecordStore.rename(id, title)
+  );
+  ipcMain.handle("session-records:delete", (_event, id: string) => sessionRecordStore.delete(id));
+  ipcMain.handle("session-records:export", (_event, id: string, format: SessionRecordExportFormat) =>
+    sessionRecordStore.exportRecord(id, format)
+  );
+  ipcMain.handle("session-records:get-audio-url", (_event, id: string) =>
+    sessionRecordStore.getAudioUrl(id)
+  );
+
   ipcMain.handle("agent:get-capabilities", () => fetchAgentCapabilities(AGENT_HTTP_BASE_URL));
   ipcMain.handle("audio:list-sources", () => DESKTOP_AUDIO_SOURCES);
   ipcMain.handle("audio:get-state", () => captureSnapshot);

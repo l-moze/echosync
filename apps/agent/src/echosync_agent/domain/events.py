@@ -149,6 +149,7 @@ class SegmentCommit:
     source_unstable_text: str = ""
     target_stable_text: str = ""
     target_unstable_text: str = ""
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +166,7 @@ class TranslatedAudioChunk:
     mime_type: str = "audio/mpeg"
     sample_rate: int | None = None
     final: bool = False
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

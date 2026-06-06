@@ -46,18 +46,21 @@ describe("会话归档模型", () => {
   });
 
   it("构建包含音频和双语时间帧的归档草稿", () => {
+    const audioBlob = new Blob(["demo"], { type: "audio/webm" });
     const draft = buildSessionArchiveDraft({
       id: "sess_demo",
       title: "2026年06月05日_记录",
       createdAt: "2026-06-05T07:20:00.000Z",
       durationMs: 2600,
+      audioBlob,
       audioMimeType: "audio/webm",
       audioObjectUrl: "blob:audio-demo",
       lines
     });
 
-    expect(draft.audio.mimeType).toBe("audio/webm");
-    expect(draft.audio.objectUrl).toBe("blob:audio-demo");
+    expect(draft.audio?.mimeType).toBe("audio/webm");
+    expect(draft.audio?.objectUrl).toBe("blob:audio-demo");
+    expect(draft.audio?.blob).toBe(audioBlob);
     expect(draft.segments).toEqual([
       {
         segmentId: "seg_1",
@@ -78,5 +81,18 @@ describe("会话归档模型", () => {
         patchCount: 1
       }
     ]);
+  });
+
+  it("允许没有录音的文本归档草稿", () => {
+    const draft = buildSessionArchiveDraft({
+      id: "sess_text_only",
+      title: "2026年06月05日_记录",
+      createdAt: "2026-06-05T07:20:00.000Z",
+      durationMs: 2600,
+      lines
+    });
+
+    expect(draft.audio).toBeUndefined();
+    expect(draft.segments).toHaveLength(2);
   });
 });

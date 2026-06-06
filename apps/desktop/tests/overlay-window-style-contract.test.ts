@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const stylesheet = readFileSync(resolve(__dirname, "../src/renderer/styles.css"), "utf8");
 const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
+const preOverlayStylesheet = stylesheet.slice(0, stylesheet.indexOf("/* Overlay v2:"));
 const overlayStylesheet = stylesheet.slice(stylesheet.indexOf("/* Overlay v2:"));
 
 function cssRule(selector: string): string {
@@ -28,7 +29,33 @@ function rootCaptionWindowRules(): string[] {
     .map((match) => match[2]);
 }
 
+function preOverlayRules(selector: string): string[] {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...preOverlayStylesheet.matchAll(new RegExp(`(?:^|\\n|})\\s*${escaped}\\s*\\{([^}]*)\\}`, "g"))].map(
+    (match) => match[1],
+  );
+}
+
 describe("字幕弹窗样式契约", () => {
+  it("Overlay v2 之前不保留旧版 overlay 根选择器，避免后续样式覆盖和审查误判", () => {
+    const staleSelectors = [
+      ".overlayShell",
+      ".floatingCaption",
+      ".overlayMeta",
+      ".overlaySource",
+      ".overlayTarget",
+      ".overlayStateBadge",
+      ".focusMeter",
+      ".overlayControls",
+      ".pinnedCaptionStack",
+      ".pinnedLine"
+    ];
+
+    for (const selector of staleSelectors) {
+      expect(preOverlayRules(selector), selector).toHaveLength(0);
+    }
+  });
+
   it("overlay 父层不留可见或可点击的外边距", () => {
     expect(cssRule(".overlayShell")).toContain("padding: 0");
     expect(cssRule(".overlayShell")).toContain("pointer-events: none");
@@ -73,6 +100,13 @@ describe("字幕弹窗样式契约", () => {
   it("resize 手柄始终渲染，不依赖工具栏显示状态", () => {
     expect(rendererSource).toContain("<OverlayResizeHandles");
     expect(rendererSource).not.toContain("showChrome ? <OverlayResizeHandles /> : null");
+  });
+
+  it("字幕弹窗不渲染内部状态徽标", () => {
+    expect(overlayStylesheet).not.toContain(".overlayStateBadge");
+    expect(rendererSource).not.toContain("overlayStateBadge");
+    expect(rendererSource).toContain("逐句对照");
+    expect(rendererSource).toContain("分区对照");
   });
 
   it("resize 手柄容器不覆盖全窗拖拽区域", () => {

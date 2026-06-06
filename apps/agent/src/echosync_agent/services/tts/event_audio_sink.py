@@ -27,5 +27,6 @@ class EventTranslatedAudioSink(TranslatedAudioSink):
                 "mime_type": chunk.mime_type,
                 "sample_rate": chunk.sample_rate,
                 "final": chunk.final,
+                "metrics": dict(chunk.metrics),
             },
         )

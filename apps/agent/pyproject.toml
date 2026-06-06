@@ -20,11 +20,15 @@ echosync-agent-demo = "echosync_agent.main:run"
 echosync-asr-demo = "echosync_agent.asr_demo:main"
 echosync-asr-server = "echosync_agent.transport.asr_websocket:run"
 echosync-caption-server = "echosync_agent.transport.caption_ws:run_caption_server"
+echosync-log-summary = "echosync_agent.diagnostics.realtime_log_summary:main"
+echosync-translation-strategy-benchmark = "echosync_agent.diagnostics.translation_strategy_benchmark:main"
+echosync-real-agent-translation-benchmark = "echosync_agent.diagnostics.real_agent_translation_benchmark:main"
 
 [project.optional-dependencies]
 funasr = [
   "funasr>=1.2",
-  "modelscope>=1.19"
+  "modelscope>=1.19",
+  "torch>=2.0"
 ]
 voxtral = [
   "mistralai[realtime]>=1.0"
