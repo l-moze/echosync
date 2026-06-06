@@ -190,11 +190,7 @@ function withReceivedAt(line: CaptionLine, receivedAtMs: number): CaptionLine {
 }
 
 function mapStatus(status: SubtitleEvent["status"]): CaptionLineState {
-  if (status === "committed") {
-    return "locked";
-  }
-
-  if (status === "stable") {
+  if (status === "stable" || status === "committed") {
     return "stable";
   }
 

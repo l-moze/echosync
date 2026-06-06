@@ -456,6 +456,39 @@ describe("桌面字幕状态机", () => {
     expect(lines).toEqual(initialLines);
   });
 
+  it("translation.partial 标记 committed 时不提前锁行，segment.commit 前仍允许修订补丁", () => {
+    const withCommittedPartial = applyRealtimeEvent([], {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_committed_partial",
+      rev: 2,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The model fixes terms.",
+      target_text: "模型修复条款。",
+      status: "committed",
+      stability: 0.95,
+      start_ms: 0,
+      end_ms: 1200
+    });
+
+    const revised = applyRealtimeEvent(withCommittedPartial, {
+      type: "translation.patch",
+      session_id: "sess_demo",
+      segment_id: "seg_committed_partial",
+      rev: 3,
+      base_rev: 2,
+      target_lang: "zh-CN",
+      operations: [{ op: "replace", from_char: 4, to_char: 6, text: "术语" }],
+      reason: "terminology",
+      stability: 0.98
+    });
+
+    expect(withCommittedPartial[0].state).toBe("stable");
+    expect(revised[0].state).toBe("revised");
+    expect(revised[0].targetText).toBe("模型修复术语。");
+  });
+
   it("忽略 locked 行上的晚到 partial，避免最终字幕解锁回滚", () => {
     const initialLines: CaptionLine[] = [
       {

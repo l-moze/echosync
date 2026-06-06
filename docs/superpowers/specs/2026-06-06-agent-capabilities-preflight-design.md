@@ -1,10 +1,8 @@
-# Agent Capabilities And Preflight Design
+# Agent 能力发现与启动预检设计
 
 ## 背景
 
-EchoSync 已经支持在 `audio.start` 中声明 `asr_provider`、`asr_latency_mode` 和
-`translation_provider`，Agent 也会做 session 级 override。但 Desktop 仍缺少启动前能力发现：
-用户不知道后端默认 provider 是什么、密钥和 SDK 是否齐全、真实 PCM 音频能否被当前 ASR 处理。
+EchoSync 已经支持在 `audio.start` 中声明 `asr_provider`、`asr_latency_mode` 和 `translation_provider`，Agent 也会做 session 级 override。但 Desktop 仍缺少启动前能力发现：用户不知道后端默认 provider 是什么、密钥和 SDK 是否齐全、真实 PCM 音频能否被当前 ASR 处理。
 
 ## 目标
 
@@ -47,8 +45,7 @@ Provider readiness 使用小而稳定的状态集合：
 - `missing_dependency`：缺少 SDK 或本地依赖。
 - `unavailable`：当前只是候选或不适合该音频源。
 
-`mock` ASR 永远可用于演示，但 `real_audio_supported=false`。真实 PCM 音频源
-（Windows 系统声、麦克风、文件、混音）不能用 `mock` ASR 进入同传。
+`mock` ASR 永远可用于演示，但 `real_audio_supported=false`。真实 PCM 音频源（Windows 系统声、麦克风、文件、混音）不能用 `mock` ASR 进入同传。
 
 ## 测试要求
 

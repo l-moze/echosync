@@ -317,7 +317,7 @@ renderer/main.tsx
 | 技术分享/网课 | `balanced` 或可切低延迟 |
 | 会议纪要/复盘 | `accuracy` |
 
-### P0：最终译文过早 locked 会丢弃随后到达的修订 patch（未修复）
+### P0：最终译文过早 locked 会丢弃随后到达的修订 patch（已修复）
 
 当前后端在 committed checkpoint 上的事件顺序是：
 
@@ -327,9 +327,9 @@ translation.patch
 segment.commit
 ```
 
-但前端 `caption-store` 会把 `translation.partial(status=committed)` 直接映射为 `locked`，随后 `translation.patch` 因为目标行已经 locked 被忽略。结果是：即使后端生成了修订补丁，桌面端也可能看不到这次修订。
+此前前端 `caption-store` 会把 `translation.partial(status=committed)` 直接映射为 `locked`，随后 `translation.patch` 因为目标行已经 locked 被忽略。结果是：即使后端生成了修订补丁，桌面端也可能看不到这次修订。
 
-建议把“真正锁定”的语义只交给 `segment.commit`。`translation.partial(status=committed)` 可以表示“最终译文候选已到达”，但在 `segment.commit` 前仍应允许 `base_rev` 匹配的 patch 生效。
+已调整为“真正锁定”只由 `segment.commit` 触发。`translation.partial(status=committed)` 只表示“最终译文候选已到达”，在 `segment.commit` 前仍允许 `base_rev` 匹配的 patch 生效；对应回归测试在 `apps/desktop/tests/caption-store.test.ts`。
 
 ### P0：翻译首 token 指标已完成第一轮，仍缺部分端到端时间戳
 

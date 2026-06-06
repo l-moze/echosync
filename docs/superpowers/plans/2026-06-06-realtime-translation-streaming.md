@@ -13,8 +13,8 @@
 ## Status 2026-06-06
 
 - Agent Tasks 1-4 已完成并通过全量 Agent 测试：`128 passed, 1 warning`。
-- Desktop Task 5 已完成“即时 snapshot 显示”和“过期 patch / locked late partial 防护”，并通过 focused Vitest 与 typecheck。
-- 仍有一个 P0 语义缺口：前端当前把 `translation.partial(status=committed)` 直接映射为 `locked`，会导致后续 `translation.patch` 在 `segment.commit` 之前被丢弃。真正锁定应只由 `segment.commit` 触发。
+- Desktop Task 5 已完成“即时 snapshot 显示”“过期 patch / locked late partial 防护”和“committed partial 不提前锁行”，并通过 focused Vitest 与 typecheck。
+- P0 语义缺口已修复：`translation.partial(status=committed)` 不再映射为 `locked`；真正锁定只由 `segment.commit` 触发，因此 `segment.commit` 前的合法 `translation.patch` 仍可生效。
 - LocalAgreement buffer 和完整 LLM revision manager 仍是后续阶段，不属于本轮已完成范围。
 
 ### Task 1: Central Text Emission Policy
@@ -201,9 +201,9 @@ Add tests that a one-character `transcript.partial` creates/updates the current 
 
 Keep `caption-display-buffer` as a snapshot pass-through. It may preserve `firstSeenAtMs` and `lastVisibleAtMs` for future visual decay, but it must not delay or chunk text.
 
-- [ ] **Step 3: Guard against stale revisions and premature locking**
+- [x] **Step 3: Guard against stale revisions and premature locking**
 
-Add tests that `translation.patch` is ignored when `base_rev` does not match or the line is already truly locked by `segment.commit`, and that late partials do not unlock committed lines. Current code already covers stale `base_rev` and locked late partials, but still needs the P0 fix where `translation.partial(status=committed)` must not pre-lock the line before `segment.commit`.
+Add tests that `translation.patch` is ignored when `base_rev` does not match or the line is already truly locked by `segment.commit`, that late partials do not unlock committed lines, and that `translation.partial(status=committed)` does not pre-lock the line before `segment.commit`.
 
 - [x] **Step 4: Verify desktop contracts**
 
