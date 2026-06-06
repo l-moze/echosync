@@ -13,6 +13,14 @@ export type CaptionTextEvent = {
   start_ms: number;
   end_ms: number;
   speaker?: string | null;
+  published_at_ms?: number;
+  metrics?: {
+    asr_latency_ms?: number;
+    merge_wait_ms?: number;
+    translation_delta_count?: number;
+    translation_first_token_ms?: number;
+    translation_latency_ms?: number;
+  };
 };
 
 export type SubtitleEvent = CaptionTextEvent & {
@@ -51,6 +59,7 @@ export type SubtitlePatchEvent = {
   operations: SubtitlePatchOperation[];
   reason: "revision_window" | "context_revision" | "terminology";
   stability: number;
+  published_at_ms?: number;
 };
 
 export type SubtitleCommitEvent = {
@@ -66,17 +75,20 @@ export type SubtitleCommitEvent = {
   target_text: string;
   speaker?: string | null;
   final: boolean;
+  published_at_ms?: number;
 };
 
 export type RealtimeErrorEvent = {
   type: "realtime.error";
   session_id: string;
   message: string;
+  published_at_ms?: number;
 };
 
 export type RealtimeDoneEvent = {
   type: "realtime.done";
   session_id: string;
+  published_at_ms?: number;
 };
 
 export type RealtimeEvent =

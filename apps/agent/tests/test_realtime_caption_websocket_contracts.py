@@ -101,6 +101,36 @@ def test_realtime_websocket_rejects_mock_asr_for_real_audio_sources() -> None:
     assert "真实音频" in error["message"]
 
 
+def test_caption_app_exposes_realtime_capabilities() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="mock",
+        translator_provider="mock",
+        glossary_enabled=False,
+    )
+    app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
+    client = TestClient(app)
+
+    response = client.get("/v1/realtime/capabilities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["defaults"]["asr_provider"] == "mock"
+    assert payload["defaults"]["translation_provider"] == "mock"
+    assert payload["asr_latency_modes"] == ["low_latency", "balanced", "accuracy"]
+    assert any(provider["id"] == "funasr" for provider in payload["asr_providers"])
+
+
+def test_caption_app_exposes_health_check() -> None:
+    app = create_caption_app(hub=CaptionEventHub())
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "service": "echosync-agent"}
+
+
 def test_realtime_session_does_not_fail_when_client_closes_before_done() -> None:
     asyncio.run(_run_realtime_session_stop_without_done_test())
 

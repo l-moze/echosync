@@ -40,19 +40,364 @@
 
 ## 当前状态
 
-当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传时采集音频，先发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider` 或 `translation_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`，Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
+当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传前通过主进程读取 Agent `/v1/realtime/capabilities`，确认默认 provider、密钥和 SDK 状态；通过预检后才采集音频，发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider` 或 `translation_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`，Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
 
 后端仍兼容旧 JSON `audio.chunk` / `pcm_base64`，主要用于旧测试、纯 ASR 调试和过渡期兼容；当前 Desktop 真实链路默认不走 base64 JSON。
 
-仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Agent 会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider` 和 `audio.start.translation_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥和模型配置仍来自 Agent 端 `.env`。
+仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Desktop preflight 会先拦截；如果绕过 preflight，Agent 仍会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider` 和 `audio.start.translation_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥和模型配置仍来自 Agent 端 `.env`。
 
 `8765` 与 `8766` 的边界：
 
 ```text
 8765 /v1/asr/sessions/{session_id}       # 纯 ASR 调试，只返回 asr.segment
+8766 /healthz                            # Agent 健康检查
+8766 /v1/realtime/capabilities           # provider/default/依赖状态
 8766 /v1/realtime/sessions/{session_id}  # 完整同传输入
 8766 /v1/caption/events                  # 完整同传输出
 ```
+
+## 真实 MP4 场景延迟复盘
+
+本轮使用仓库中的真实视频样本做复盘，不再只看配置或 mock 文本：
+
+```text
+视频：vido/videoplayback.mp4
+大小：46,236,680 bytes
+字幕参考：vido/I speak English at native speed.srt
+内容：英语母语速度口播视频，适合作为“网课/英语演讲”场景样本。
+```
+
+### 已测数据
+
+在 `D:\code\echosync` 使用仓库 `.venv` 执行：
+
+```powershell
+@'
+import asyncio
+import time
+from echosync_agent.services.media import MediaAudioSource
+
+async def main():
+    source = MediaAudioSource(
+        "vido/videoplayback.mp4",
+        session_id="sess_video_probe",
+        source_lang="en",
+        chunk_ms=80,
+    )
+    started = time.perf_counter()
+    count = 0
+    async for frame in source.frames():
+        count += 1
+        wall_ms = (time.perf_counter() - started) * 1000
+        print(f"frame={count} wall_ms={wall_ms:.1f} audio={frame.start_ms}-{frame.end_ms}")
+        if count >= 10:
+            break
+
+asyncio.run(main())
+'@ | .venv\Scripts\python.exe -
+```
+
+实测输出摘要：
+
+| 节点 | 结果 | 结论 |
+|------|------|------|
+| 旧整文件 PCM 抽取 | `full_decode_ms=407.0`，`audio_ms=515204` | 如果先 `communicate()` 完整文件，首帧至少被整段解码阻塞约 407ms。 |
+| 新流式 ffmpeg 分帧 | 首个 80ms frame 约 `40.5ms` 产出，前 10 帧约 `40.9ms` 内产出 | 文件复盘链路的首帧不再等待完整 MP4 解码，首帧阻塞下降约 360ms。 |
+| 80ms PCM frame | 每帧 `2560 bytes` | 与 Desktop `pcm16.binary.v1` 的 16k/mono/PCM16/80ms 传输帧对齐。 |
+
+这说明当前真实 MP4 链路里，媒体解码/分帧不应再是主延迟瓶颈；后续延迟主要看 ASR 模型等待窗口、ASR 推理/云端首 delta、翻译首 token 和字幕显示策略。
+
+### 二次复盘：SRT 语速与分段仿真
+
+为了避免只看模型配置，本轮继续用同一真实视频的参考字幕做“伪 ASR delta”仿真。参考字幕文件：
+
+```text
+vido/I speak English at native speed.srt
+```
+
+样本统计：
+
+| 指标 | 结果 | 含义 |
+|------|------|------|
+| 字幕条数 | `135` | 样本足够覆盖普通口播节奏。 |
+| 单条字幕时长 | 平均 `3828ms`，P50 `3280ms`，P90 `7120ms`，最大 `11760ms` | 真实字幕常跨 3-7 秒，不能等完整字幕结束才翻译。 |
+| 单条词数 | 平均 `11.2`，P50 `10`，P90 `20`，最大 `37` | 一条字幕通常是完整短句或从句，不是单词级显示。 |
+| 字幕间隔 | 平均约 `0ms` | 口播基本连续，不能依赖长静音触发 flush。 |
+
+用 SRT 内容按词模拟 ASR delta 后，`TranscriptAssembler` 的输出统计：
+
+```text
+outputs=362
+partial=238
+stable=101
+committed=23
+stable interval avg=1264ms
+```
+
+这说明 assembler 本身确实能生成较高频的 stable checkpoint。修复前，`CascadedInterpretationEngine` 使用 `stable_checkpoint_seen`，会让同一 `segment_id` 只翻译第一个 stable。用前 12 条 SRT 仿真时，实际翻译请求变成：
+
+```text
+stable      1360- 1828   text=Hello,
+committed   1360-11188   text=Hello, my name is Eevee ...
+stable     11190-12213   text=Feels funny to
+committed  11190-17760   text=but this is the 100,000 subscriber special.
+```
+
+问题：长句会先翻译一个过短 stable，然后等 committed 才更新完整译文；如果句末标点或最终段很晚，用户看到的译文会天然落后 3-9 秒。这和“字幕全部放到一块、翻译迟迟不显示”的体感一致。
+
+同时，`HypothesisUpdatePolicy` 对英文“无前导空格的单词 delta”存在误判。以下本地探针可复现：
+
+```text
+current='Hello, my name is' incoming='Eevee'
+-> mode=replace_hypothesis text='Eevee'
+
+current='Feels funny to say that at normal speed,' incoming='but'
+-> mode=replace_hypothesis text='but'
+```
+
+这会把应该追加的 ASR token 当成整段滚动 hypothesis 修订，导致前文被抹掉或字幕看起来“一词一词跳”。因此，当前首要瓶颈不仅是模型慢，也包括 ASR delta 合并算法和翻译 checkpoint 调度策略。
+
+### 已落地的优化算法
+
+1. **在线分片算法**
+
+   `MediaAudioSource` 已从“先把整段 ffmpeg stdout 读完再切片”改为“边读 stdout 边用 `bytearray` 聚合到固定 frame size 后立即产出 `AudioFrame`”。
+
+   ```text
+   ffmpeg stdout bytes
+     -> pending bytearray
+     -> len(pending) >= frame_size 时产出 AudioFrame
+     -> 剩余不足一帧的尾块在 EOF 时 final flush
+   ```
+
+   算法收益：首帧延迟从 `O(整段视频解码时间)` 降为 `O(ffmpeg 首块输出 + frame_ms)`；内存从 `O(整段音频 PCM)` 降为 `O(read_size + frame_size)`。对会议记录和录播课程复盘很关键。
+
+2. **Voxtral 延迟模式映射**
+
+   `audio.start.asr_latency_mode` 现在会真正影响 Voxtral 的 `target_streaming_delay_ms`：
+
+   | 模式 | Voxtral target delay | 使用场景 |
+   |------|----------------------|----------|
+   | `low_latency` | 最多 `480ms`，最低不低于 `240ms` | 直播字幕、用户正在跟听内容 |
+   | `balanced` | 沿用 `VOXTRAL_TARGET_DELAY_MS`，当前 `.env` 为 `1000ms` | 默认稳定字幕 |
+   | `accuracy` | 至少 `1600ms` | 复盘、纪要、可接受时间差的高准确率模式 |
+
+   根因：此前 Desktop 即使声明低延迟模式，Voxtral 工厂仍固定使用 `.env` 的 `VOXTRAL_TARGET_DELAY_MS=1000`，ASR 层天然背负约 1 秒等待下限。
+
+3. **弱边界优先翻译 + latest-wins 合并**
+
+   `TranscriptAssembler` 已把英文逗号、中文逗号、分号、冒号视为 `stable` checkpoint，而不是直接 `committed`。`CascadedInterpretationEngine` 已允许同一长段按“至少约 1 秒音频间隔 + 足够新增字符”刷新 stable 翻译，同时 pending 队列仍按 latest-wins 合并，避免慢翻译时积压一串过期修订。
+
+   算法收益：字幕能在自然停顿处提前翻译；长句不再只翻译第一个过短 stable；同时避免“每个 token/每个小修订都进翻译模型”。
+
+4. **ASR delta 合并的裸词补空格**
+
+   `HypothesisUpdatePolicy` 已补上英文裸词 delta 追加逻辑。对于 `"Hello, my name is" + "Eevee"`、`"normal speed," + "but"` 这类供应商按词吐 delta 但不带前导空格的输出，会追加为自然英文短语，而不是误判为整段替换。
+
+   算法收益：减少源文字幕“前文被抹掉”或“一词一词跳”的概率，并保留完整 rolling hypothesis 的替换能力。
+
+5. **前端即时显示**
+
+   `caption-display-buffer` 当前不再做字素级慢放。Agent 已经完成语义合并后，前端直接显示最新事件，避免“后端已经有句子，前端还一个字一个字吐”的二次延迟。
+
+### 仍需补的真实测量
+
+当前 MP4 已验证媒体解码与分帧。要完整定位“音频识别到字幕显示”的瓶颈，还需要用同一视频继续采集：
+
+| 层级 | 需要记录 | 日志/指标 |
+|------|----------|-----------|
+| 桌面采集 | `capture_callback_ms`、`encode_ms`、`socket.bufferedAmount` | 后续迁移 AudioWorklet 时补 |
+| Agent 接收 | transport avg/p95、queue depth | `audio_stream_metrics` |
+| ASR | 首个 text delta、每个 segment `asr_latency_ms`、`asr_rtf` | `TranscriptSegment.metrics` |
+| 分段聚合 | checkpoint 间隔、weak boundary 命中、force checkpoint 次数 | `merge_wait_ms` + 后续 debug log |
+| 翻译 | 首 token、完整译文、stream delta 数 | `translation_latency_ms` |
+| 字幕输出 | publish 到 Desktop 主进程、renderer receivedAt | `caption_event_published` + 前端 `receivedAtMs` |
+
+## 实时链路日志规范
+
+日志目标不是“多打几行”，而是让每个关键边界都能用同一套字段串起来。当前约定如下：
+
+| 位置 | 日志库 | 原则 |
+|------|--------|------|
+| Agent | Python 标准 `logging` | 使用结构化 `key=value` 文本，避免在核心管道里散落 print。 |
+| Desktop main | `electron-log/main` | Electron 主进程连接、重连、解析失败、display media fallback 统一进 Electron 日志文件。 |
+| Desktop renderer | `electron-log/renderer` | renderer 收到字幕事件时记录端到端到达延迟。 |
+| Desktop main 工具模块 | `electron-log/node` | 保持 Vitest/node 环境可测，同时复用成熟日志库。 |
+
+关键事件名：
+
+| 事件名 | 触发点 | 用途 |
+|--------|--------|------|
+| `audio_stream_metrics` | Agent 实时音频入口 | 统计接收帧数、音频时长和 transport 侧吞吐。 |
+| `translation_checkpoint_queued` | Engine 收到 stable/committed checkpoint | 判断翻译任务是否被 latest-wins 合并或排队。 |
+| `translation_checkpoint_started` | 翻译任务开始 | 记录 `asr_latency_ms`、`merge_wait_ms`、术语命中数。 |
+| `translation_checkpoint_first_token` | 翻译流首个 delta | 定位模型首 token 慢还是完整输出慢。 |
+| `translation_checkpoint_finished` | 翻译任务结束 | 记录完整翻译耗时、delta 数和译文长度。 |
+| `caption_event_published` | Agent 字幕事件发布到 `/v1/caption/events` | 记录发布时刻 `published_at_ms` 和随事件携带的模型指标。 |
+| `caption_event_renderer_received` | Desktop renderer 收到 `caption:event` | 用 `Date.now() - published_at_ms` 计算 Agent publish 到 renderer receive 的延迟。 |
+
+`published_at_ms` 是 Agent 发布事件时写入的毫秒时间戳。Desktop renderer 不参与 ASR/翻译耗时计算，只负责补上 `agentToRendererMs`，这样可以把“模型慢”和“桌面事件转发慢”拆开看。日志转换集中在 `apps/desktop/src/shared/realtime-telemetry.ts`，React 组件只注入 `electron-log/renderer`，避免日志胶水污染字幕状态机。
+
+下一步建议直接用 `vido/videoplayback.mp4` 跑三组固定实验：
+
+```powershell
+# 1. 只测媒体分帧，不进真实模型。
+.venv\Scripts\python.exe -m echosync_agent.asr_demo vido\videoplayback.mp4 --provider mock --chunk-ms 80 --source-lang en
+
+# 2. 测本地 FunASR：当前 .venv 缺 torch，需要先补 torch/torchaudio 后再跑。
+.venv\Scripts\python.exe -m echosync_agent.asr_demo vido\videoplayback.mp4 --provider funasr --chunk-ms 320 --source-lang en --device auto
+
+# 3. 测 Voxtral 云端：建议先截取前 30-60 秒，避免整段 8 分钟样本消耗过高。
+.venv\Scripts\python.exe -m echosync_agent.asr_demo vido\videoplayback.mp4 --provider voxtral --chunk-ms 80 --source-lang en --voxtral-delay-ms 480
+```
+
+注意：当前 `.venv` 中 `funasr` / `modelscope` 已存在，但 `torch` 未安装；全局 Python 有 `torch`，但不建议混用全局环境测延迟，否则数据会混入环境差异。
+
+## 当前性能瓶颈排序
+
+这部分基于真实 MP4 复盘、当前代码路径和已有测试，不把尚未实测的网络模型耗时假装成定量结论。
+
+### P0：ASR delta 合并策略会误判英文裸词 delta（已完成第一轮修复）
+
+`HypothesisUpdatePolicy` 当前主要区分两类 ASR 输出：
+
+1. 供应商返回“完整滚动 hypothesis”：应替换当前文本。
+2. 供应商返回“新增 delta”：应追加到当前文本。
+
+真实流式 ASR 常见第三种情况：供应商按词返回 delta，但单词前不一定带空格。当前策略对这种情况过于保守，会把 `"Hello, my name is" + "Eevee"` 判成替换，结果只剩 `"Eevee"`。
+
+已完成第一轮优化：英文裸词 delta 在已有英文短语或标点上下文后会补空格追加；短 token 拼接和完整 rolling hypothesis 替换契约保持不变。后续如果接入更多供应商，再补最长重叠匹配，兼容局部重复和更复杂的 ASR 修订。
+
+| 算法点 | 做法 | 目的 |
+|--------|------|------|
+| token-aware append | 当英文短语/标点上下文后出现裸词 delta 时补一个空格追加 | 已完成，兼容英文裸词 delta。 |
+| 修订保护 | incoming 与 current 有显著公共前缀时仍走 replace | 已完成，保留供应商纠错能力。 |
+| 最长重叠匹配 | 计算 current 尾部与 incoming 头部的最长重叠 | 后续增强，兼容局部重复和更复杂修订。 |
+
+这属于字符串匹配问题，不需要 DFS/背包这类重算法；关键是契约要清晰，并用 SRT 仿真测试覆盖。
+
+### P0：同一 segment 只翻译第一个 stable，长句译文会被憋到 committed（已完成第一轮修复）
+
+`TranscriptAssembler` 在真实 SRT 仿真中能生成约 1.2 秒一个 stable。修复前，`CascadedInterpretationEngine` 使用 `stable_checkpoint_seen` 跳过同一段后续 stable。结果：
+
+```text
+第一个 stable：Hello,
+最终 committed：约 9.8 秒后才有完整句子
+```
+
+已完成第一轮优化：保留 latest-wins，但不再“一段只翻译一次 stable”。当前调度策略：
+
+| 状态 | 调度规则 |
+|------|----------|
+| partial | 只显示源文，不进翻译。 |
+| stable | 同一 segment 默认至少间隔 `1000ms`，并且比上次多出至少 `12` 个可见字符；命中弱边界时也允许刷新。 |
+| committed | 总是翻译最新完整文本，作为最终修订兜底。 |
+
+这样仍能避免每个 token 打翻译模型，同时能让长句译文持续推进。
+
+### P0：桌面端默认 ASR 延迟模式仍偏稳定，不偏直播
+
+`createRealtimeAudioClient()` 支持 `asrProvider` 和 `asrLatencyMode`，并默认发送 `asr_latency_mode="balanced"`。renderer 当前启动实时会话时没有按场景显式切换，只传了 `translationProvider`：
+
+```text
+renderer/main.tsx
+  createRealtimeAudioClient({
+    sourceId,
+    translationProvider
+  })
+```
+
+当前 `.env` 的真实链路是 `voxtral + deepseek`，Voxtral 目标等待为 `1000ms`。在 `balanced` 下，ASR 层天然有约 1 秒目标等待。这个比 40-80ms 的采集/分帧优化更大。
+
+建议：UI 增加 ASR provider/延迟模式选择，或按场景预设自动传入：
+
+| 场景 | 建议 ASR 模式 |
+|------|---------------|
+| 直播字幕/跟听 | `asrLatencyMode="low_latency"` |
+| 技术分享/网课 | `balanced` 或可切低延迟 |
+| 会议纪要/复盘 | `accuracy` |
+
+### P0：最终译文过早 locked 会丢弃随后到达的修订 patch（未修复）
+
+当前后端在 committed checkpoint 上的事件顺序是：
+
+```text
+translation.partial(status=committed)
+translation.patch
+segment.commit
+```
+
+但前端 `caption-store` 会把 `translation.partial(status=committed)` 直接映射为 `locked`，随后 `translation.patch` 因为目标行已经 locked 被忽略。结果是：即使后端生成了修订补丁，桌面端也可能看不到这次修订。
+
+建议把“真正锁定”的语义只交给 `segment.commit`。`translation.partial(status=committed)` 可以表示“最终译文候选已到达”，但在 `segment.commit` 前仍应允许 `base_rev` 匹配的 patch 生效。
+
+### P0：翻译首 token 指标已完成第一轮，仍缺部分端到端时间戳
+
+`DeepSeekTranslator.stream_translate()` 已经是流式，`CascadedInterpretationEngine` 现在会拆出：
+
+
+```text
+translation_request_started
+translation_first_token_ms
+translation_final_ms
+translation_delta_count
+```
+
+同时 `CaptionEventHub.publish()` 已给字幕事件写入 `published_at_ms`，Desktop renderer 侧可计算 `agentToRendererMs`。下一步的 telemetry 重点应转向采集/编码/发送、ASR 首 delta、overlay rendered 等剩余边界，而不是继续把“翻译首 token 缺指标”当成当前 P0。
+
+### P1：`audio-gate` 一帧 lookahead 固定增加约 80ms
+
+Desktop 真实链路 `AUDIO_FRAME_DURATION_MS=80`。`audio-gate` 为了判断上一块是否要标 `isFinal`，当前会把一块活跃音频保存在 `pending`，等下一块到来时才发送上一块。现有测试也验证了这个行为。
+
+收益：可以准确把最后一块活跃音频标成 final。
+
+代价：所有活跃音频 chunk 固定增加一帧等待，约 `80ms`。
+
+建议优化方向：把“实时音频发送”和“final/turn 边界”拆开。音频 chunk 立即发送，final 通过单独控制事件或低成本 silence/keepalive 策略表达；否则为了 final 语义牺牲了每一帧延迟。
+
+### P1：`ScriptProcessorNode(2048)` 是采集线程抖动来源
+
+当前 Web Audio 回调大小为 `2048`：
+
+```text
+48kHz: 2048 / 48000 ≈ 42.7ms
+44.1kHz: 2048 / 44100 ≈ 46.4ms
+```
+
+它还运行在 renderer 主线程，遇到 React 渲染、布局或 DevTools 开销会抖。它不是最大固定延迟，但会影响 p95/p99。后续应迁移 `AudioWorklet`，把 downmix、resample、PCM16 编码从主线程移走。
+
+### P2：MP4 媒体解码已不是主要瓶颈
+
+`vido/videoplayback.mp4` 的旧整文件抽取约 `407ms`；当前流式分帧后首个 80ms frame 约 `40-53ms` 产出。文件复盘路径仍要继续接 UI，但 Agent 媒体解码不再是首要性能问题。
+
+### P2：前端字幕显示缓冲目前不是主要瓶颈
+
+`caption-display-buffer` 当前是 snapshot pass-through，不再做字素级慢放；`caption-store` 按接收时间选择当前字幕行。只要 Agent 发出完整源文/译文快照，前端不会再主动拖慢显示。
+
+## 下一轮必须补的 telemetry
+
+为了继续收敛瓶颈，下一轮不要再只看肉眼观感，应把一条字幕的关键时间戳串起来：
+
+```text
+capture_callback_at
+pcm_encoded_at
+ws_send_at
+agent_received_at
+asr_first_delta_at
+checkpoint_created_at
+translation_request_at
+translation_first_token_at
+caption_published_at
+renderer_received_at
+overlay_rendered_at
+```
+
+最小可落地做法：
+
+1. Desktop binary frame header 继续带 `sentAtMs`，再在 renderer debug log 里记录 resample/encode/send 耗时。
+2. Agent 在 `TranscriptSegment.metrics` 里补 `asr_first_delta_ms` 或 provider 首 delta。
+3. DeepSeek streaming 已拆出首 token 和 final 指标；后续需要把这些指标接入统一诊断面板。
+4. `CaptionEventHub.publish()` 已带 `published_at_ms`，renderer 已能计算 UI 侧接收延迟；后续需要补 `overlay_rendered_at`。
 
 ## 已发现的断点
 
@@ -61,8 +406,8 @@
 **处理**：文档中统一标明：demo producer 只用于 UI 验证，真实桌面链路必须发送实时音频 frame。
 
 ### 断点 2：混音和文件源仍是边界而非完整实现
-**原因**：麦克风源已改用 `getUserMedia({ audio: true })`，Windows 系统声音走 `getDisplayMedia` loopback；但混音和文件回放仍主要是目录/边界，不能按生产能力宣传。
-**处理**：混音和文件源在 UI 与文档中保持“后续/实验”口径，避免用户误以为完整可用。
+**原因**：麦克风源已改用 `getUserMedia({ audio: true })`，Windows 系统声音走 `getDisplayMedia` loopback；Agent 端文件解码已经支持 ffmpeg 流式分帧，但 Desktop 文件回放入口和混音入口仍未形成完整产品链路。
+**处理**：文档中区分“Agent 媒体解码能力”和“Desktop 文件回放 UI 能力”。混音和文件回放入口在 UI 中仍保持“后续/实验”口径，避免用户误以为完整可用。
 
 ### 断点 3：错误终止事件必须和正常完成事件互斥
 **原因**：实时链路如果在 `audio.start` 时先启动 pipeline、再校验 ASR provider，mock + 真实 PCM 会先发 `realtime.error`，随后空 pipeline 正常退出又发 `realtime.done`，桌面端会看到矛盾状态。
@@ -75,6 +420,8 @@
 | `transport/caption_ws.py` | `run_caption_server()` 传 producer；WS handler 每次连接重新运行 producer |
 | `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；`realtime.error` 与 `realtime.done` 保持互斥 |
 | `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数并订阅 |
+| `services/media/ffmpeg_audio_source.py` | MP4/音频文件通过 ffmpeg stdout 流式读取并在线分帧，避免整文件解码阻塞首帧 |
+| `services/asr/factory.py` | FunASR 与 Voxtral 都按 `asr_latency_mode` 映射实际推理窗口/目标延迟 |
 | `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；应用退出时清理重连计时器并关闭 WS |
 | `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame；默认不覆盖后端 ASR provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
 | `desktop/src/renderer/main.tsx` | 移除 demoEvents，新增 `hasRealEvents` 状态；收到当前会话 `realtime.error` 时停止本地音频并回收采集状态 |
@@ -85,12 +432,12 @@
 ### P0：真实 ASR 配置与健康检查
 1. 启动 `8766` 完整同传服务。
 2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr` 或 `voxtral` 作为默认值，设置 `ECHOSYNC_TRANSLATOR_PROVIDER=deepseek` 作为真实翻译默认值；也可以由 Desktop 在 `audio.start.asr_provider` / `audio.start.translation_provider` 中选择本次会话 provider。
-3. Desktop 开始同传前检查 Agent 是否可连接，避免 UI 进入“同传中”但后端未启动。
+3. Desktop 已在开始同传前读取 `/v1/realtime/capabilities`，并阻止 mock+真实音频、缺 key、缺 SDK 和未完整接入音频源这类组合；后续还需要把能力结果做成更细的设置页和诊断页。
 
 ### P1：音频源分支补实
 1. Windows 系统声音继续使用 Electron display media loopback。
 2. 麦克风已改用 `getUserMedia({ audio: true })`，后续重点是权限错误和设备缺失提示。
-3. 混音和文件回放未实现前标记为不可用或实验状态。
+3. Agent 文件源已支持 ffmpeg 流式分帧；Desktop 文件回放入口未接完整前仍标记为实验状态。
 4. 后续把 `ScriptProcessorNode` 迁移到 `AudioWorklet`。
 
 ### P2：术语表 UI 集成

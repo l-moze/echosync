@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, screen, session } from "electron";
+import log from "electron-log/main";
 import path from "node:path";
 import WebSocket from "ws";
 
@@ -6,6 +7,10 @@ import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSourceId } from "../shared/audi
 import type { DesktopCaptureSnapshot } from "../shared/desktop-api";
 import type { RealtimeEvent } from "../shared/realtime-events";
 import { defaultSubtitleStyle, reduceSubtitleStyleState, type SubtitleStyleState } from "../shared/subtitle-style-state";
+import {
+  agentHttpBaseUrlFromCaptionWsUrl,
+  fetchAgentCapabilities
+} from "./agent-capabilities-client";
 import { createCaptionEventBuffer } from "./caption-event-buffer";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
 import {
@@ -20,6 +25,8 @@ import { sendToWindow, sendToWindows } from "./window-ipc";
 import { shouldCreateWindowAtStartup, shouldRevealWindowOnReady } from "./window-lifecycle";
 
 const CAPTION_WS_URL = process.env.ECHOSYNC_CAPTION_WS_URL || "ws://127.0.0.1:8766/v1/caption/events";
+const AGENT_HTTP_BASE_URL =
+  process.env.ECHOSYNC_AGENT_HTTP_URL || agentHttpBaseUrlFromCaptionWsUrl(CAPTION_WS_URL);
 
 const rendererUrl = process.env.ECHOSYNC_DESKTOP_RENDERER_URL;
 const preloadPath = path.join(__dirname, "../preload/index.js");
@@ -182,6 +189,7 @@ function applyOverlayLayout(layer: OverlayUiLayer) {
 }
 
 function registerIpc() {
+  ipcMain.handle("agent:get-capabilities", () => fetchAgentCapabilities(AGENT_HTTP_BASE_URL));
   ipcMain.handle("audio:list-sources", () => DESKTOP_AUDIO_SOURCES);
   ipcMain.handle("audio:get-state", () => captureSnapshot);
 
@@ -350,7 +358,7 @@ function connectCaptionWs() {
     captionWs = new WebSocket(CAPTION_WS_URL);
 
     captionWs.on("open", () => {
-      console.log("[caption-ws] 已连接到 Agent:", CAPTION_WS_URL);
+      log.info("[caption-ws] 已连接到 Agent:", CAPTION_WS_URL);
     });
 
     captionWs.on("message", (data: WebSocket.Data) => {
@@ -358,22 +366,22 @@ function connectCaptionWs() {
         const event = JSON.parse(data.toString()) as RealtimeEvent;
         broadcastCaptionEvent(event);
       } catch (err) {
-        console.error("[caption-ws] 解析事件失败:", err);
+        log.error("[caption-ws] 解析事件失败:", err);
       }
     });
 
     captionWs.on("close", (code, reason) => {
-      console.log("[caption-ws] 已断开，code:", code, "reason:", reason.toString());
+      log.info("[caption-ws] 已断开，code:", code, "reason:", reason.toString());
       if (!isQuitting) {
         captionReconnectTimer = setTimeout(connectCaptionWs, 5000);
       }
     });
 
     captionWs.on("error", (err: Error) => {
-      console.warn("[caption-ws] 连接错误:", err.message);
+      log.warn("[caption-ws] 连接错误:", err.message);
     });
   } catch (err) {
-    console.warn("[caption-ws] 无法创建连接:", err);
+    log.warn("[caption-ws] 无法创建连接:", err);
   }
 }
 
@@ -389,7 +397,7 @@ async function resolveDisplayMediaVideoSource(frame: Electron.WebFrameMain | nul
     });
     return sources[0] ?? frame;
   } catch (error) {
-    console.warn("[display-media] 获取屏幕占位视频源失败，尝试使用当前 frame:", error);
+    log.warn("[display-media] 获取屏幕占位视频源失败，尝试使用当前 frame:", error);
     return frame;
   }
 }

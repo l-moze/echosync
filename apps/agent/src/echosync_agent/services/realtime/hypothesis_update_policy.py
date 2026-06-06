@@ -32,7 +32,10 @@ class HypothesisUpdatePolicy:
         if _has_meaningful_common_prefix(current_text, incoming_trimmed):
             return HypothesisUpdate(text=incoming_trimmed, mode="replace_hypothesis")
         if _looks_like_append_delta(current_text=current_text, incoming_text=incoming_raw):
-            return HypothesisUpdate(text=f"{current_text}{incoming_raw}", mode="append_delta")
+            return HypothesisUpdate(
+                text=f"{current_text}{_append_delta_text(current_text, incoming_raw)}",
+                mode="append_delta",
+            )
         return HypothesisUpdate(text=incoming_trimmed, mode="replace_hypothesis")
 
 
@@ -44,7 +47,36 @@ def _looks_like_append_delta(*, current_text: str, incoming_text: str) -> bool:
         return False
     if incoming_text[0].isspace() or incoming_text[0] in ",.!?;:，。！？；：":
         return True
+    if _needs_space_before_bare_latin_delta(current_text, incoming_text):
+        return True
     return " " not in incoming_text and " " not in current_text
+
+
+def _append_delta_text(current_text: str, incoming_text: str) -> str:
+    if _needs_space_before_bare_latin_delta(current_text, incoming_text):
+        return f" {incoming_text.strip()}"
+    return incoming_text
+
+
+def _needs_space_before_bare_latin_delta(current_text: str, incoming_text: str) -> bool:
+    incoming_trimmed = incoming_text.strip()
+    if not incoming_trimmed or incoming_text[0].isspace():
+        return False
+    if not _is_latin_word(incoming_trimmed):
+        return False
+    if not current_text or current_text[-1].isspace():
+        return False
+    if not _has_latin_word_separator(current_text):
+        return False
+    return current_text[-1].isalnum() or current_text[-1] in ",;:!?"
+
+
+def _is_latin_word(value: str) -> bool:
+    return all(char.isascii() and (char.isalnum() or char in "'-") for char in value)
+
+
+def _has_latin_word_separator(value: str) -> bool:
+    return any(char.isspace() or char in ",;:!?" for char in value)
 
 
 def _has_meaningful_common_prefix(left: str, right: str) -> bool:

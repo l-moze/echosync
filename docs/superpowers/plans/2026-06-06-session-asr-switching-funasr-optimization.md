@@ -28,7 +28,7 @@
 - [x] Write a Vitest expectation that `createRealtimeAudioClient({ asrProvider: "funasr", asrLatencyMode: "balanced" })` includes `asr_provider` and `asr_latency_mode` in the `audio.start` payload.
 - [x] Run `npm --prefix apps/desktop test -- realtime-audio-client.test.ts` and confirm the new test fails because the options are not supported.
 - [x] Add `asrProvider?: "mock" | "funasr" | "voxtral"` and `asrLatencyMode?: "low_latency" | "balanced" | "accuracy"` to `RealtimeAudioClientOptions`.
-- [x] Include `asr_provider` and `asr_latency_mode` in the start payload, defaulting to `"funasr"` and `"balanced"` for real capture.
+- [x] Include `asr_provider` only when the user explicitly selects an ASR provider, and always include `asr_latency_mode` in the start payload. `server-default` keeps the Agent `.env` default; Desktop now uses capabilities/preflight to block invalid real-audio combinations instead of silently forcing FunASR.
 - [x] Run the focused desktop test and confirm it passes.
 
 ### Task 2: Agent Applies Per-Session ASR Override

@@ -37,9 +37,19 @@ export function selectedTranslationProviderId(
   return selection;
 }
 
-export function translationProviderLabel(selection: TranslationProviderSelection): string {
+export function translationProviderLabel(
+  selection: TranslationProviderSelection,
+  defaultProvider?: TranslationProviderId
+): string {
+  if (selection === "server-default" && defaultProvider) {
+    return `通用模型 (${providerName(defaultProvider)})`;
+  }
   return (
     TRANSLATION_PROVIDER_OPTIONS.find((option) => option.id === selection)?.label ??
     TRANSLATION_PROVIDER_OPTIONS[0].label
   );
+}
+
+function providerName(provider: TranslationProviderId): string {
+  return TRANSLATION_PROVIDER_OPTIONS.find((option) => option.providerId === provider)?.label ?? provider;
 }

@@ -1,3 +1,5 @@
+import log from "electron-log/node";
+
 type WindowIpcTarget = {
   isDestroyed?: () => boolean;
   webContents?: {
@@ -28,7 +30,7 @@ export function sendToWindow(
     if (message.includes("Object has been destroyed")) {
       return false;
     }
-    console.warn(`[window-ipc] 发送 ${channel} 失败:`, error);
+    log.warn(`[window-ipc] 发送 ${channel} 失败:`, error);
     return false;
   }
 }

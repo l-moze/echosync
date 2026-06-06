@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type UIEvent } from "react";
 import { createRoot } from "react-dom/client";
+import log from "electron-log/renderer";
 
 import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSource, type DesktopAudioSourceId } from "../shared/audio-source-catalog";
+import type { AgentCapabilities } from "../shared/agent-capabilities";
+import {
+  ASR_LATENCY_OPTIONS,
+  ASR_PROVIDER_OPTIONS,
+  asrLatencyModeLabel,
+  asrProviderLabel,
+  selectedAsrProviderId,
+  type AsrLatencyMode,
+  type AsrProviderSelection
+} from "../shared/asr-provider-catalog";
 import {
   selectedTranslationProviderId,
   TRANSLATION_PROVIDER_OPTIONS,
@@ -26,6 +37,7 @@ import {
   reduceOverlayInteraction,
   type OverlayInteractionEvent
 } from "../shared/overlay-interaction";
+import { validateRealtimePreflight } from "../shared/realtime-preflight";
 import {
   createInitialSessionUiState,
   reduceSessionUiState,
@@ -49,6 +61,7 @@ import {
   sessionArchiveTitleFromDate,
   type SessionArchiveDraft
 } from "../shared/session-archive";
+import { logRealtimeEventTelemetry } from "../shared/realtime-telemetry";
 import { createInitialCaptionLines } from "./initial-captions";
 import { createRealtimeAudioClient, type RealtimeAudioClient } from "./realtime-audio-client";
 import { resolveDesktopWindowRole } from "./window-role";
@@ -80,8 +93,12 @@ function App() {
   const role = resolveDesktopWindowRole(window.location.hash);
   const [lines, setLines] = useState<CaptionLine[]>(createInitialCaptionLines);
   const [sourceId, setSourceId] = useState<DesktopAudioSourceId>("windows-system");
+  const [asrProvider, setAsrProvider] = useState<AsrProviderSelection>("server-default");
+  const [asrLatencyMode, setAsrLatencyMode] = useState<AsrLatencyMode>("balanced");
   const [translationProvider, setTranslationProvider] =
     useState<TranslationProviderSelection>("server-default");
+  const [agentCapabilities, setAgentCapabilities] = useState<AgentCapabilities | null>(null);
+  const [agentCapabilitiesError, setAgentCapabilitiesError] = useState<string | null>(null);
   const [overlayLocked, setOverlayLocked] = useState(false);
   const [sessionUi, setSessionUi] = useState(() => createInitialSessionUiState({ platform: "windows" }));
   const [snapshot, setSnapshot] = useState<DesktopCaptureSnapshot>({
@@ -108,6 +125,7 @@ function App() {
       if (!isRealtimeEventForActiveSession(activeSessionIdRef.current, event)) {
         return;
       }
+      logRealtimeEventTelemetry(log, event, Date.now());
       if (event.type === "realtime.done") {
         activeSessionIdRef.current = null;
         return;
@@ -158,6 +176,10 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    void refreshAgentCapabilities();
+  }, []);
+
   const activeLine = useMemo(() => selectActiveCaptionLine(lines), [lines]);
   const currentSource = DESKTOP_AUDIO_SOURCES.find((source) => source.id === sourceId) ?? DESKTOP_AUDIO_SOURCES[1];
 
@@ -165,6 +187,23 @@ function App() {
     const next = reduceSessionUiState(sessionUiRef.current, event);
     sessionUiRef.current = next;
     setSessionUi(next);
+  }
+
+  async function refreshAgentCapabilities() {
+    try {
+      const capabilities = await window.echosyncDesktop?.getAgentCapabilities();
+      if (!capabilities) {
+        throw new Error("桌面端没有返回 Agent 能力信息。");
+      }
+      setAgentCapabilities(capabilities);
+      setAgentCapabilitiesError(null);
+      return capabilities;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent 能力检查失败。";
+      setAgentCapabilitiesError(message);
+      setAgentCapabilities(null);
+      return null;
+    }
   }
 
   useEffect(() => {
@@ -197,7 +236,7 @@ function App() {
     const runId = startupRunIdRef.current + 1;
     startupRunIdRef.current = runId;
     const startedAtMs = Date.now();
-    dispatchSessionUi({ type: "startup.started", phase: "preparing_audio", atMs: startedAtMs });
+    dispatchSessionUi({ type: "startup.started", phase: "connecting_agent", atMs: startedAtMs });
     if (realtimeClientRef.current) {
       await realtimeClientRef.current.stop();
       realtimeClientRef.current = null;
@@ -207,7 +246,27 @@ function App() {
     terminalRealtimeErrorRef.current = null;
     setSessionArchive(null);
     setLines(createInitialCaptionLines());
+    const capabilities = await refreshAgentCapabilities();
+    const preflightMessage = validateRealtimePreflight({
+      asrLatencyMode,
+      asrProvider,
+      capabilities,
+      sourceId: nextSourceId,
+      translationProvider
+    });
+    if (preflightMessage) {
+      setSnapshot({
+        sourceId: nextSourceId,
+        state: "error",
+        message: preflightMessage
+      });
+      dispatchSessionUi({ type: "startup.failed", message: preflightMessage });
+      return;
+    }
+    dispatchSessionUi({ type: "startup.phase.changed", phase: "preparing_audio", atMs: Date.now() });
     const client = createRealtimeAudioClient({
+      asrLatencyMode,
+      asrProvider: selectedAsrProviderId(asrProvider),
       sourceId: nextSourceId,
       translationProvider: selectedTranslationProviderId(translationProvider)
     });
@@ -261,13 +320,13 @@ function App() {
     try {
       await currentClient?.stop();
     } catch (error) {
-      console.warn("[realtime] 停止失败会话音频流时出错:", error);
+      log.warn("[realtime] 停止失败会话音频流时出错:", error);
     }
 
     try {
       nextSnapshot = await window.echosyncDesktop?.stopCapture();
     } catch (error) {
-      console.warn("[realtime] 更新失败会话采集状态时出错:", error);
+      log.warn("[realtime] 更新失败会话采集状态时出错:", error);
     }
 
     setSnapshot((current) => ({
@@ -394,6 +453,8 @@ function App() {
           lines={lines}
           onShowOverlay={() => window.echosyncDesktop?.setOverlayVisible(true)}
           onSourceSelect={(nextSourceId) => setSourceId(nextSourceId)}
+          onAsrLatencyModeSelect={setAsrLatencyMode}
+          onAsrProviderSelect={setAsrProvider}
           onTranslationProviderSelect={setTranslationProvider}
           onReturnHome={requestReturnHome}
           onStart={() => void startCapture()}
@@ -402,6 +463,10 @@ function App() {
           dispatchSessionUi={dispatchSessionUi}
           sessionArchive={sessionArchive}
           sessionUi={sessionUi}
+          agentCapabilities={agentCapabilities}
+          agentCapabilitiesError={agentCapabilitiesError}
+          asrLatencyMode={asrLatencyMode}
+          asrProvider={asrProvider}
           sourceId={sourceId}
           toggleOverlayLocked={() => void toggleOverlayLocked()}
           translationProvider={translationProvider}
@@ -585,9 +650,15 @@ function pageTitleForSession(sessionUi: ReturnType<typeof createInitialSessionUi
 
 function ControlCenter({
   activeLine,
+  agentCapabilities,
+  agentCapabilitiesError,
+  asrLatencyMode,
+  asrProvider,
   currentSource,
   lines,
   onShowOverlay,
+  onAsrLatencyModeSelect,
+  onAsrProviderSelect,
   onSourceSelect,
   onTranslationProviderSelect,
   onReturnHome,
@@ -602,9 +673,15 @@ function ControlCenter({
   translationProvider
 }: {
   activeLine?: CaptionLine;
+  agentCapabilities: AgentCapabilities | null;
+  agentCapabilitiesError: string | null;
+  asrLatencyMode: AsrLatencyMode;
+  asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
   lines: CaptionLine[];
   onShowOverlay: () => void;
+  onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
+  onAsrProviderSelect: (provider: AsrProviderSelection) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onReturnHome: () => void;
@@ -622,8 +699,14 @@ function ControlCenter({
     <section className={`controlCenter lifecycle-${sessionUi.lifecycle}`}>
       {sessionUi.lifecycle === "idle" ? (
         <IdleDashboard
+          agentCapabilities={agentCapabilities}
+          agentCapabilitiesError={agentCapabilitiesError}
+          asrLatencyMode={asrLatencyMode}
+          asrProvider={asrProvider}
           currentSource={currentSource}
           onShowOverlay={onShowOverlay}
+          onAsrLatencyModeSelect={onAsrLatencyModeSelect}
+          onAsrProviderSelect={onAsrProviderSelect}
           onSourceSelect={onSourceSelect}
           onTranslationProviderSelect={onTranslationProviderSelect}
           onStart={onStart}
@@ -635,6 +718,9 @@ function ControlCenter({
       {sessionUi.lifecycle === "active" ? (
         <ActiveDashboard
           activeLine={activeLine}
+          agentCapabilities={agentCapabilities}
+          asrLatencyMode={asrLatencyMode}
+          asrProvider={asrProvider}
           lines={lines}
           onStop={onStop}
           overlayLocked={overlayLocked}
@@ -659,8 +745,14 @@ function ControlCenter({
 }
 
 function IdleDashboard({
+  agentCapabilities,
+  agentCapabilitiesError,
+  asrLatencyMode,
+  asrProvider,
   currentSource,
   onShowOverlay,
+  onAsrLatencyModeSelect,
+  onAsrProviderSelect,
   onSourceSelect,
   onTranslationProviderSelect,
   onStart,
@@ -668,8 +760,14 @@ function IdleDashboard({
   sourceId,
   translationProvider
 }: {
+  agentCapabilities: AgentCapabilities | null;
+  agentCapabilitiesError: string | null;
+  asrLatencyMode: AsrLatencyMode;
+  asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
   onShowOverlay: () => void;
+  onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
+  onAsrProviderSelect: (provider: AsrProviderSelection) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onStart: () => void;
@@ -685,8 +783,38 @@ function IdleDashboard({
         <p>默认使用 {currentSource.label}，先确认电平条有响应，再开始同传。</p>
         <div className="sourceTabs horizontal">
           {DESKTOP_AUDIO_SOURCES.map((source) => (
-            <button className={source.id === sourceId ? "selected" : ""} key={source.id} onClick={() => onSourceSelect(source.id)}>
+            <button
+              className={source.id === sourceId ? "selected" : ""}
+              disabled={source.id === "mixed" || source.id === "file"}
+              key={source.id}
+              onClick={() => onSourceSelect(source.id)}
+              title={source.id === "mixed" || source.id === "file" ? "该音频源尚未完整接入" : source.description}
+            >
               {source.label}
+            </button>
+          ))}
+        </div>
+        <div className="providerTabs" aria-label="ASR 识别方案选择">
+          {ASR_PROVIDER_OPTIONS.map((provider) => (
+            <button
+              className={provider.id === asrProvider ? "selected" : ""}
+              key={provider.id}
+              onClick={() => onAsrProviderSelect(provider.id)}
+            >
+              <strong>{provider.label}</strong>
+              <span>{provider.description}</span>
+            </button>
+          ))}
+        </div>
+        <div className="providerTabs compact" aria-label="ASR 延迟模式选择">
+          {ASR_LATENCY_OPTIONS.map((mode) => (
+            <button
+              className={mode.id === asrLatencyMode ? "selected" : ""}
+              key={mode.id}
+              onClick={() => onAsrLatencyModeSelect(mode.id)}
+            >
+              <strong>{mode.label}</strong>
+              <span>{mode.description}</span>
             </button>
           ))}
         </div>
@@ -721,7 +849,14 @@ function IdleDashboard({
         <HealthMetric label="输入源" value={currentSource.label} />
         <HealthMetric label="音频活动" value={sessionUi.audioActivity} />
         <HealthMetric label="字幕窗" value="可打开" />
-        <HealthMetric label="翻译模型" value={translationProviderLabel(translationProvider)} />
+        <HealthMetric label="Agent" value={agentCapabilitiesError ? "需要检查" : agentCapabilities ? "已读取能力" : "未连接"} />
+        <HealthMetric label="ASR" value={asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider)} />
+        <HealthMetric label="延迟模式" value={asrLatencyModeLabel(asrLatencyMode)} />
+        <HealthMetric
+          label="翻译模型"
+          value={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider)}
+        />
+        {agentCapabilitiesError ? <p className="statusBox">{agentCapabilitiesError}</p> : null}
       </aside>
     </div>
   );
@@ -729,6 +864,9 @@ function IdleDashboard({
 
 function ActiveDashboard({
   activeLine,
+  agentCapabilities,
+  asrLatencyMode,
+  asrProvider,
   lines,
   onStop,
   overlayLocked,
@@ -739,6 +877,9 @@ function ActiveDashboard({
   translationProvider
 }: {
   activeLine?: CaptionLine;
+  agentCapabilities: AgentCapabilities | null;
+  asrLatencyMode: AsrLatencyMode;
+  asrProvider: AsrProviderSelection;
   lines: CaptionLine[];
   onStop: () => void;
   overlayLocked: boolean;
@@ -762,7 +903,12 @@ function ActiveDashboard({
       </section>
       <aside className="dashboardPanel">
         <h2>会话驾驶舱</h2>
-        <HealthMetric label="翻译模型" value={translationProviderLabel(translationProvider)} />
+        <HealthMetric label="ASR" value={asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider)} />
+        <HealthMetric label="延迟模式" value={asrLatencyModeLabel(asrLatencyMode)} />
+        <HealthMetric
+          label="翻译模型"
+          value={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider)}
+        />
         <HealthPanel lines={lines} sessionUi={sessionUi} sourceId={sourceId} />
         <TermQuickAdd dispatchSessionUi={dispatchSessionUi} sessionUi={sessionUi} />
       </aside>

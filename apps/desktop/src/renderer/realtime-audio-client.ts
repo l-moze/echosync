@@ -1,4 +1,5 @@
 import type { DesktopAudioSourceId } from "../shared/audio-source-catalog";
+import type { AsrLatencyMode, AsrProviderId } from "../shared/asr-provider-catalog";
 import type { TranslationProviderId } from "../shared/translation-provider-catalog";
 
 import { createAudioGate, type AudioGateChunk } from "./audio-gate";
@@ -15,9 +16,6 @@ const DEFAULT_REALTIME_WS_URL = "ws://127.0.0.1:8766/v1/realtime/sessions";
 const TARGET_SAMPLE_RATE = 16_000;
 const AUDIO_PROCESSOR_BUFFER_SIZE = 2048;
 const AUDIO_FRAME_DURATION_MS = 80;
-
-export type AsrProviderId = "mock" | "funasr" | "voxtral";
-export type AsrLatencyMode = "low_latency" | "balanced" | "accuracy";
 
 export type RealtimeAudioClient = {
   readonly sessionId: string;

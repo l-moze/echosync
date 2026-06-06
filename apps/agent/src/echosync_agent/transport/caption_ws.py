@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from dataclasses import replace
@@ -17,6 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
 
 from echosync_agent.domain import AudioFrame
+from echosync_agent.runtime.capabilities import build_realtime_capabilities
 from echosync_agent.runtime.env import load_project_dotenv
 from echosync_agent.runtime.settings import Settings
 from echosync_agent.transport.realtime_ws import create_realtime_router
@@ -36,14 +38,25 @@ class CaptionEventHub:
 
     async def publish(self, event_type: str, payload: dict[str, Any]) -> None:
         """向所有已连接的 Desktop 客户端推送事件。"""
-        message = {"type": event_type, **payload}
+        published_at_ms = int(time.time() * 1000)
+        message = {"type": event_type, **payload, "published_at_ms": published_at_ms}
+        metrics = payload.get("metrics")
+        if not isinstance(metrics, dict):
+            metrics = {}
         logger.info(
             "caption_event_published type=%s clients=%d session_id=%s "
-            "segment_id=%s source=%s target=%s",
+            "segment_id=%s published_at_ms=%d asr_latency_ms=%.1f "
+            "merge_wait_ms=%.1f translation_first_token_ms=%.1f "
+            "translation_latency_ms=%.1f source=%s target=%s",
             event_type,
             self.client_count,
             payload.get("session_id", ""),
             payload.get("segment_id", ""),
+            published_at_ms,
+            _metric(metrics, "asr_latency_ms"),
+            _metric(metrics, "merge_wait_ms"),
+            _metric(metrics, "translation_first_token_ms"),
+            _metric(metrics, "translation_latency_ms"),
             _snippet(payload.get("source_text", "")),
             _snippet(payload.get("target_text", "")),
         )
@@ -96,6 +109,15 @@ def create_caption_app(
         )
     )
 
+    @app.get("/healthz")
+    async def healthz() -> dict[str, object]:
+        return {"ok": True, "service": "echosync-agent"}
+
+    @app.get("/v1/realtime/capabilities")
+    async def realtime_capabilities() -> dict[str, Any]:
+        settings = (settings_factory or Settings.from_env)()
+        return build_realtime_capabilities(settings)
+
     @app.websocket("/v1/caption/events")
     async def caption_events(websocket: WebSocket) -> None:
         nonlocal producer_task
@@ -135,6 +157,16 @@ def _snippet(value: object, limit: int = 48) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}..."
+
+
+def _metric(metrics: dict[object, object], key: str) -> float:
+    value = metrics.get(key)
+    if value is None:
+        return -1.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return -1.0
 
 
 async def _run_producer(producer: CaptionProducer, hub: CaptionEventHub) -> None:

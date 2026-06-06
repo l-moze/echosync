@@ -5,6 +5,7 @@ import type { RealtimeEvent } from "../shared/realtime-events";
 import type { SubtitleStyleState } from "../shared/subtitle-style-state";
 
 const desktopApi: DesktopApi = {
+  getAgentCapabilities: () => ipcRenderer.invoke("agent:get-capabilities"),
   listAudioSources: () => ipcRenderer.invoke("audio:list-sources"),
   getCaptureState: () => ipcRenderer.invoke("audio:get-state"),
   startCapture: (sourceId, sessionId) => ipcRenderer.invoke("audio:start", sourceId, sessionId),

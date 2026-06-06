@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
+from contextlib import suppress
 
 from echosync_agent.domain import (
     AudioFrame,
@@ -23,6 +25,28 @@ def test_cascaded_engine_streams_source_hypotheses_and_translation_deltas() -> N
     asyncio.run(_assert_cascaded_engine_streams_source_hypotheses_and_translation_deltas())
 
 
+def test_cascaded_engine_records_translation_streaming_metrics() -> None:
+    asyncio.run(_assert_cascaded_engine_records_translation_streaming_metrics())
+
+
+def test_cascaded_engine_logs_translation_timing_checkpoints(caplog) -> None:
+    caplog.set_level(
+        logging.INFO,
+        logger="echosync_agent.services.engine.cascaded_engine",
+    )
+
+    asyncio.run(_assert_cascaded_engine_streams_source_hypotheses_and_translation_deltas())
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "echosync_agent.services.engine.cascaded_engine"
+    ]
+    assert any("translation_checkpoint_started" in message for message in messages)
+    assert any("translation_checkpoint_first_token" in message for message in messages)
+    assert any("translation_checkpoint_finished" in message for message in messages)
+
+
 def test_cascaded_engine_does_not_block_source_hypotheses_on_slow_translation() -> None:
     asyncio.run(_assert_cascaded_engine_does_not_block_source_hypotheses_on_slow_translation())
 
@@ -33,6 +57,10 @@ def test_cascaded_engine_skips_stale_checkpoints_when_newer_revision_is_queued()
 
 def test_cascaded_engine_coalesces_pending_translation_checkpoints() -> None:
     asyncio.run(_assert_cascaded_engine_coalesces_pending_translation_checkpoints())
+
+
+def test_cascaded_engine_refreshes_stable_translation_for_long_segment() -> None:
+    asyncio.run(_assert_cascaded_engine_refreshes_stable_translation_for_long_segment())
 
 
 def test_cascaded_engine_accepts_batch_only_translator() -> None:
@@ -92,6 +120,26 @@ async def _assert_cascaded_engine_streams_source_hypotheses_and_translation_delt
     assert len(commits) == 1
     assert commits[0].source_text == "Hello, world."
     assert commits[0].target_text == "[zh] Hello, world."
+
+
+async def _assert_cascaded_engine_records_translation_streaming_metrics() -> None:
+    engine = CascadedInterpretationEngine(
+        transcriber=DeltaTranscriber(),
+        translator=StreamingTranslator(),
+        correction_engine=NoopCorrectionEngine(),
+    )
+
+    events = [event async for event in engine.stream(_frames())]
+    translated = [
+        event
+        for event in events
+        if isinstance(event, TranslationSegment) and event.target_text
+    ]
+
+    assert translated[0].metrics["translation_first_token_ms"] >= 0
+    assert translated[0].metrics["translation_delta_count"] == 1
+    assert translated[1].metrics["translation_delta_count"] == 2
+    assert translated[-1].metrics["translation_first_token_ms"] >= 0
 
 
 async def _assert_cascaded_engine_does_not_block_source_hypotheses_on_slow_translation() -> None:
@@ -155,6 +203,32 @@ async def _assert_cascaded_engine_coalesces_pending_translation_checkpoints() ->
         "third committed",
     ]
     assert any(event.target_text == "[zh] third committed" for event in translations)
+
+
+async def _assert_cascaded_engine_refreshes_stable_translation_for_long_segment() -> None:
+    first_translated = asyncio.Event()
+    second_translated = asyncio.Event()
+    translator = SignalingTranslator(first_translated, second_translated)
+    engine = CascadedInterpretationEngine(
+        transcriber=RefreshingStableTranscriber(first_translated, second_translated),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    events = [event async for event in engine.stream(_frames())]
+    translations = [event for event in events if isinstance(event, TranslationSegment)]
+
+    assert [segment.text for segment in translator.seen_segments] == [
+        "The model starts,",
+        "The model starts, then explains the pipeline",
+        "The model starts, then explains the pipeline.",
+    ]
+    assert any(
+        event.target_text == "[zh] The model starts, then explains the pipeline"
+        and event.status == SegmentStatus.STABLE
+        for event in translations
+    )
 
 
 async def _assert_cascaded_engine_accepts_batch_only_translator() -> None:
@@ -291,6 +365,52 @@ class BurstStableTranscriber(Transcriber):
                 )
 
 
+class RefreshingStableTranscriber(Transcriber):
+    def __init__(self, first_translated: asyncio.Event, second_translated: asyncio.Event) -> None:
+        self.first_translated = first_translated
+        self.second_translated = second_translated
+
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for _frame in frames:
+            yield TranscriptSegment(
+                session_id="sess_refreshing_stable",
+                segment_id="seg_refreshing_stable",
+                rev=1,
+                start_ms=0,
+                end_ms=1_000,
+                source_lang="en",
+                text="The model starts,",
+                status=SegmentStatus.STABLE,
+                stability=0.9,
+            )
+            await self.first_translated.wait()
+            yield TranscriptSegment(
+                session_id="sess_refreshing_stable",
+                segment_id="seg_refreshing_stable",
+                rev=2,
+                start_ms=0,
+                end_ms=2_400,
+                source_lang="en",
+                text="The model starts, then explains the pipeline",
+                status=SegmentStatus.STABLE,
+                stability=0.9,
+            )
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self.second_translated.wait(), timeout=0.05)
+            yield TranscriptSegment(
+                session_id="sess_refreshing_stable",
+                segment_id="seg_refreshing_stable",
+                rev=3,
+                start_ms=0,
+                end_ms=3_200,
+                source_lang="en",
+                text="The model starts, then explains the pipeline.",
+                status=SegmentStatus.COMMITTED,
+                stability=1.0,
+            )
+            return
+
+
 class PassThroughAssembler:
     async def stream(
         self,
@@ -377,6 +497,25 @@ class StreamingTranslator(RecordingTranslator):
                 stability=segment.stability,
                 metrics=dict(segment.metrics),
             )
+
+
+class SignalingTranslator(RecordingTranslator):
+    def __init__(self, first_translated: asyncio.Event, second_translated: asyncio.Event) -> None:
+        super().__init__()
+        self.first_translated = first_translated
+        self.second_translated = second_translated
+
+    async def translate(
+        self,
+        segment: TranscriptSegment,
+        context: CorrectionContext,
+    ) -> TranslationSegment:
+        result = await super().translate(segment, context)
+        if len(self.seen_segments) == 1:
+            self.first_translated.set()
+        elif len(self.seen_segments) == 2:
+            self.second_translated.set()
+        return result
 
 
 class SlowStreamingTranslator(RecordingTranslator):

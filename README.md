@@ -34,7 +34,7 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和模拟链路测试骨架。当前地基同时支持 ASR→翻译→修正的级联模型，以及未来 OpenAI Realtime、Qwen LiveTranslate、Azure Speech Translation 等端到端模型适配。
 
-ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`。Desktop 会在 `audio.start` 中声明本次会话的 `asr_latency_mode`，只有用户显式选择 provider 时才额外发送 `asr_provider` 或 `translation_provider` 覆盖后端 `.env` 默认值；API key、base URL 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
+ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`。Desktop 会在启动前读取 Agent `/v1/realtime/capabilities`，显示后端默认 provider、缺失密钥或缺失 SDK，并在本次会话中声明 `asr_latency_mode`；只有用户显式选择 provider 时才额外发送 `asr_provider` 或 `translation_provider` 覆盖后端 `.env` 默认值。API key、base URL 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
 
 当前 Web 工作台已按 `doc/UI设计调研.md` 的 MVP 方向实现：
 
@@ -55,6 +55,7 @@ ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 
 当前 Desktop UI 已按 Stateful Hybrid 主页控制中心推进：
 
 - `Idle`：视频/网课默认开箱，主区提供起飞前音频电平校验和一键打开字幕弹窗。
+- Idle 启动前会先做 Agent 能力预检；如果 `mock` ASR 被用于真实音频、Voxtral/DeepSeek 缺少密钥或依赖，UI 会阻止开始并显示原因。
 - `Active`：主页切换为会话驾驶舱，展示最近转写、健康度、术语快加和自动滚动锁入口。
 - `Finished`：会话结束后停留在复盘态，提供导出前快速清理、摘要指标和最近记录。
 - 字幕弹窗采用 Layer A/B/C：默认穿透极简、Hover 轻控制、Pin 小型双语舞台，并支持快捷唤醒和召回居中；字幕样式支持双语、主字幕、翻译字幕三种显示模式，旧 `line/split` 配置会兼容回双语模式。
@@ -97,7 +98,7 @@ ECHOSYNC_ASR_PROVIDER=funasr
 FUNASR_DEVICE=auto
 ```
 
-也可以在 Desktop 会话启动时通过 `audio.start.asr_provider` 覆盖默认 ASR provider，通过 `audio.start.translation_provider` 覆盖默认翻译 provider。当前 renderer 默认真实采集只发送 `balanced` 延迟模式；翻译模型选择为“通用模型”时不覆盖后端 provider。显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
+也可以在 Desktop 会话启动时选择 ASR provider、ASR 延迟模式和翻译 provider。选择“后端默认/通用模型”时不发送覆盖字段，沿用 Agent `.env`；显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
 
 如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
 
@@ -105,13 +106,14 @@ FUNASR_DEVICE=auto
 
 - `audio_stream_started`：桌面端已开始送系统音频。
 - `audio_chunk_received`：实时 PCM chunk 已进入 Agent。
-- `caption_event_published`：ASR/翻译后的字幕事件已推给桌面端；`transcript.partial` 是源文草稿，`translation.partial` 是译文更新。
+- `audio_stream_metrics`：Agent 每秒聚合打印音频帧、音频毫秒数、字节数、传输延迟和队列深度。
+- `caption_event_published`：ASR/翻译后的字幕事件已推给桌面端，并带 `published_at_ms` 与模型指标；`transcript.partial` 是源文草稿，`translation.partial` 是译文更新。
 
 当前 MVP 的采集节点使用 `ScriptProcessorNode` 做快速验证；后续会替换为 `AudioWorklet` 或 WASAPI loopback，以降低抖动和长期运行风险。
 
 当前 renderer 已加轻量门控：低于响度阈值时不发送音频块，连续静音后自动把上一块活跃音频标记为 `is_final=true`，避免静音时持续打满 ASR。字幕弹窗会显示当前片段时间范围。
 
-实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 按 `segment_id` 合并待处理项，降低模型慢响应时的队列积压。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
+实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理。Voxtral 会按同一 `asr_latency_mode` 映射 `target_streaming_delay_ms`：`low_latency` 最多 480ms，`balanced` 沿用 `.env`，`accuracy` 至少 1600ms。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 按 `segment_id` 合并待处理项，降低模型慢响应时的队列积压。MP4/音频文件源使用 ffmpeg stdout 流式分帧，真实样本 `vido/videoplayback.mp4` 的首个 80ms PCM frame 约 40ms 产出，不再等待完整文件解码。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
 
 实时控制事件语义：`realtime.error` 表示本次会话启动失败或 pipeline 失败，客户端应进入错误态并停止本地媒体流；`realtime.done` 只表示正常完成。用户主动停止时，如果 pipeline 已经失败，Agent 会优先上报错误；如果仍在处理队列，则取消未完成的 pipeline，避免停止后继续推送晚到字幕。
 

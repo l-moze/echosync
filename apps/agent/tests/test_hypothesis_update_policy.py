@@ -19,6 +19,27 @@ def test_policy_appends_plain_token_delta_to_current_text() -> None:
     assert result.mode == "append_delta"
 
 
+def test_policy_appends_bare_english_word_delta_after_phrase() -> None:
+    policy = HypothesisUpdatePolicy()
+
+    result = policy.apply(current_text="Hello, my name is", incoming_text="Eevee")
+
+    assert result.text == "Hello, my name is Eevee"
+    assert result.mode == "append_delta"
+
+
+def test_policy_appends_bare_english_word_delta_after_punctuation() -> None:
+    policy = HypothesisUpdatePolicy()
+
+    result = policy.apply(
+        current_text="Feels funny to say that at normal speed,",
+        incoming_text="but",
+    )
+
+    assert result.text == "Feels funny to say that at normal speed, but"
+    assert result.mode == "append_delta"
+
+
 def test_policy_replaces_with_full_hypothesis_when_incoming_contains_current_prefix() -> None:
     policy = HypothesisUpdatePolicy()
 

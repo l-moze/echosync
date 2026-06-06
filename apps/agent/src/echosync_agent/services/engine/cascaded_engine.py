@@ -43,6 +43,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
         target_lang: str = "zh-CN",
         revision_window_segments: int = 2,
         glossary: Glossary | dict[str, str] | None = None,
+        stable_refresh_min_audio_ms: int = 1_000,
+        stable_refresh_min_chars: int = 12,
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
@@ -50,6 +52,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
         self.transcript_assembler = transcript_assembler or TranscriptAssembler()
         self.target_lang = target_lang
         self.revision_window_segments = revision_window_segments
+        self.stable_refresh_min_audio_ms = stable_refresh_min_audio_ms
+        self.stable_refresh_min_chars = stable_refresh_min_chars
         # 统一转为 Glossary 对象
         if isinstance(glossary, dict):
             self._glossary = Glossary.from_dict(glossary)
@@ -78,7 +82,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         done = object()
         pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment] = {}
         pending_order: deque[tuple[str, SegmentStatus]] = deque()
-        stable_checkpoint_seen: set[str] = set()
+        stable_checkpoint_history: dict[str, TranscriptSegment] = {}
         checkpoint_available = asyncio.Event()
         producer_done = False
         assembled_transcripts = self.transcript_assembler.stream(self.transcriber.stream(frames))
@@ -91,17 +95,32 @@ class CascadedInterpretationEngine(InterpretationEngine):
                     if transcript.status != SegmentStatus.PARTIAL:
                         checkpoint_key = self._checkpoint_key(transcript)
                         if transcript.status == SegmentStatus.STABLE:
-                            if transcript.segment_id in stable_checkpoint_seen:
+                            if not self._should_queue_stable_checkpoint(
+                                transcript,
+                                stable_checkpoint_history,
+                            ):
                                 continue
-                            stable_checkpoint_seen.add(transcript.segment_id)
+                            stable_checkpoint_history[transcript.segment_id] = transcript
+                        else:
+                            stable_checkpoint_history.pop(transcript.segment_id, None)
 
                         if checkpoint_key not in pending_checkpoints:
                             pending_order.append(checkpoint_key)
 
-                        if transcript.status == SegmentStatus.STABLE:
-                            pending_checkpoints.setdefault(checkpoint_key, transcript)
-                        else:
-                            pending_checkpoints[checkpoint_key] = transcript
+                        pending_checkpoints[checkpoint_key] = transcript
+                        logger.info(
+                            "translation_checkpoint_queued session_id=%s segment_id=%s "
+                            "rev=%d status=%s audio_start_ms=%d audio_end_ms=%d "
+                            "source_chars=%d pending_checkpoints=%d",
+                            transcript.session_id,
+                            transcript.segment_id,
+                            transcript.rev,
+                            transcript.status,
+                            transcript.start_ms,
+                            transcript.end_ms,
+                            len(transcript.text),
+                            len(pending_checkpoints),
+                        )
                         checkpoint_available.set()
             except BaseException as exc:
                 await event_queue.put(exc)
@@ -151,15 +170,47 @@ class CascadedInterpretationEngine(InterpretationEngine):
     ) -> AsyncIterator[InterpretationEvent]:
         context = self._context(transcript.text)
         translation_started_at = time.perf_counter()
+        translation_first_token_ms: float | None = None
+        translation_delta_count = 0
         final_translation: TranslationSegment | None = None
+        logger.info(
+            "translation_checkpoint_started session_id=%s segment_id=%s rev=%d "
+            "status=%s audio_start_ms=%d audio_end_ms=%d source_chars=%d "
+            "asr_latency_ms=%.1f merge_wait_ms=%.1f glossary_terms=%d",
+            transcript.session_id,
+            transcript.segment_id,
+            transcript.rev,
+            transcript.status,
+            transcript.start_ms,
+            transcript.end_ms,
+            len(transcript.text),
+            _metric_value(transcript.metrics, "asr_latency_ms"),
+            _metric_value(transcript.metrics, "merge_wait_ms"),
+            len(context.glossary),
+        )
         async for translation in self._stream_translation(transcript, context):
             translation_latency_ms = (time.perf_counter() - translation_started_at) * 1000
+            translation_delta_count += 1
+            if translation_first_token_ms is None:
+                translation_first_token_ms = translation_latency_ms
+                logger.info(
+                    "translation_checkpoint_first_token session_id=%s segment_id=%s "
+                    "rev=%d status=%s first_token_ms=%.1f target_chars=%d",
+                    translation.session_id,
+                    translation.segment_id,
+                    translation.rev,
+                    translation.status,
+                    translation_first_token_ms,
+                    len(translation.target_text),
+                )
             translation = replace(
                 translation,
                 metrics={
                     **transcript.metrics,
                     **translation.metrics,
                     "translation_latency_ms": translation_latency_ms,
+                    "translation_first_token_ms": translation_first_token_ms,
+                    "translation_delta_count": float(translation_delta_count),
                 },
             )
             final_translation = translation
@@ -167,6 +218,35 @@ class CascadedInterpretationEngine(InterpretationEngine):
 
         if final_translation is None:
             return
+
+        translation_final_ms = (time.perf_counter() - translation_started_at) * 1000
+        final_translation = replace(
+            final_translation,
+            metrics={
+                **final_translation.metrics,
+                "translation_final_ms": translation_final_ms,
+                "translation_delta_count": float(translation_delta_count),
+                "translation_first_token_ms": (
+                    translation_first_token_ms
+                    if translation_first_token_ms is not None
+                    else translation_final_ms
+                ),
+            },
+        )
+        logger.info(
+            "translation_checkpoint_finished session_id=%s segment_id=%s rev=%d "
+            "status=%s final_ms=%.1f first_token_ms=%.1f delta_count=%d "
+            "source_chars=%d target_chars=%d",
+            final_translation.session_id,
+            final_translation.segment_id,
+            final_translation.rev,
+            final_translation.status,
+            translation_final_ms,
+            final_translation.metrics["translation_first_token_ms"],
+            translation_delta_count,
+            len(final_translation.source_text),
+            len(final_translation.target_text),
+        )
 
         patch = await self.correction_engine.revise(final_translation, context)
         if patch is not None:
@@ -194,6 +274,30 @@ class CascadedInterpretationEngine(InterpretationEngine):
         if transcript.status == SegmentStatus.STABLE:
             return (transcript.segment_id, SegmentStatus.STABLE)
         return (transcript.segment_id, SegmentStatus.COMMITTED)
+
+    def _should_queue_stable_checkpoint(
+        self,
+        transcript: TranscriptSegment,
+        history: dict[str, TranscriptSegment],
+    ) -> bool:
+        previous = history.get(transcript.segment_id)
+        if previous is None:
+            return True
+        if transcript.text.strip() == previous.text.strip():
+            return False
+        audio_gap_ms = transcript.end_ms - previous.end_ms
+        if not transcript.text.startswith(previous.text):
+            return (
+                audio_gap_ms >= self.stable_refresh_min_audio_ms
+                and _visible_char_count(transcript.text) >= self.stable_refresh_min_chars
+            )
+
+        delta_chars = _visible_char_count(transcript.text[len(previous.text) :])
+        if delta_chars < self.stable_refresh_min_chars:
+            return False
+        return audio_gap_ms >= self.stable_refresh_min_audio_ms or _ends_with_weak_boundary(
+            transcript.text
+        )
 
     def _source_only_translation(self, transcript: TranscriptSegment) -> TranslationSegment:
         return TranslationSegment(
@@ -265,3 +369,18 @@ class CascadedInterpretationEngine(InterpretationEngine):
             glossary_constraints=context_constraints,
             max_revision_segments=self.revision_window_segments,
         )
+
+
+def _visible_char_count(text: str) -> int:
+    return len([char for char in text if not char.isspace()])
+
+
+def _ends_with_weak_boundary(text: str) -> bool:
+    return text.rstrip().endswith((",", "，", ";", "；", ":", "："))
+
+
+def _metric_value(metrics: dict[str, float], key: str) -> float:
+    value = metrics.get(key)
+    if value is None:
+        return -1.0
+    return float(value)

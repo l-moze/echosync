@@ -24,6 +24,11 @@ def test_caption_websocket_starts_producer_for_connected_client() -> None:
                 "stability": 1.0,
                 "start_ms": 0,
                 "end_ms": 1600,
+                "metrics": {
+                    "asr_latency_ms": 80.0,
+                    "translation_first_token_ms": 120.0,
+                    "translation_latency_ms": 180.0,
+                },
             },
         )
 
@@ -35,6 +40,7 @@ def test_caption_websocket_starts_producer_for_connected_client() -> None:
 
     assert message["type"] == "translation.partial"
     assert message["target_text"] == "[zh] Hello from the caption pipeline."
+    assert isinstance(message["published_at_ms"], int)
 
 
 def test_caption_server_does_not_start_demo_producer_by_default(monkeypatch) -> None:

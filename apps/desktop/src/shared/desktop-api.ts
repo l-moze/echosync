@@ -1,5 +1,6 @@
 import type { RealtimeEvent } from "./realtime-events";
 import type { DesktopAudioSource, DesktopAudioSourceId } from "./audio-source-catalog";
+import type { AgentCapabilities } from "./agent-capabilities";
 import type { SubtitleStyleState } from "./subtitle-style-state";
 
 export type DesktopWindowRole = "control" | "overlay" | "subtitle-style";
@@ -14,6 +15,7 @@ export type DesktopCaptureSnapshot = {
 };
 
 export type DesktopApi = {
+  getAgentCapabilities: () => Promise<AgentCapabilities>;
   listAudioSources: () => Promise<DesktopAudioSource[]>;
   getCaptureState: () => Promise<DesktopCaptureSnapshot>;
   startCapture: (sourceId: DesktopAudioSourceId, sessionId?: string) => Promise<DesktopCaptureSnapshot>;

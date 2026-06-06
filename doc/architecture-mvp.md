@@ -81,7 +81,7 @@ Electron getDisplayMedia(loopback)
   -> Electron overlay caption-store
 ```
 
-Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit`。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider` 或 `translation_provider` 覆盖后端 `.env` 默认值；API key、base URL 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr` 或 `voxtral`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，方便现场拆分采集、传输、ASR 和翻译延迟。
+Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit`。Agent 同时暴露 `/healthz` 和 `/v1/realtime/capabilities`，用于 Desktop 启动前确认默认 provider、缺失密钥和缺失依赖。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider` 或 `translation_provider` 覆盖后端 `.env` 默认值；API key、base URL 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr` 或 `voxtral`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，字幕事件携带 `published_at_ms` 和模型指标，方便现场拆分采集、传输、ASR、翻译和 UI 接收延迟。
 
 桌面 UI 生命周期：
 
@@ -89,7 +89,7 @@ Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分
 Idle -> Active -> Finished
 ```
 
-`Idle` 负责视频/网课默认开箱和起飞前音频电平校验；`Active` 负责转写监控、健康度、术语快加和自动滚动锁；`Finished` 负责复盘、导出前清理和沉淀。收到当前会话 `realtime.error` 时，renderer 会停止本地音频 client、通知主进程回收采集状态，并退回带错误详情的失败浮层。透明字幕窗按 Layer A/B/C 分层，默认穿透，Hover 唤醒轻控制，Pin 后展示最近 2-3 行和字幕状态；字幕样式支持双语、主字幕、翻译字幕三种显示模式，旧 `line/split` 值归一为双语模式。桌面端的状态模型放在 `apps/desktop/src/shared/session-ui-state.ts` 和 `apps/desktop/src/shared/overlay-interaction.ts`，后续 Web 工作台可以复用同一语义而不共享 Electron IPC。
+`Idle` 负责视频/网课默认开箱、起飞前音频电平校验、ASR provider、ASR 延迟模式和翻译 provider 选择；开始同传前会读取 Agent capabilities 并阻止不可用组合。`Active` 负责转写监控、健康度、术语快加和自动滚动锁；`Finished` 负责复盘、导出前清理和沉淀。收到当前会话 `realtime.error` 时，renderer 会停止本地音频 client、通知主进程回收采集状态，并退回带错误详情的失败浮层。透明字幕窗按 Layer A/B/C 分层，默认穿透，Hover 唤醒轻控制，Pin 后展示最近 2-3 行和字幕状态；字幕样式支持双语、主字幕、翻译字幕三种显示模式，旧 `line/split` 值归一为双语模式。桌面端的状态模型放在 `apps/desktop/src/shared/session-ui-state.ts` 和 `apps/desktop/src/shared/overlay-interaction.ts`，后续 Web 工作台可以复用同一语义而不共享 Electron IPC。
 
 ### 1.6. 会话回放记录
 
@@ -141,8 +141,8 @@ SessionArchiveDraft
 
 选型：
 
-- ASR：当前 provider 支持 `mock`、`funasr`、`voxtral`。FunASR 本地 AutoModel 适配器在 `services/asr/funasr_transcriber.py`，会把 80ms 传输帧聚合成推理窗口：`low_latency` 约 320ms、`balanced` 默认 600ms、`accuracy` 约 900ms；Voxtral Realtime 云端适配器在 `services/asr/voxtral_transcriber.py`，适合英语技术分享和国际会议。Deepgram/Azure 属于下一批低延迟/高稳定云端候选，尚未进入可选 provider。媒体文件抽音频由 `services/media/ffmpeg_audio_source.py` 完成。
-- 翻译：当前 provider 支持 `mock`、`deepseek`。DeepSeek 兼容 OpenAI API 的适配器在 `services/translation/deepseek_translator.py`；Desktop 的“通用模型”不发送覆盖字段，沿用 Agent `.env`，显式选择 `DeepSeek-V3` 时只发送 `translation_provider=deepseek`。
+- ASR：当前 provider 支持 `mock`、`funasr`、`voxtral`。FunASR 本地 AutoModel 适配器在 `services/asr/funasr_transcriber.py`，会把 80ms 传输帧聚合成推理窗口：`low_latency` 约 320ms、`balanced` 默认 600ms、`accuracy` 约 900ms；Voxtral Realtime 云端适配器在 `services/asr/voxtral_transcriber.py`，并按 `asr_latency_mode` 映射目标等待：`low_latency` 最多 480ms、`balanced` 沿用 `VOXTRAL_TARGET_DELAY_MS`、`accuracy` 至少 1600ms。Deepgram/Azure 属于下一批低延迟/高稳定云端候选，尚未进入可选 provider。媒体文件抽音频由 `services/media/ffmpeg_audio_source.py` 完成，默认使用 ffmpeg stdout 流式读取并在线分帧，避免 MP4 复盘时等待完整文件解码。
+- 翻译：当前 provider 支持 `mock`、`deepseek`。DeepSeek 兼容 OpenAI API 的适配器在 `services/translation/deepseek_translator.py`；Desktop 的“通用模型”不发送覆盖字段，沿用 Agent `.env`，显式选择 `DeepSeek-V3` 时只发送 `translation_provider=deepseek`。Desktop 会通过 capabilities 在启动前发现缺失的 `DEEPSEEK_API_KEY` 或 SDK。
 - TTS：edge-tts 适配器在 `services/tts/edge_tts_synthesizer.py`，先作为可选输出。
 
 原则落实：
@@ -295,7 +295,7 @@ AudioFrame 流
 - Windows 系统声音已用 Electron display media loopback + Web Audio PCM sender 接入 Agent `8766` 实时链路；音频传输已从 base64 JSON chunk 改为 JSON control + binary PCM frame。稳定版本再替换为 AudioWorklet 或 WASAPI loopback 原生适配器。
 - 麦克风源已改走 `getUserMedia({ audio: true })`，不再复用系统声的 `getDisplayMedia` 分支。
 - renderer 已加轻量音频门控：响度超过阈值后发送约 80ms PCM binary frame，连续静音后给上一块活跃音频标记 `is_final=true`。FunASR 适配器内部按 `FUNASR_CHUNK_MS` 聚合小传输帧，避免把 80ms 网络帧直接等同于模型推理窗。后续如果 ASR 对静音停发敏感，可按调研文档改为持续发送 silence frame 或 keepalive。
-- 混音和文件回放在未实现前应标记为不可用或实验入口，避免 UI 误导。
+- Agent 文件源已支持 ffmpeg 流式分帧；Desktop 文件回放和混音入口未形成完整产品链路前应标记为实验入口，避免 UI 误导。
 - LiveKit token、LiveKit Room 和 `LiveKitAgentBridge` 作为后续远程传输适配任务，不阻塞当前 Windows 本地 MVP。
 
 ### 阶段 2：MVP AI 链路
