@@ -10,6 +10,9 @@ export function createCaptionEventBuffer(maxEvents = 50): CaptionEventBuffer {
 
   return {
     push(event) {
+      if (event.type === "tts.audio") {
+        return;
+      }
       events.push(event);
       if (events.length > maxEvents) {
         events.splice(0, events.length - maxEvents);

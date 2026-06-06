@@ -42,6 +42,16 @@ describe("字幕弹窗样式契约", () => {
     expect(cssRule(".floatingCaption")).toContain("box-sizing: border-box");
   });
 
+  it("默认态也不收窄字幕窗口，避免两端和边角露出父层", () => {
+    const defaultCaptionRule = cssRule(".overlayStage.layer-default .floatingCaption");
+
+    expect(defaultCaptionRule).toContain("width: 100%");
+    expect(defaultCaptionRule).not.toMatch(/\bcalc\(100vw\s*-/);
+    expect(defaultCaptionRule).not.toMatch(/\bwidth\s*:\s*min\(/);
+    expect(defaultCaptionRule).not.toContain("align-self: center");
+    expect(defaultCaptionRule).not.toContain("justify-self: center");
+  });
+
   it("resize 手柄不绘制独立矩形角标", () => {
     expect(stylesheet).not.toContain(".resize-se::after");
   });

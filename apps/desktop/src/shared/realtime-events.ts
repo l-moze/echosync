@@ -122,11 +122,27 @@ export type RealtimeDoneEvent = {
   published_at_ms?: number;
 };
 
+export type TtsAudioEvent = {
+  type: "tts.audio";
+  session_id: string;
+  segment_id: string;
+  rev: number;
+  start_ms: number;
+  end_ms: number;
+  target_lang: string;
+  audio_base64: string;
+  mime_type: string;
+  sample_rate: number | null;
+  final: boolean;
+  published_at_ms?: number;
+};
+
 export type RealtimeEvent =
   | TranscriptEvent
   | SubtitleEvent
   | CaptionUpdateEvent
   | SubtitlePatchEvent
   | SubtitleCommitEvent
+  | TtsAudioEvent
   | RealtimeErrorEvent
   | RealtimeDoneEvent;

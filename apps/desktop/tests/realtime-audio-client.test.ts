@@ -341,6 +341,42 @@ describe("renderer realtime audio client", () => {
     await client.stop();
   });
 
+  it("declares the selected TTS provider when starting a realtime session", async () => {
+    const stream = createFakeMediaStream();
+    const sockets: FakeWebSocket[] = [];
+    vi.stubGlobal("WebSocket", class extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    });
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getDisplayMedia: vi.fn().mockResolvedValue(stream)
+      }
+    });
+    vi.stubGlobal("window", {
+      AudioContext: FakeAudioContext,
+      webkitAudioContext: undefined
+    });
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+
+    const client = createRealtimeAudioClient({
+      endpointBaseUrl: "ws://agent/realtime",
+      sessionId: "sess_tts_provider",
+      sourceId: "windows-system",
+      ttsProvider: "edge-tts"
+    });
+
+    await client.start();
+
+    expect(JSON.parse(sockets[0]?.sentMessages[0] as string)).toMatchObject({
+      tts_provider: "edge-tts",
+      type: "audio.start"
+    });
+    await client.stop();
+  });
+
   it("sends encoded audio as binary websocket frames", async () => {
     const audioContext = new FakeAudioContext();
     FakeAudioContext.nextInstance = audioContext;

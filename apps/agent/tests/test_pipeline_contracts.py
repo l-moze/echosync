@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from echosync_agent.domain import AudioFrame
@@ -24,6 +25,42 @@ async def _frames() -> AsyncIterator[AudioFrame]:
 
 def test_pipeline_emits_translation_and_commit_events() -> None:
     asyncio.run(_assert_pipeline_emits_translation_and_commit_events())
+
+
+def test_pipeline_emits_tts_audio_when_provider_enabled(monkeypatch: Any) -> None:
+    class FakeEdgeTtsSynthesizer:
+        def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural") -> None:
+            self.voice = voice
+
+        async def synthesize(self, _segment: object) -> AsyncIterator[bytes]:
+            yield b"tts-audio"
+
+    monkeypatch.setattr(
+        "echosync_agent.services.tts.factory.EdgeTtsSynthesizer",
+        FakeEdgeTtsSynthesizer,
+    )
+
+    async def run() -> list[tuple[str, object]]:
+        settings = replace(_mock_settings(), tts_provider="edge-tts")
+        pipeline, event_bus = build_demo_pipeline(settings)
+        await pipeline.run(_frames())
+        return event_bus.events
+
+    events = asyncio.run(run())
+
+    event_types = [event_type for event_type, _ in events]
+    assert event_types[:8] == [
+        "transcript.partial",
+        "caption_update",
+        "translation.partial",
+        "caption_update",
+        "translation.partial",
+        "caption_update",
+        "segment.commit",
+        "caption_update",
+    ]
+    tts_event = next(payload for event_type, payload in events if event_type == "tts.audio")
+    assert tts_event["audio_base64"] == "dHRzLWF1ZGlv"
 
 
 def test_pipeline_forwards_caption_update_events_to_caption_event_bus() -> None:
@@ -97,6 +134,11 @@ def _mock_settings() -> Settings:
         deepseek_base_url="https://api.deepseek.com/v1",
         deepseek_model="deepseek-chat",
         edge_tts_voice="zh-CN-XiaoxiaoNeural",
+        elevenlabs_api_key="",
+        elevenlabs_voice_id="",
+        elevenlabs_model="eleven_multilingual_v2",
+        elevenlabs_output_format="mp3_44100_128",
+        elevenlabs_optimize_streaming_latency=None,
         mistral_api_key="",
         voxtral_model="voxtral-mini-transcribe-realtime-2602",
         voxtral_target_delay_ms=1000,

@@ -116,7 +116,7 @@ describe("主页 Stateful Hybrid 状态模型", () => {
     });
     expect(connecting.startup).toMatchObject({
       phase: "connecting_agent",
-      message: "正在连接 Agent..."
+      message: "正在连接同传服务..."
     });
     expect(opening.startup).toMatchObject({
       phase: "opening_overlay",
@@ -135,7 +135,7 @@ describe("主页 Stateful Hybrid 状态模型", () => {
     const cancelled = reduceSessionUiState(slow, { type: "startup.cancelled" });
 
     expect(slow.startup.canCancel).toBe(true);
-    expect(slow.startup.detail).toContain("检查 Agent");
+    expect(slow.startup.detail).toContain("检查同传服务");
     expect(completed.startup.phase).toBe("idle");
     expect(cancelled.startup.phase).toBe("idle");
   });
@@ -166,7 +166,7 @@ describe("主页 Stateful Hybrid 状态模型", () => {
 
     const failed = reduceSessionUiState(active, {
       type: "startup.failed",
-      message: "当前是 mock ASR，不能处理真实音频。"
+      message: "当前调试识别方案不能处理真实音频。"
     });
 
     expect(failed.lifecycle).toBe("idle");
@@ -174,7 +174,7 @@ describe("主页 Stateful Hybrid 状态模型", () => {
     expect(failed.controlBarVisible).toBe(false);
     expect(failed.startup).toMatchObject({
       phase: "failed",
-      detail: "当前是 mock ASR，不能处理真实音频。"
+      detail: "当前调试识别方案不能处理真实音频。"
     });
   });
 

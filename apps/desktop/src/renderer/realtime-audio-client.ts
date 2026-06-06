@@ -1,5 +1,6 @@
 import type { DesktopAudioSourceId } from "../shared/audio-source-catalog";
 import type { AsrLatencyMode, AsrProviderId } from "../shared/asr-provider-catalog";
+import type { TtsProviderId } from "../shared/agent-capabilities";
 import type { TranslationProviderId } from "../shared/translation-provider-catalog";
 
 import { createAudioGate, type AudioGateChunk } from "./audio-gate";
@@ -32,6 +33,7 @@ export type RealtimeAudioClientOptions = {
   recorder?: SessionRecorder;
   sessionId?: string;
   translationProvider?: TranslationProviderId;
+  ttsProvider?: TtsProviderId;
 };
 
 export function createRealtimeAudioClient({
@@ -42,7 +44,8 @@ export function createRealtimeAudioClient({
   sessionId = createSessionId(),
   sourceId,
   sourceLang = "en",
-  translationProvider
+  translationProvider,
+  ttsProvider
 }: RealtimeAudioClientOptions): RealtimeAudioClient {
   let socket: WebSocket | null = null;
   let mediaStream: MediaStream | null = null;
@@ -93,6 +96,9 @@ export function createRealtimeAudioClient({
       }
       if (translationProvider) {
         startMessage.translation_provider = translationProvider;
+      }
+      if (ttsProvider) {
+        startMessage.tts_provider = ttsProvider;
       }
       socket.send(JSON.stringify(startMessage));
 
@@ -219,7 +225,7 @@ function openRealtimeSocket(url: string) {
   return new Promise<WebSocket>((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.addEventListener("open", () => resolve(ws), { once: true });
-    ws.addEventListener("error", () => reject(new Error(`无法连接 Agent 实时音频入口：${url}`)), {
+    ws.addEventListener("error", () => reject(new Error(`无法连接同传服务实时音频入口：${url}`)), {
       once: true
     });
   });

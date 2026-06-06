@@ -406,7 +406,10 @@ async def _assert_pipeline_emits_translation_and_commit_events() -> None:
     await pipeline.run(_frames())
 
     event_types = [event_type for event_type, _ in event_bus.events]
-    assert event_types == [
+    legacy_event_types = [
+        event_type for event_type in event_types if event_type != "caption_update"
+    ]
+    assert legacy_event_types == [
         "transcript.partial",
         "translation.partial",
         "translation.partial",
@@ -414,10 +417,13 @@ async def _assert_pipeline_emits_translation_and_commit_events() -> None:
     ]
     assert event_bus.events[0][1]["source_text"] == "Vector database latency matters."
     assert event_bus.events[0][1]["target_text"] == ""
-    assert event_bus.events[1][1]["source_text"] == "Vector database latency matters."
-    assert event_bus.events[1][1]["target_text"] == "[zh]"
-    assert event_bus.events[2][1]["target_text"].startswith("[zh] Vector")
-    assert event_bus.events[3][1]["final"] is True
+    legacy_events = [
+        payload for event_type, payload in event_bus.events if event_type != "caption_update"
+    ]
+    assert legacy_events[1]["source_text"] == "Vector database latency matters."
+    assert legacy_events[1]["target_text"] == "[zh]"
+    assert legacy_events[2]["target_text"].startswith("[zh] Vector")
+    assert legacy_events[3]["final"] is True
 
 
 def _mock_settings() -> Settings:
@@ -434,6 +440,11 @@ def _mock_settings() -> Settings:
         deepseek_base_url="https://api.deepseek.com/v1",
         deepseek_model="deepseek-chat",
         edge_tts_voice="zh-CN-XiaoxiaoNeural",
+        elevenlabs_api_key="",
+        elevenlabs_voice_id="",
+        elevenlabs_model="eleven_multilingual_v2",
+        elevenlabs_output_format="mp3_44100_128",
+        elevenlabs_optimize_streaming_latency=None,
         mistral_api_key="",
         voxtral_model="voxtral-mini-transcribe-realtime-2602",
         voxtral_target_delay_ms=1000,
@@ -461,6 +472,11 @@ def test_empty_glossary_pipeline() -> None:
         deepseek_base_url="https://api.deepseek.com/v1",
         deepseek_model="deepseek-chat",
         edge_tts_voice="zh-CN-XiaoxiaoNeural",
+        elevenlabs_api_key="",
+        elevenlabs_voice_id="",
+        elevenlabs_model="eleven_multilingual_v2",
+        elevenlabs_output_format="mp3_44100_128",
+        elevenlabs_optimize_streaming_latency=None,
         mistral_api_key="",
         voxtral_model="voxtral-mini-transcribe-realtime-2602",
         voxtral_target_delay_ms=1000,
@@ -492,6 +508,11 @@ def test_missing_default_csv_pipeline(tmp_path: Path) -> None:
         deepseek_base_url="https://api.deepseek.com/v1",
         deepseek_model="deepseek-chat",
         edge_tts_voice="zh-CN-XiaoxiaoNeural",
+        elevenlabs_api_key="",
+        elevenlabs_voice_id="",
+        elevenlabs_model="eleven_multilingual_v2",
+        elevenlabs_output_format="mp3_44100_128",
+        elevenlabs_optimize_streaming_latency=None,
         mistral_api_key="",
         voxtral_model="voxtral-mini-transcribe-realtime-2602",
         voxtral_target_delay_ms=1000,
@@ -681,7 +702,7 @@ def test_cascaded_context_keeps_unique_terms_after_repeated_matches() -> None:
         glossary=glossary,
     )
 
-    ctx = engine._context(("API " * 20) + "LiveKit handles media")
+    ctx = engine._context(("API " * 20) + "LiveKit handles media", "seg_terms")
 
     assert ctx.glossary["API"] == "API"
     assert ctx.glossary["LiveKit"] == "LiveKit"

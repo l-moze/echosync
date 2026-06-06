@@ -28,6 +28,7 @@ def build_realtime_capabilities(
             "asr_provider": settings.asr_provider,
             "asr_latency_mode": settings.asr_latency_mode,
             "translation_provider": settings.translator_provider,
+            "tts_provider": settings.tts_provider,
             "target_lang": settings.target_lang,
         },
         "asr_latency_modes": ASR_LATENCY_MODES,
@@ -39,6 +40,11 @@ def build_realtime_capabilities(
         "translation_providers": [
             _mock_translation_capability(default=settings.translator_provider == "mock"),
             _deepseek_capability(settings, has_dependency),
+        ],
+        "tts_providers": [
+            _disabled_tts_capability(default=settings.tts_provider == "disabled"),
+            _edge_tts_capability(settings, has_dependency),
+            _elevenlabs_tts_capability(settings),
         ],
     }
 
@@ -142,6 +148,60 @@ def _deepseek_capability(
         "default": settings.translator_provider == "deepseek",
         "reason": reason,
         "model": settings.deepseek_model,
+    }
+
+
+def _disabled_tts_capability(*, default: bool) -> dict[str, Any]:
+    return {
+        "id": "disabled",
+        "label": "关闭",
+        "kind": "tts",
+        "status": "ready",
+        "available": True,
+        "default": default,
+        "reason": "字幕优先链路默认不启用语音播报。",
+        "model": "none",
+    }
+
+
+def _edge_tts_capability(
+    settings: Settings,
+    dependency_available: DependencyAvailable,
+) -> dict[str, Any]:
+    has_edge_tts = dependency_available("edge_tts")
+    return {
+        "id": "edge-tts",
+        "label": "Edge TTS",
+        "kind": "tts",
+        "status": "ready" if has_edge_tts else "missing_dependency",
+        "available": has_edge_tts,
+        "default": settings.tts_provider == "edge-tts",
+        "reason": "" if has_edge_tts else "缺少 edge-tts 依赖。",
+        "model": settings.edge_tts_voice,
+    }
+
+
+def _elevenlabs_tts_capability(settings: Settings) -> dict[str, Any]:
+    has_key = bool(settings.elevenlabs_api_key)
+    has_voice = bool(settings.elevenlabs_voice_id)
+    status = "ready"
+    reason = ""
+    if not has_key:
+        status = "missing_key"
+        reason = "缺少 ELEVENLABS_API_KEY。"
+    elif not has_voice:
+        status = "missing_config"
+        reason = "缺少 ELEVENLABS_VOICE_ID。"
+
+    return {
+        "id": "elevenlabs",
+        "label": "ElevenLabs",
+        "kind": "tts",
+        "status": status,
+        "available": status == "ready",
+        "default": settings.tts_provider == "elevenlabs",
+        "reason": reason,
+        "model": settings.elevenlabs_model,
     }
 
 

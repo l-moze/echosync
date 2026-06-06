@@ -32,6 +32,15 @@ describe("字幕文本视图", () => {
     expect(parts[1].isPlaceholder).toBe(true);
     expect(parts.some((part) => part.text.includes("正在翻译"))).toBe(false);
   });
+
+  it("无音频时使用中文等待占位", () => {
+    const parts = selectCaptionTextParts(undefined, defaultSubtitleStyle);
+
+    expect(parts.map((part) => part.text)).toEqual([
+      "等待音频输入...",
+      "等待 Windows 系统声音或麦克风输入"
+    ]);
+  });
 });
 
 function line(patch: Partial<CaptionLine>): CaptionLine {

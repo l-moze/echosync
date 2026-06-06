@@ -19,6 +19,7 @@ from echosync_agent.runtime.settings import (
     Settings,
     with_session_asr_overrides,
     with_session_translation_overrides,
+    with_session_tts_overrides,
 )
 
 logger = logging.getLogger(__name__)
@@ -217,18 +218,19 @@ class _RealtimeWebSocketSession:
                 return True
             self._start_pipeline()
             logger.info(
-                "audio_stream_started session_id=%s source_kind=%s device_id=%s "
-                "sample_rate=%d channels=%d source_lang=%s asr=%s mode=%s translator=%s",
+            "audio_stream_started session_id=%s source_kind=%s device_id=%s "
+            "sample_rate=%d channels=%d source_lang=%s asr=%s mode=%s translator=%s tts=%s",
                 self.session_id,
                 self.source_kind,
                 self.device_id,
                 self.sample_rate,
                 self.channels,
                 self.source_lang,
-                self.settings.asr_provider,
-                self.settings.asr_latency_mode,
-                self.settings.translator_provider,
-            )
+            self.settings.asr_provider,
+            self.settings.asr_latency_mode,
+            self.settings.translator_provider,
+            self.settings.tts_provider,
+        )
             return False
         if message_type == "audio.chunk":
             frame = await self._build_audio_frame(message)
@@ -279,6 +281,10 @@ class _RealtimeWebSocketSession:
         self.settings = with_session_translation_overrides(
             self.settings,
             translation_provider=message.get("translation_provider"),
+        )
+        self.settings = with_session_tts_overrides(
+            self.settings,
+            tts_provider=message.get("tts_provider"),
         )
         self.source_lang = str(message.get("source_lang", self.source_lang))
         self.sample_rate = int(message.get("sample_rate", self.sample_rate))

@@ -240,7 +240,7 @@ export function reduceSessionUiState(state: SessionUiState, event: SessionUiEven
       startup: {
         ...state.startup,
         canCancel: true,
-        detail: "启动时间较长，请检查 Agent 服务或网络连接。"
+        detail: "启动时间较长，请检查同传服务或网络连接。"
       }
     };
   }
@@ -357,7 +357,7 @@ const startupCopy: Record<Exclude<StartupPhase, "idle" | "failed">, { message: s
     detail: "请保持视频或会议正在播放。"
   },
   connecting_agent: {
-    message: "正在连接 Agent...",
+    message: "正在连接同传服务...",
     detail: "首次启动可能需要模型预热。"
   },
   opening_overlay: {

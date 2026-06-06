@@ -7,6 +7,7 @@ SUPPORTED_ASR_PROVIDERS = frozenset({"mock", "funasr", "voxtral"})
 NEXT_ASR_PROVIDER_CANDIDATES = frozenset({"deepgram", "azure"})
 SUPPORTED_ASR_LATENCY_MODES = frozenset({"low_latency", "balanced", "accuracy"})
 SUPPORTED_TRANSLATION_PROVIDERS = frozenset({"mock", "deepseek"})
+SUPPORTED_TTS_PROVIDERS = frozenset({"disabled", "edge-tts", "elevenlabs"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +24,11 @@ class Settings:
     deepseek_base_url: str
     deepseek_model: str
     edge_tts_voice: str
+    elevenlabs_api_key: str
+    elevenlabs_voice_id: str
+    elevenlabs_model: str
+    elevenlabs_output_format: str
+    elevenlabs_optimize_streaming_latency: int | None
     mistral_api_key: str
     voxtral_model: str
     voxtral_target_delay_ms: int
@@ -49,6 +55,13 @@ class Settings:
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-chat"),
             edge_tts_voice=getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural"),
+            elevenlabs_api_key=getenv("ELEVENLABS_API_KEY", ""),
+            elevenlabs_voice_id=getenv("ELEVENLABS_VOICE_ID", ""),
+            elevenlabs_model=getenv("ELEVENLABS_MODEL", "eleven_multilingual_v2"),
+            elevenlabs_output_format=getenv("ELEVENLABS_OUTPUT_FORMAT", "mp3_44100_128"),
+            elevenlabs_optimize_streaming_latency=_optional_int(
+                getenv("ELEVENLABS_OPTIMIZE_STREAMING_LATENCY", "")
+            ),
             mistral_api_key=getenv("MISTRAL_API_KEY", ""),
             voxtral_model=getenv("VOXTRAL_MODEL", "voxtral-mini-transcribe-realtime-2602"),
             voxtral_target_delay_ms=int(getenv("VOXTRAL_TARGET_DELAY_MS", "1000")),
@@ -64,6 +77,13 @@ class Settings:
             glossary_domain=getenv("ECHOSYNC_GLOSSARY_DOMAIN", "default"),
             glossary_terms_dir=getenv("ECHOSYNC_GLOSSARY_TERMS_DIR", ""),
         )
+
+
+def _optional_int(value: str) -> int | None:
+    text = value.strip()
+    if not text:
+        return None
+    return int(text)
 
 
 def with_session_asr_overrides(
@@ -121,3 +141,26 @@ def with_session_translation_overrides(
     if provider == settings.translator_provider:
         return settings
     return replace(settings, translator_provider=provider)
+
+
+def with_session_tts_overrides(
+    settings: Settings,
+    *,
+    tts_provider: object | None = None,
+) -> Settings:
+    """应用来自单个 realtime session 的 TTS 选择。
+
+    TTS 密钥、voice id、模型名等敏感或供应商配置仍来自服务端环境变量。
+    """
+
+    if tts_provider is None:
+        return settings
+
+    provider = str(tts_provider).strip().lower()
+    if not provider:
+        return settings
+    if provider not in SUPPORTED_TTS_PROVIDERS:
+        raise ValueError(f"不支持的 TTS provider：{provider}")
+    if provider == settings.tts_provider:
+        return settings
+    return replace(settings, tts_provider=provider)

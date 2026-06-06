@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from echosync_agent.domain import SegmentStatus
 
-
 BOUNDARY_PUNCTUATION = ".,!?;:，。！？；："
 DEFAULT_CJK_UNSTABLE_CHARS = 6
 DEFAULT_LATIN_UNSTABLE_TOKENS = 3
@@ -68,4 +67,3 @@ def _is_cjk_text(text: str, language: str) -> bool:
     if normalized_language.startswith("zh") or normalized_language in {"ja", "ko"}:
         return True
     return any("\u4e00" <= char <= "\u9fff" for char in text)
-

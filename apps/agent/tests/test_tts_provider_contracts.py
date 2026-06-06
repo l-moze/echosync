@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+
+from echosync_agent.domain import SegmentStatus, TranslatedAudioChunk, TranslationSegment
+from echosync_agent.runtime.event_bus import InMemoryEventBus
+from echosync_agent.runtime.settings import Settings
+from echosync_agent.services.tts.edge_tts_synthesizer import EdgeTtsSynthesizer
+from echosync_agent.services.tts.elevenlabs_synthesizer import ElevenLabsTtsSynthesizer
+from echosync_agent.services.tts.event_audio_sink import EventTranslatedAudioSink
+from echosync_agent.services.tts.factory import build_tts_synthesizer_from_settings
+
+
+def test_tts_factory_builds_disabled_edge_and_elevenlabs_providers() -> None:
+    assert build_tts_synthesizer_from_settings(_settings(tts_provider="disabled")) is None
+    assert isinstance(
+        build_tts_synthesizer_from_settings(_settings(tts_provider="edge-tts")),
+        EdgeTtsSynthesizer,
+    )
+    assert isinstance(
+        build_tts_synthesizer_from_settings(
+            _settings(
+                tts_provider="elevenlabs",
+                elevenlabs_api_key="test-key",
+                elevenlabs_voice_id="voice-1",
+            )
+        ),
+        ElevenLabsTtsSynthesizer,
+    )
+
+
+def test_tts_factory_rejects_elevenlabs_without_key_or_voice() -> None:
+    try:
+        build_tts_synthesizer_from_settings(
+            _settings(
+                tts_provider="elevenlabs",
+                elevenlabs_api_key="",
+                elevenlabs_voice_id="voice-1",
+            )
+        )
+    except ValueError as exc:
+        assert "ELEVENLABS_API_KEY" in str(exc)
+    else:
+        raise AssertionError("ElevenLabs TTS must require an API key")
+
+    try:
+        build_tts_synthesizer_from_settings(
+            _settings(
+                tts_provider="elevenlabs",
+                elevenlabs_api_key="test-key",
+                elevenlabs_voice_id="",
+            )
+        )
+    except ValueError as exc:
+        assert "ELEVENLABS_VOICE_ID" in str(exc)
+    else:
+        raise AssertionError("ElevenLabs TTS must require a voice id")
+
+
+def test_elevenlabs_synthesizer_streams_audio_with_configured_request() -> None:
+    fake_client = _FakeElevenLabsClient([b"audio-1", b"audio-2"])
+    synthesizer = ElevenLabsTtsSynthesizer(
+        api_key="test-key",
+        voice_id="voice-1",
+        model="eleven_multilingual_v2",
+        output_format="mp3_44100_128",
+        optimize_streaming_latency=2,
+        client=fake_client,
+    )
+
+    chunks = asyncio.run(_collect_bytes(synthesizer.synthesize(_segment("你好，欢迎。"))))
+
+    assert chunks == [b"audio-1", b"audio-2"]
+    assert fake_client.requests == [
+        {
+            "api_key": "test-key",
+            "voice_id": "voice-1",
+            "model": "eleven_multilingual_v2",
+            "output_format": "mp3_44100_128",
+            "optimize_streaming_latency": 2,
+            "text": "你好，欢迎。",
+        }
+    ]
+
+
+def test_event_audio_sink_publishes_tts_audio_as_base64_event() -> None:
+    async def run() -> InMemoryEventBus:
+        event_bus = InMemoryEventBus()
+        sink = EventTranslatedAudioSink(event_bus)
+        await sink.publish_audio(
+            TranslatedAudioChunk(
+                session_id="sess_tts",
+                segment_id="seg_tts",
+                rev=3,
+                start_ms=100,
+                end_ms=1200,
+                target_lang="zh-CN",
+                audio=b"audio-bytes",
+                mime_type="audio/mpeg",
+                final=True,
+            )
+        )
+        return event_bus
+
+    event_bus = asyncio.run(run())
+
+    assert event_bus.events == [
+        (
+            "tts.audio",
+            {
+                "type": "tts.audio",
+                "session_id": "sess_tts",
+                "segment_id": "seg_tts",
+                "rev": 3,
+                "start_ms": 100,
+                "end_ms": 1200,
+                "target_lang": "zh-CN",
+                "audio_base64": "YXVkaW8tYnl0ZXM=",
+                "mime_type": "audio/mpeg",
+                "sample_rate": None,
+                "final": True,
+            },
+        )
+    ]
+
+
+async def _collect_bytes(chunks: AsyncIterator[bytes]) -> list[bytes]:
+    return [chunk async for chunk in chunks]
+
+
+class _FakeElevenLabsClient:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.requests: list[dict[str, object]] = []
+
+    async def stream_text_to_speech(
+        self,
+        *,
+        api_key: str,
+        voice_id: str,
+        model: str,
+        output_format: str,
+        optimize_streaming_latency: int | None,
+        text: str,
+    ) -> AsyncIterator[bytes]:
+        self.requests.append(
+            {
+                "api_key": api_key,
+                "voice_id": voice_id,
+                "model": model,
+                "output_format": output_format,
+                "optimize_streaming_latency": optimize_streaming_latency,
+                "text": text,
+            }
+        )
+        for chunk in self.chunks:
+            yield chunk
+
+
+def _segment(text: str) -> TranslationSegment:
+    return TranslationSegment(
+        session_id="sess_tts",
+        segment_id="seg_tts",
+        rev=1,
+        source_rev=1,
+        start_ms=0,
+        end_ms=1200,
+        source_lang="en",
+        target_lang="zh-CN",
+        source_text="Welcome.",
+        target_text=text,
+        status=SegmentStatus.COMMITTED,
+        stability=1.0,
+    )
+
+
+def _settings(**overrides: object) -> Settings:
+    values = {
+        "asr_provider": "mock",
+        "translator_provider": "mock",
+        "tts_provider": "disabled",
+        "target_lang": "zh-CN",
+        "funasr_model": "paraformer-zh-streaming",
+        "funasr_device": "auto",
+        "funasr_chunk_ms": 600,
+        "asr_server_port": 8765,
+        "deepseek_api_key": "",
+        "deepseek_base_url": "https://api.deepseek.com/v1",
+        "deepseek_model": "deepseek-chat",
+        "edge_tts_voice": "zh-CN-XiaoxiaoNeural",
+        "elevenlabs_api_key": "",
+        "elevenlabs_voice_id": "",
+        "elevenlabs_model": "eleven_multilingual_v2",
+        "elevenlabs_output_format": "mp3_44100_128",
+        "elevenlabs_optimize_streaming_latency": None,
+        "mistral_api_key": "",
+        "voxtral_model": "voxtral-mini-transcribe-realtime-2602",
+        "voxtral_target_delay_ms": 1000,
+    }
+    values.update(overrides)
+    return Settings(**values)

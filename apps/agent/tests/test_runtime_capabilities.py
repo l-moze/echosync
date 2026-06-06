@@ -12,7 +12,7 @@ def test_capabilities_report_defaults_and_provider_readiness() -> None:
             mistral_api_key="",
             deepseek_api_key="",
         ),
-        dependency_available=lambda name: name in {"funasr", "modelscope", "openai"},
+        dependency_available=lambda name: name in {"edge_tts", "funasr", "modelscope", "openai"},
     )
 
     assert capabilities["defaults"] == {
@@ -20,11 +20,15 @@ def test_capabilities_report_defaults_and_provider_readiness() -> None:
         "asr_provider": "voxtral",
         "target_lang": "zh-CN",
         "translation_provider": "deepseek",
+        "tts_provider": "disabled",
     }
     assert _provider(capabilities["asr_providers"], "mock")["real_audio_supported"] is False
     assert _provider(capabilities["asr_providers"], "funasr")["status"] == "ready"
     assert _provider(capabilities["asr_providers"], "voxtral")["status"] == "missing_key"
     assert _provider(capabilities["translation_providers"], "deepseek")["status"] == "missing_key"
+    assert _provider(capabilities["tts_providers"], "disabled")["status"] == "ready"
+    assert _provider(capabilities["tts_providers"], "edge-tts")["status"] == "ready"
+    assert _provider(capabilities["tts_providers"], "elevenlabs")["status"] == "missing_key"
 
 
 def test_capabilities_report_missing_dependencies_without_importing_sdks() -> None:
@@ -44,6 +48,7 @@ def test_capabilities_report_missing_dependencies_without_importing_sdks() -> No
         _provider(capabilities["translation_providers"], "deepseek")["status"]
         == "missing_dependency"
     )
+    assert _provider(capabilities["tts_providers"], "edge-tts")["status"] == "missing_dependency"
 
 
 def _provider(providers: list[dict[str, object]], provider_id: str) -> dict[str, object]:
@@ -64,6 +69,11 @@ def _settings(**overrides: object) -> Settings:
         "deepseek_base_url": "https://api.deepseek.com/v1",
         "deepseek_model": "deepseek-chat",
         "edge_tts_voice": "zh-CN-XiaoxiaoNeural",
+        "elevenlabs_api_key": "",
+        "elevenlabs_voice_id": "",
+        "elevenlabs_model": "eleven_multilingual_v2",
+        "elevenlabs_output_format": "mp3_44100_128",
+        "elevenlabs_optimize_streaming_latency": None,
         "mistral_api_key": "",
         "voxtral_model": "voxtral-mini-transcribe-realtime-2602",
         "voxtral_target_delay_ms": 1000,

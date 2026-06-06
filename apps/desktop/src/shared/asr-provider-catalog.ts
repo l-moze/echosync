@@ -44,7 +44,7 @@ export const ASR_PROVIDER_OPTIONS: AsrProviderOption[] = [
 export const ASR_LATENCY_OPTIONS: AsrLatencyOption[] = [
   {
     id: "low_latency",
-    label: "低延迟",
+    label: "实时优先",
     description: "优先跟上直播节奏"
   },
   {
@@ -54,7 +54,7 @@ export const ASR_LATENCY_OPTIONS: AsrLatencyOption[] = [
   },
   {
     id: "accuracy",
-    label: "高准确",
+    label: "准确复盘",
     description: "允许更多等待"
   }
 ];

@@ -12,6 +12,7 @@ import {
   fetchAgentCapabilities
 } from "./agent-capabilities-client";
 import { createCaptionEventBuffer } from "./caption-event-buffer";
+import { resolveAppIconPath } from "./desktop-resources";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
 import {
   createDefaultOverlayWindowSizeState,
@@ -36,6 +37,11 @@ const AGENT_HTTP_BASE_URL =
 const rendererUrl = process.env.ECHOSYNC_DESKTOP_RENDERER_URL;
 const preloadPath = path.join(__dirname, "../preload/index.js");
 const rendererFile = path.join(__dirname, "../renderer/index.html");
+const appIconPath = resolveAppIconPath({
+  isPackaged: app.isPackaged,
+  mainDir: __dirname,
+  resourcesPath: process.resourcesPath
+});
 
 let controlWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
@@ -74,6 +80,7 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay" |
     skipTaskbar: preset.skipTaskbar,
     resizable: preset.resizable,
     hasShadow: preset.hasShadow,
+    icon: appIconPath,
     backgroundColor: preset.backgroundColor,
     webPreferences: {
       contextIsolation: true,
@@ -209,7 +216,7 @@ function registerIpc() {
       sourceId,
       state: source ? "listening" : "error",
       message: source
-        ? `${source.label} 已开始采集，PCM 正在送入 Agent 实时链路。`
+        ? `${source.label} 已开始采集，音频正在送入同传服务。`
         : "未知音频源。",
       sessionId: source ? sessionId : undefined
     };
@@ -344,6 +351,9 @@ function wakeOverlayControls() {
   window.moveTop();
   sendToWindow(window, "overlay:wake-controls");
 }
+
+app.setAppUserModelId("com.echosync.desktop");
+app.setName("EchoSync");
 
 app.whenReady().then(() => {
   registerIpc();

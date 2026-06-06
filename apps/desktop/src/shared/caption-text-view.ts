@@ -13,7 +13,7 @@ export function selectCaptionTextParts(
   subtitleStyle: SubtitleStyleState
 ): CaptionTextPart[] {
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
-  const sourceText = line?.sourceText.trim() || "Waiting for audio stream...";
+  const sourceText = line?.sourceText.trim() || "等待音频输入...";
   const targetText = line
     ? line.targetText.trim()
     : "等待 Windows 系统声音或麦克风输入";

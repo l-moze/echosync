@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   defaultSubtitleStyle,
+  captionStateDisplayLabel,
   normalizeSubtitleDisplayMode,
   reduceSubtitleStyleState,
+  selectSubtitleFontWeight,
+  subtitleDisplayModeLabel,
   type SubtitleDisplayMode
 } from "../src/shared/subtitle-style-state";
 
@@ -28,6 +31,19 @@ describe("字幕样式共享状态", () => {
     expect(modes).toEqual(["bilingual", "source", "translation"]);
   });
 
+  it("显示模式使用面向用户的中文文案", () => {
+    expect(subtitleDisplayModeLabel("bilingual")).toBe("双语字幕");
+    expect(subtitleDisplayModeLabel("source")).toBe("只看原文");
+    expect(subtitleDisplayModeLabel("translation")).toBe("只看译文");
+  });
+
+  it("字幕状态标签不暴露内部英文枚举", () => {
+    expect(captionStateDisplayLabel("interim")).toBe("临时");
+    expect(captionStateDisplayLabel("stable")).toBe("稳定");
+    expect(captionStateDisplayLabel("revised")).toBe("已修订");
+    expect(captionStateDisplayLabel("locked")).toBe("已锁定");
+  });
+
   it("合并局部样式更新并保留其他字段", () => {
     const next = reduceSubtitleStyleState(defaultSubtitleStyle, {
       targetScale: 34,
@@ -46,6 +62,13 @@ describe("字幕样式共享状态", () => {
 
     expect(next.windowShadow).toBe(0.24);
     expect(next.outlineStyle).toBe(defaultSubtitleStyle.outlineStyle);
+  });
+
+  it("为主字幕和翻译字幕提供有明显差异的常规/加粗字重", () => {
+    expect(selectSubtitleFontWeight("source", false)).toBe(400);
+    expect(selectSubtitleFontWeight("source", true)).toBe(800);
+    expect(selectSubtitleFontWeight("target", false)).toBe(500);
+    expect(selectSubtitleFontWeight("target", true)).toBe(850);
   });
 
   it("兼容旧版 line/split 显示模式配置", () => {

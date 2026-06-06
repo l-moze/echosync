@@ -11,6 +11,8 @@ from echosync_agent.services.subtitle.event_sink import EventSubtitleSink
 from echosync_agent.services.translation.deepseek_translator import DeepSeekTranslator
 from echosync_agent.services.translation.mock_translator import MockTranslator
 from echosync_agent.services.translation.terminology import Glossary
+from echosync_agent.services.tts.event_audio_sink import EventTranslatedAudioSink
+from echosync_agent.services.tts.factory import build_tts_synthesizer_from_settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,8 @@ def build_demo_pipeline(
         subtitle_sink=EventSubtitleSink(event_bus),
         target_lang=resolved.target_lang,
         glossary=glossary,
+        tts_synthesizer=build_tts_synthesizer_from_settings(resolved),
+        audio_sink=EventTranslatedAudioSink(event_bus),
     )
     return pipeline, event_bus
 
@@ -58,6 +62,7 @@ def _subscribe_caption_pusher(event_bus: InMemoryEventBus, caption_event_bus: ob
         "caption_update",
         "translation.patch",
         "segment.commit",
+        "tts.audio",
     ):
         event_bus.subscribe(event_type, _push)
 

@@ -16,6 +16,8 @@ export type CaptionLine = {
   patchCount: number;
 };
 
+export type CaptionLineDisplayMode = "bilingual" | "source" | "translation";
+
 export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): CaptionLine[] {
   const receivedAtMs = Date.now();
   if (event.type === "transcript.partial") {
@@ -63,16 +65,22 @@ export function isRealtimeEventForActiveSession(
 }
 
 export function selectActiveCaptionLine(lines: CaptionLine[]): CaptionLine | undefined {
-  return lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
-    if (!line.sourceText && !line.targetText) {
-      return latest;
-    }
-    const order = line.receivedAtMs ?? index;
-    if (!latest || order >= latest.order) {
-      return { line, order };
-    }
-    return latest;
-  }, undefined)?.line;
+  return selectLatestCaptionLine(lines, (line) => Boolean(line.sourceText || line.targetText));
+}
+
+export function selectActiveCaptionLineForDisplay(
+  lines: CaptionLine[],
+  displayMode: CaptionLineDisplayMode
+): CaptionLine | undefined {
+  if (displayMode === "translation") {
+    return selectLatestCaptionLine(lines, (line) => Boolean(line.targetText.trim()));
+  }
+
+  if (displayMode === "source") {
+    return selectLatestCaptionLine(lines, (line) => Boolean(line.sourceText.trim())) ?? selectActiveCaptionLine(lines);
+  }
+
+  return selectActiveCaptionLine(lines);
 }
 
 export function selectOverlayHistoryLines(
@@ -88,6 +96,34 @@ export function selectOverlayHistoryLines(
   return candidates.slice(-maxLines);
 }
 
+export function selectOverlayHistoryLinesForDisplay(
+  layer: OverlayLayer,
+  lines: CaptionLine[],
+  activeLineId: string | undefined,
+  displayMode: CaptionLineDisplayMode,
+  maxLines = overlayHistoryLimit(layer)
+): CaptionLine[] {
+  if (displayMode === "translation") {
+    return selectOverlayHistoryLines(
+      layer,
+      lines.filter((line) => Boolean(line.targetText.trim())),
+      activeLineId,
+      maxLines
+    );
+  }
+
+  if (displayMode === "source") {
+    return selectOverlayHistoryLines(
+      layer,
+      lines.filter((line) => Boolean(line.sourceText.trim())),
+      activeLineId,
+      maxLines
+    );
+  }
+
+  return selectOverlayHistoryLines(layer, lines, activeLineId, maxLines);
+}
+
 function overlayHistoryLimit(layer: OverlayLayer): number {
   if (layer === "pinned") {
     return 24;
@@ -96,6 +132,22 @@ function overlayHistoryLimit(layer: OverlayLayer): number {
     return 10;
   }
   return 1;
+}
+
+function selectLatestCaptionLine(
+  lines: CaptionLine[],
+  predicate: (line: CaptionLine) => boolean
+): CaptionLine | undefined {
+  return lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
+    if (!predicate(line)) {
+      return latest;
+    }
+    const order = line.receivedAtMs ?? index;
+    if (!latest || order >= latest.order) {
+      return { line, order };
+    }
+    return latest;
+  }, undefined)?.line;
 }
 
 function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs: number): CaptionLine[] {

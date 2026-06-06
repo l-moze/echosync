@@ -4,7 +4,7 @@ import type { AgentCapabilities } from "../src/shared/agent-capabilities";
 import { validateRealtimePreflight } from "../src/shared/realtime-preflight";
 
 describe("实时同传启动预检", () => {
-  it("阻止 mock ASR 处理真实 Windows 系统声音", () => {
+  it("阻止调试识别方案处理真实 Windows 系统声音", () => {
     const message = validateRealtimePreflight({
       asrLatencyMode: "balanced",
       asrProvider: "server-default",
@@ -12,10 +12,11 @@ describe("实时同传启动预检", () => {
         defaultAsrProvider: "mock"
       }),
       sourceId: "windows-system",
+      ttsProvider: "server-default",
       translationProvider: "server-default"
     });
 
-    expect(message).toContain("mock ASR");
+    expect(message).toContain("调试识别方案");
     expect(message).toContain("真实音频");
   });
 
@@ -27,6 +28,7 @@ describe("实时同传启动预检", () => {
         voxtralStatus: "missing_key"
       }),
       sourceId: "windows-system",
+      ttsProvider: "server-default",
       translationProvider: "server-default"
     });
 
@@ -41,6 +43,7 @@ describe("实时同传启动预检", () => {
         deepseekStatus: "missing_key"
       }),
       sourceId: "windows-system",
+      ttsProvider: "server-default",
       translationProvider: "deepseek"
     });
 
@@ -53,6 +56,7 @@ describe("实时同传启动预检", () => {
       asrProvider: "funasr",
       capabilities: capabilities({}),
       sourceId: "mixed",
+      ttsProvider: "server-default",
       translationProvider: "mock"
     });
     const file = validateRealtimePreflight({
@@ -60,6 +64,7 @@ describe("实时同传启动预检", () => {
       asrProvider: "funasr",
       capabilities: capabilities({}),
       sourceId: "file",
+      ttsProvider: "server-default",
       translationProvider: "mock"
     });
 
@@ -67,19 +72,20 @@ describe("实时同传启动预检", () => {
     expect(file).toContain("尚未完整接入");
   });
 
-  it("允许可用 ASR 和翻译 provider 处理真实音频", () => {
+  it("允许可用识别和翻译方案处理真实音频", () => {
     const message = validateRealtimePreflight({
       asrLatencyMode: "balanced",
       asrProvider: "funasr",
       capabilities: capabilities({}),
       sourceId: "windows-system",
+      ttsProvider: "disabled",
       translationProvider: "mock"
     });
 
     expect(message).toBeNull();
   });
 
-  it("阻止后端不支持的 ASR 延迟模式", () => {
+  it("阻止后端不支持的延迟模式", () => {
     const message = validateRealtimePreflight({
       asrLatencyMode: "accuracy",
       asrProvider: "funasr",
@@ -87,10 +93,42 @@ describe("实时同传启动预检", () => {
         asrLatencyModes: ["low_latency", "balanced"]
       }),
       sourceId: "windows-system",
+      ttsProvider: "server-default",
       translationProvider: "mock"
     });
 
-    expect(message).toContain("ASR 延迟模式");
+    expect(message).toContain("当前延迟模式");
+  });
+
+  it("阻止缺少配置的 ElevenLabs 语音播报会话", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "funasr",
+      capabilities: capabilities({
+        elevenLabsTtsStatus: "missing_config"
+      }),
+      sourceId: "windows-system",
+      ttsProvider: "elevenlabs",
+      translationProvider: "mock"
+    });
+
+    expect(message).toContain("ELEVENLABS_VOICE_ID");
+  });
+
+  it("允许显式关闭不可用的后端默认语音播报", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "funasr",
+      capabilities: capabilities({
+        defaultTtsProvider: "elevenlabs",
+        elevenLabsTtsStatus: "missing_key"
+      }),
+      sourceId: "windows-system",
+      ttsProvider: "disabled",
+      translationProvider: "mock"
+    });
+
+    expect(message).toBeNull();
   });
 });
 
@@ -98,11 +136,15 @@ function capabilities({
   asrLatencyModes = ["low_latency", "balanced", "accuracy"],
   deepseekStatus = "ready",
   defaultAsrProvider = "funasr",
+  defaultTtsProvider = "disabled",
+  elevenLabsTtsStatus = "missing_key",
   voxtralStatus = "ready"
 }: {
   asrLatencyModes?: AgentCapabilities["asr_latency_modes"];
   deepseekStatus?: "ready" | "missing_key" | "missing_dependency" | "unavailable";
   defaultAsrProvider?: "mock" | "funasr" | "voxtral";
+  defaultTtsProvider?: "disabled" | "edge-tts" | "elevenlabs";
+  elevenLabsTtsStatus?: "ready" | "missing_key" | "missing_config" | "unavailable";
   voxtralStatus?: "ready" | "missing_key" | "missing_dependency" | "unavailable";
 }): AgentCapabilities {
   return {
@@ -111,7 +153,8 @@ function capabilities({
       asr_latency_mode: "balanced",
       asr_provider: defaultAsrProvider,
       target_lang: "zh-CN",
-      translation_provider: "mock"
+      translation_provider: "mock",
+      tts_provider: defaultTtsProvider
     },
     asr_latency_modes: asrLatencyModes,
     asr_providers: [
@@ -169,6 +212,43 @@ function capabilities({
         model: "deepseek-chat",
         reason: deepseekStatus === "missing_key" ? "缺少 DEEPSEEK_API_KEY。" : "",
         status: deepseekStatus
+      }
+    ],
+    tts_providers: [
+      {
+        available: true,
+        default: defaultTtsProvider === "disabled",
+        id: "disabled",
+        kind: "tts",
+        label: "关闭",
+        model: "none",
+        reason: "字幕优先链路默认不启用语音播报。",
+        status: "ready"
+      },
+      {
+        available: true,
+        default: defaultTtsProvider === "edge-tts",
+        id: "edge-tts",
+        kind: "tts",
+        label: "Edge TTS",
+        model: "zh-CN-XiaoxiaoNeural",
+        reason: "",
+        status: "ready"
+      },
+      {
+        available: elevenLabsTtsStatus === "ready",
+        default: defaultTtsProvider === "elevenlabs",
+        id: "elevenlabs",
+        kind: "tts",
+        label: "ElevenLabs",
+        model: "eleven_multilingual_v2",
+        reason:
+          elevenLabsTtsStatus === "missing_config"
+            ? "缺少 ELEVENLABS_VOICE_ID。"
+            : elevenLabsTtsStatus === "missing_key"
+              ? "缺少 ELEVENLABS_API_KEY。"
+              : "",
+        status: elevenLabsTtsStatus
       }
     ]
   };

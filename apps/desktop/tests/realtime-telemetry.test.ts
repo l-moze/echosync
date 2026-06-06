@@ -88,4 +88,36 @@ describe("实时事件遥测", () => {
       ]
     ]);
   });
+
+  it("记录 TTS 音频事件的到达延迟和分段信息", () => {
+    const telemetry = buildRealtimeEventTelemetry(
+      {
+        type: "tts.audio",
+        session_id: "sess_voice",
+        segment_id: "seg_voice",
+        rev: 1,
+        start_ms: 1200,
+        end_ms: 2400,
+        target_lang: "zh-CN",
+        audio_base64: "YXVkaW8=",
+        mime_type: "audio/mpeg",
+        sample_rate: null,
+        final: true,
+        published_at_ms: 3000
+      },
+      3088
+    );
+
+    expect(telemetry).toEqual({
+      type: "tts.audio",
+      sessionId: "sess_voice",
+      segmentId: "seg_voice",
+      status: undefined,
+      agentToRendererMs: 88,
+      asrLatencyMs: undefined,
+      mergeWaitMs: undefined,
+      translationFirstTokenMs: undefined,
+      translationLatencyMs: undefined
+    });
+  });
 });

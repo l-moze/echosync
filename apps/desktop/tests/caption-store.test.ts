@@ -4,6 +4,8 @@ import {
   applyRealtimeEvent,
   isRealtimeEventForActiveSession,
   selectActiveCaptionLine,
+  selectActiveCaptionLineForDisplay,
+  selectOverlayHistoryLinesForDisplay,
   selectOverlayHistoryLines
 } from "../src/shared/caption-store";
 import type { CaptionLine } from "../src/shared/caption-store";
@@ -644,6 +646,37 @@ describe("桌面字幕状态机", () => {
     expect(active?.targetText).toBe("");
   });
 
+  it("翻译字幕模式优先保留最近可用译文，避免源文草稿抢焦点后空白", () => {
+    const lines: CaptionLine[] = [
+      {
+        id: "seg_translated",
+        rev: 3,
+        state: "stable",
+        sourceText: "The model follows the dynamic prompt.",
+        targetText: "模型会遵循动态提示词。",
+        stability: 0.88,
+        startMs: 1000,
+        endMs: 2600,
+        patchCount: 0
+      },
+      {
+        id: "seg_source_draft",
+        rev: 1,
+        state: "interim",
+        sourceText: "then another model",
+        targetText: "",
+        stability: 0.72,
+        startMs: 2700,
+        endMs: 3300,
+        patchCount: 0
+      }
+    ];
+
+    expect(selectActiveCaptionLineForDisplay(lines, "translation")?.id).toBe("seg_translated");
+    expect(selectActiveCaptionLineForDisplay(lines, "bilingual")?.id).toBe("seg_source_draft");
+    expect(selectActiveCaptionLineForDisplay(lines, "source")?.id).toBe("seg_source_draft");
+  });
+
   it("按前端接收顺序选择当前字幕，而不是依赖后端音频时间戳", () => {
     const lines: CaptionLine[] = [
       {
@@ -727,6 +760,48 @@ describe("桌面字幕状态机", () => {
     expect(history).toHaveLength(24);
     expect(history.at(0)?.id).toBe("seg_4");
     expect(history.at(-1)?.id).toBe("seg_27");
+  });
+
+  it("翻译字幕模式的历史区过滤源文草稿，避免驻留窗口出现空历史行", () => {
+    const lines: CaptionLine[] = [
+      {
+        id: "seg_translated",
+        rev: 1,
+        state: "locked",
+        sourceText: "translated source",
+        targetText: "已有译文",
+        stability: 1,
+        startMs: 0,
+        endMs: 1000,
+        patchCount: 0
+      },
+      {
+        id: "seg_source_only",
+        rev: 1,
+        state: "interim",
+        sourceText: "source only draft",
+        targetText: "",
+        stability: 0.6,
+        startMs: 1000,
+        endMs: 1600,
+        patchCount: 0
+      },
+      {
+        id: "seg_active",
+        rev: 1,
+        state: "stable",
+        sourceText: "active source",
+        targetText: "当前译文",
+        stability: 0.9,
+        startMs: 1600,
+        endMs: 2400,
+        patchCount: 0
+      }
+    ];
+
+    expect(selectOverlayHistoryLinesForDisplay("pinned", lines, "seg_active", "translation").map((line) => line.id)).toEqual([
+      "seg_translated"
+    ]);
   });
 
   it("只接收当前活跃会话的实时事件，停止后忽略晚到字幕", () => {

@@ -111,7 +111,14 @@ async def _assert_end_to_end_engine_can_share_the_output_pipeline() -> None:
     await pipeline.run(_frames())
 
     event_types = [event_type for event_type, _ in event_bus.events]
-    assert event_types == ["translation.partial", "segment.commit"]
+    legacy_event_types = [
+        event_type for event_type in event_types if event_type != "caption_update"
+    ]
+    assert legacy_event_types == ["translation.partial", "segment.commit"]
+    assert [event_type for event_type in event_types if event_type == "caption_update"] == [
+        "caption_update",
+        "caption_update",
+    ]
     assert event_bus.events[0][1]["target_text"] == "原生实时翻译可以直接输出音频。"
     assert audio_sink.chunks[0].audio == b"translated-audio"
     assert audio_sink.chunks[0].final is True

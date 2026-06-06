@@ -31,6 +31,26 @@ describe("主进程字幕事件缓存", () => {
       "seg_3"
     ]);
   });
+
+  it("不缓存 TTS 音频事件，避免窗口重载时重复播放", () => {
+    const buffer = createCaptionEventBuffer(2);
+
+    buffer.push({
+      type: "tts.audio",
+      session_id: "sess_buffer",
+      segment_id: "seg_voice",
+      rev: 1,
+      start_ms: 0,
+      end_ms: 1200,
+      target_lang: "zh-CN",
+      audio_base64: "YXVkaW8=",
+      mime_type: "audio/mpeg",
+      sample_rate: null,
+      final: true
+    });
+
+    expect(buffer.snapshot()).toEqual([]);
+  });
 });
 
 function isSubtitleEvent(event: RealtimeEvent): event is SubtitleEvent {

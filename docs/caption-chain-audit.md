@@ -41,11 +41,11 @@
 
 ## 当前状态
 
-当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传前通过主进程读取 Agent `/v1/realtime/capabilities`，确认默认 provider、密钥和 SDK 状态；通过预检后才采集音频，发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider` 或 `translation_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`；连续静音达到门控阈值后，renderer 发送 `audio.final` JSON 控制帧，Agent 将其转成空 PCM 的 `is_final=True` frame，触发 ASR flush/cache reset。Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
+当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传前通过主进程读取 Agent `/v1/realtime/capabilities`，确认默认 provider、密钥和 SDK 状态；通过预检后才采集音频，发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider`、`translation_provider` 或 `tts_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`；连续静音达到门控阈值后，renderer 发送 `audio.final` JSON 控制帧，Agent 将其转成空 PCM 的 `is_final=True` frame，触发 ASR flush/cache reset。Agent 再通过同一个 `CaptionEventHub` 推字幕事件，启用语音播报时还会旁路推送 `tts.audio`。
 
 后端仍兼容旧 JSON `audio.chunk` / `pcm_base64`，主要用于旧测试、纯 ASR 调试和过渡期兼容；当前 Desktop 真实链路默认不走 base64 JSON。
 
-仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Desktop preflight 会先拦截；如果绕过 preflight，Agent 仍会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider` 和 `audio.start.translation_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥和模型配置仍来自 Agent 端 `.env`。
+仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Desktop preflight 会先拦截；如果绕过 preflight，Agent 仍会在启动 pipeline 前返回 `realtime.error` 并结束会话。`audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥、voice id 和模型配置仍来自 Agent 端 `.env`。
 
 `8765` 与 `8766` 的边界：
 
@@ -354,25 +354,17 @@ $env:FUNASR_VAD_ENABLED='true'
 
 这样仍能避免每个 token 打翻译模型，同时能让长句译文持续推进。
 
-### P0：桌面端默认 ASR 延迟模式仍偏稳定，不偏直播
+### P0：桌面端 ASR 延迟模式已接入，默认仍是均衡
 
-`createRealtimeAudioClient()` 支持 `asrProvider` 和 `asrLatencyMode`，并默认发送 `asr_latency_mode="balanced"`。renderer 当前启动实时会话时没有按场景显式切换，只传了 `translationProvider`：
+`createRealtimeAudioClient()` 现在会发送 `asr_latency_mode`，主控首页和偏好设置也能切换 `low_latency`、`balanced`、`accuracy`。这已经消除了“UI 选择质量模式但实时会话没有声明”的断点。
 
-```text
-renderer/main.tsx
-  createRealtimeAudioClient({
-    sourceId,
-    translationProvider
-  })
-```
+仍需注意：默认模式是 `balanced`。如果当前 `.env` 的真实链路是 `voxtral + deepseek`，Voxtral 会沿用 `VOXTRAL_TARGET_DELAY_MS`，常见配置约为 `1000ms`。直播跟听时应显式选择 `low_latency`，复盘或纪要时再使用 `accuracy`。
 
-当前 `.env` 的真实链路是 `voxtral + deepseek`，Voxtral 目标等待为 `1000ms`。在 `balanced` 下，ASR 层天然有约 1 秒目标等待。这个比 40-80ms 的采集/分帧优化更大。
-
-建议：UI 增加 ASR provider/延迟模式选择，或按场景预设自动传入：
+当前建议：
 
 | 场景 | 建议 ASR 模式 |
 |------|---------------|
-| 直播字幕/跟听 | `asrLatencyMode="low_latency"` |
+| 直播字幕/跟听 | `asr_latency_mode="low_latency"` |
 | 技术分享/网课 | `balanced` 或可切低延迟 |
 | 会议纪要/复盘 | `accuracy` |
 
@@ -441,6 +433,8 @@ python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realti
 
 `caption-display-buffer` 当前是 snapshot pass-through，不再做字素级慢放；`caption-store` 按接收时间选择当前字幕行。只要 Agent 发出完整源文/译文快照，前端不会再主动拖慢显示。
 
+2026-06-06 追加：字幕窗口的 active-line 选择必须跟显示模式绑定。双语/主字幕模式继续优先显示最新源文草稿，保证识别打字机实时可见；翻译字幕模式改为优先选择最近一条有 `targetText` 的行，避免最新源文草稿抢焦点后主字幕区域空白。驻留/控制态历史区同样按显示模式过滤，翻译字幕模式不渲染源文-only 历史空行。
+
 ## 下一轮必须补的 telemetry
 
 为了继续收敛瓶颈，下一轮不要再只看肉眼观感，应把一条字幕的关键时间戳串起来：
@@ -486,11 +480,12 @@ overlay_rendered_at
 |------|------|
 | `transport/caption_ws.py` | `run_caption_server()` 传 producer；WS handler 每次连接重新运行 producer |
 | `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；支持 `audio.final` 控制帧；`realtime.error` 与 `realtime.done` 保持互斥 |
-| `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数并订阅 |
+| `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数，订阅字幕事件和可选 `tts.audio` |
 | `services/media/ffmpeg_audio_source.py` | MP4/音频文件通过 ffmpeg stdout 流式读取并在线分帧，避免整文件解码阻塞首帧 |
 | `services/asr/factory.py` | FunASR 与 Voxtral 都按 `asr_latency_mode` 映射实际推理窗口/目标延迟 |
 | `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；应用退出时清理重连计时器并关闭 WS |
-| `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame + `audio.final` 控制帧；默认不覆盖后端 ASR provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
+| `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame + `audio.final` 控制帧；只在用户显式选择时覆盖 ASR/翻译/TTS provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
+| `desktop/src/renderer/tts-audio-playback.ts` | 拼接 `tts.audio` 分片并按 final 播放；`clear()` 后忽略旧播放器晚到回调，避免新队列并发播放 |
 | `desktop/src/renderer/main.tsx` | 移除 demoEvents，新增 `hasRealEvents` 状态；收到当前会话 `realtime.error` 时停止本地音频并回收采集状态 |
 | `desktop/src/shared/subtitle-style-state.ts` | 字幕显示模式迁移为双语、主字幕、翻译字幕三态，兼容旧 `line/split` 配置 |
 
@@ -498,7 +493,7 @@ overlay_rendered_at
 
 ### P0：真实 ASR 配置与健康检查
 1. 启动 `8766` 完整同传服务。
-2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr` 或 `voxtral` 作为默认值，设置 `ECHOSYNC_TRANSLATOR_PROVIDER=deepseek` 作为真实翻译默认值；也可以由 Desktop 在 `audio.start.asr_provider` / `audio.start.translation_provider` 中选择本次会话 provider。
+2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr` 或 `voxtral` 作为默认值，设置 `ECHOSYNC_TRANSLATOR_PROVIDER=deepseek` 作为真实翻译默认值；也可以由 Desktop 在 `audio.start.asr_provider` / `audio.start.translation_provider` / `audio.start.tts_provider` 中选择本次会话 provider。
 3. Desktop 已在开始同传前读取 `/v1/realtime/capabilities`，并阻止 mock+真实音频、缺 key、缺 SDK 和未完整接入音频源这类组合；后续还需要把能力结果做成更细的设置页和诊断页。
 
 ### P1：音频源分支补实

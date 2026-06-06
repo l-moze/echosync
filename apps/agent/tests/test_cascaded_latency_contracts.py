@@ -170,7 +170,10 @@ async def _assert_cascaded_engine_passes_current_segment_revision_context() -> N
 
     assert translator.contexts[0].current_segment_revisions == ()
     assert translator.contexts[1].current_segment_revisions[-1].source_text == "The model starts,"
-    assert translator.contexts[1].current_segment_revisions[-1].target_text == "[zh] The model starts,"
+    assert (
+        translator.contexts[1].current_segment_revisions[-1].target_text
+        == "[zh] The model starts,"
+    )
 
 
 async def _assert_cascaded_engine_streams_source_hypotheses_and_translation_deltas() -> None:

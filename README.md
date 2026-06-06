@@ -17,10 +17,11 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 后端核心采用依赖倒置：
 
-- 级联链路依赖 `Transcriber`、`Translator`、`CorrectionEngine`、`SubtitleSink` 等小接口，而不是依赖 FunASR、DeepSeek、edge-tts 或 LiveKit 的具体 SDK。
+- 级联链路依赖 `Transcriber`、`Translator`、`CorrectionEngine`、`SubtitleSink`、`TtsSynthesizer` 等小接口，而不是依赖 FunASR、DeepSeek、edge-tts、ElevenLabs 或 LiveKit 的具体 SDK。
 - 翻译器最小契约是 `Translator.translate()`，DeepL 这类非流式 API 可以直接接入；支持 token stream 的 DeepSeek / OpenAI-compatible 适配器再额外实现 `StreamingTranslator.stream_translate()`。
 - 端到端链路依赖 `InterpretationEngine`，可以直接输出字幕事件、修订补丁、提交事件和译文音频块。
 - 字幕输出和译文音频输出分离为 `SubtitleSink` 与 `TranslatedAudioSink`，避免一个接口承担无关职责。
+- TTS 默认关闭；Agent 侧已接入 `edge-tts` 和 ElevenLabs provider，启用后作为旁路 `tts.audio` 事件输出，不阻塞字幕；Desktop 可在本次会话选择语音播报 provider，并在控制中心窗口播放返回音频。
 
 ## 初始功能范围
 
@@ -34,7 +35,7 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和模拟链路测试骨架。当前地基同时支持 ASR→翻译→修正的级联模型，以及未来 OpenAI Realtime、Qwen LiveTranslate、Azure Speech Translation 等端到端模型适配。
 
-ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`。Desktop 会在启动前读取 Agent `/v1/realtime/capabilities`，显示后端默认 provider、缺失密钥或缺失 SDK，并在本次会话中声明 `asr_latency_mode`；只有用户显式选择 provider 时才额外发送 `asr_provider` 或 `translation_provider` 覆盖后端 `.env` 默认值。API key、base URL 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批候选，不是已接入的可选 provider。
+ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`；TTS provider 当前支持 `disabled`、`edge-tts`、`elevenlabs`。Desktop 会在启动前读取 Agent `/v1/realtime/capabilities`，显示后端默认 provider、缺失密钥或缺失 SDK，并在本次会话中声明 `asr_latency_mode`；只有用户显式选择 provider 时才额外发送 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值。API key、base URL、voice id 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批 ASR 候选，不是已接入的可选 provider。
 
 当前 Web 工作台已按 `doc/UI设计调研.md` 的 MVP 方向实现：
 
@@ -100,7 +101,23 @@ FUNASR_DEVICE=auto
 
 FunASR 默认关闭 `livekit.plugins.silero` VAD，依赖 hard timeout 做延迟兜底；需要实验 soft endpoint 时可设置 `FUNASR_VAD_ENABLED=true`。本地 30 秒英文样本里 Silero 没带来中途 soft endpoint，且会明显增加 CPU 开销，因此暂不作为 MVP 默认路径。
 
-也可以在 Desktop 会话启动时选择 ASR provider、ASR 延迟模式和翻译 provider。选择“后端默认/通用模型”时不发送覆盖字段，沿用 Agent `.env`；显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
+也可以在 Desktop 会话启动时选择 ASR provider、ASR 延迟模式、翻译 provider 和语音播报 provider。选择“自动/通用模型”时不发送覆盖字段，沿用 Agent `.env`；显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
+
+### 可选语音播报（TTS）
+
+TTS 默认关闭，不影响字幕延迟。需要播报译文时，可以在 Agent `.env` 中设置默认 provider，也可以在 Desktop 偏好设置的“语音播报”里对本次会话选择：
+
+```powershell
+ECHOSYNC_TTS_PROVIDER=disabled   # disabled / edge-tts / elevenlabs
+EDGE_TTS_VOICE=zh-CN-XiaoxiaoNeural
+ELEVENLABS_API_KEY=
+ELEVENLABS_VOICE_ID=
+ELEVENLABS_MODEL=eleven_multilingual_v2
+ELEVENLABS_OUTPUT_FORMAT=mp3_44100_128
+ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=
+```
+
+`edge-tts` 需要安装对应 Python 依赖；`elevenlabs` 必须配置 `ELEVENLABS_API_KEY` 和 `ELEVENLABS_VOICE_ID`。启用后，Agent 只消费已经 committed 的译文，合成结果通过 `tts.audio` 事件推给 Desktop 播放队列；字幕事件仍按原链路实时发布。
 
 如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
 

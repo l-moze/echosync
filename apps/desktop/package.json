@@ -34,5 +34,25 @@
     "vite": "^7.0.0",
     "vitest": "^4.1.8",
     "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.echosync.desktop",
+    "productName": "EchoSync",
+    "directories": {
+      "buildResources": "resources"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources",
+        "to": "resources"
+      }
+    ],
+    "win": {
+      "icon": "resources/icons/app.ico"
+    }
   }
 }

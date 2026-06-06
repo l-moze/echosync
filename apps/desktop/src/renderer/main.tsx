@@ -20,6 +20,12 @@ import {
   type TranslationProviderSelection
 } from "../shared/translation-provider-catalog";
 import {
+  selectedTtsProviderId,
+  TTS_PROVIDER_OPTIONS,
+  ttsProviderLabel,
+  type TtsProviderSelection
+} from "../shared/tts-provider-catalog";
+import {
   createInitialCaptionDisplayBuffer,
   selectDisplayCaptionLines,
   type CaptionDisplayBuffer
@@ -29,7 +35,8 @@ import {
   applyRealtimeEvent,
   isRealtimeEventForActiveSession,
   selectActiveCaptionLine,
-  selectOverlayHistoryLines,
+  selectActiveCaptionLineForDisplay,
+  selectOverlayHistoryLinesForDisplay,
   type CaptionLine
 } from "../shared/caption-store";
 import type { DesktopCaptureSnapshot, DesktopWindowBounds } from "../shared/desktop-api";
@@ -47,10 +54,14 @@ import {
   type StartupUiState,
   type SessionUiEvent
 } from "../shared/session-ui-state";
+import { selectSessionClockMs } from "../shared/session-clock";
 import {
   defaultSubtitleStyle,
+  captionStateDisplayLabel,
   normalizeSubtitleDisplayMode,
   reduceSubtitleStyleState,
+  selectSubtitleFontWeight,
+  subtitleDisplayModeLabel,
   type SubtitleDisplayMode,
   type SubtitleOutlineStyle,
   type SubtitleStyleState
@@ -63,8 +74,18 @@ import {
   type SessionArchiveDraft
 } from "../shared/session-archive";
 import { logRealtimeEventTelemetry } from "../shared/realtime-telemetry";
+import {
+  ADVANCED_SETTINGS_NAV,
+  HOME_LAUNCHER_COPY,
+  PREFERENCE_ADVANCED_ENTRY,
+  PREFERENCE_SETTINGS_NAV,
+  RECORD_LIST_COLUMNS,
+  buildHomeReadinessSummary,
+  productizeHomeDiagnostic
+} from "../shared/home-launcher-copy";
 import { createInitialCaptionLines } from "./initial-captions";
 import { createRealtimeAudioClient, type RealtimeAudioClient } from "./realtime-audio-client";
+import { createTtsAudioPlaybackQueue, type TtsAudioPlaybackQueue } from "./tts-audio-playback";
 import { resolveDesktopWindowRole } from "./window-role";
 
 import "./styles.css";
@@ -98,6 +119,7 @@ function App() {
   const [asrLatencyMode, setAsrLatencyMode] = useState<AsrLatencyMode>("balanced");
   const [translationProvider, setTranslationProvider] =
     useState<TranslationProviderSelection>("server-default");
+  const [ttsProvider, setTtsProvider] = useState<TtsProviderSelection>("server-default");
   const [agentCapabilities, setAgentCapabilities] = useState<AgentCapabilities | null>(null);
   const [agentCapabilitiesError, setAgentCapabilitiesError] = useState<string | null>(null);
   const [overlayLocked, setOverlayLocked] = useState(false);
@@ -116,6 +138,7 @@ function App() {
   const startupRunIdRef = useRef(0);
   const sessionUiRef = useRef(sessionUi);
   const terminalRealtimeErrorRef = useRef<string | null>(null);
+  const ttsPlaybackRef = useRef<TtsAudioPlaybackQueue>(createTtsAudioPlaybackQueue());
 
   useEffect(() => {
     sessionUiRef.current = sessionUi;
@@ -129,6 +152,13 @@ function App() {
       logRealtimeEventTelemetry(log, event, Date.now());
       if (event.type === "realtime.done") {
         activeSessionIdRef.current = null;
+        return;
+      }
+      if (event.type === "tts.audio") {
+        if (role === "control") {
+          void ttsPlaybackRef.current.enqueue(event);
+        }
+        setHasRealEvents(true);
         return;
       }
       setLines((current) => applyRealtimeEvent(current, event));
@@ -194,13 +224,13 @@ function App() {
     try {
       const capabilities = await window.echosyncDesktop?.getAgentCapabilities();
       if (!capabilities) {
-        throw new Error("桌面端没有返回 Agent 能力信息。");
+        throw new Error("桌面端没有返回同传服务能力信息。");
       }
       setAgentCapabilities(capabilities);
       setAgentCapabilitiesError(null);
       return capabilities;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Agent 能力检查失败。";
+      const message = error instanceof Error ? error.message : "同传服务能力检查失败。";
       setAgentCapabilitiesError(message);
       setAgentCapabilities(null);
       return null;
@@ -246,6 +276,7 @@ function App() {
     setRealtimeError(null);
     terminalRealtimeErrorRef.current = null;
     setSessionArchive(null);
+    ttsPlaybackRef.current.clear();
     setLines(createInitialCaptionLines());
     const capabilities = await refreshAgentCapabilities();
     const preflightMessage = validateRealtimePreflight({
@@ -253,6 +284,7 @@ function App() {
       asrProvider,
       capabilities,
       sourceId: nextSourceId,
+      ttsProvider,
       translationProvider
     });
     if (preflightMessage) {
@@ -269,7 +301,8 @@ function App() {
       asrLatencyMode,
       asrProvider: selectedAsrProviderId(asrProvider),
       sourceId: nextSourceId,
-      translationProvider: selectedTranslationProviderId(translationProvider)
+      translationProvider: selectedTranslationProviderId(translationProvider),
+      ttsProvider: selectedTtsProviderId(ttsProvider)
     });
     realtimeClientRef.current = client;
     activeSessionIdRef.current = client.sessionId;
@@ -296,6 +329,7 @@ function App() {
         }
         realtimeClientRef.current = null;
         activeSessionIdRef.current = null;
+        ttsPlaybackRef.current.clear();
         await window.echosyncDesktop?.stopCapture();
         const message = error instanceof Error ? error.message : "实时音频采集启动失败。";
         setSnapshot({
@@ -316,6 +350,7 @@ function App() {
     const currentClient = realtimeClientRef.current;
     realtimeClientRef.current = null;
     activeSessionIdRef.current = null;
+    ttsPlaybackRef.current.clear();
     let nextSnapshot: DesktopCaptureSnapshot | undefined;
 
     try {
@@ -344,6 +379,7 @@ function App() {
     const currentClient = realtimeClientRef.current;
     realtimeClientRef.current = null;
     activeSessionIdRef.current = null;
+    ttsPlaybackRef.current.clear();
     const recording = await currentClient?.stop();
     const nextSnapshot = await window.echosyncDesktop?.stopCapture();
     if (nextSnapshot) {
@@ -391,6 +427,7 @@ function App() {
 
   async function performReturnHome() {
     startupRunIdRef.current += 1;
+    ttsPlaybackRef.current.clear();
     if (realtimeClientRef.current || snapshot.state === "listening" || snapshot.state === "requesting" || sessionUi.startup.phase !== "idle") {
       const currentClient = realtimeClientRef.current;
       realtimeClientRef.current = null;
@@ -428,7 +465,6 @@ function App() {
         onStop={() => void stopCapture()}
         realtimeError={realtimeError}
         snapshot={snapshot}
-        translationProvider={translationProvider}
       />
     );
   }
@@ -442,7 +478,7 @@ function App() {
       <AppTitleBar
         canNavigateBack={sessionUi.lifecycle !== "idle" || sessionUi.startup.phase !== "idle"}
         pageTitle={pageTitleForSession(sessionUi)}
-        statusLabel={snapshot.state === "listening" ? "同传中" : hasRealEvents ? "Agent 已连接" : "免费 1 小时"}
+        statusLabel={snapshot.state === "listening" ? "同传中" : hasRealEvents ? "同传服务已连接" : "免费 1 小时"}
         onBack={requestReturnHome}
         onShowOverlay={() => window.echosyncDesktop?.setOverlayVisible(true)}
       />
@@ -457,6 +493,7 @@ function App() {
           onAsrLatencyModeSelect={setAsrLatencyMode}
           onAsrProviderSelect={setAsrProvider}
           onTranslationProviderSelect={setTranslationProvider}
+          onTtsProviderSelect={setTtsProvider}
           onReturnHome={requestReturnHome}
           onStart={() => void startCapture()}
           onStop={() => void stopCapture()}
@@ -471,6 +508,7 @@ function App() {
           sourceId={sourceId}
           toggleOverlayLocked={() => void toggleOverlayLocked()}
           translationProvider={translationProvider}
+          ttsProvider={ttsProvider}
         />
       </section>
       {sessionUi.startup.phase !== "idle" ? (
@@ -624,7 +662,7 @@ const leaveDialogCopy: Record<Exclude<NavigationConfirmReason, null>, { title: s
   },
   startup_cancel: {
     title: "取消启动并返回首页？",
-    detail: "系统正在准备音频或连接 Agent，取消后会关闭本次启动流程。",
+    detail: "系统正在准备音频或连接同传服务，取消后会关闭本次启动流程。",
     cancelLabel: "继续等待",
     confirmLabel: "取消启动"
   },
@@ -641,7 +679,7 @@ function pageTitleForSession(sessionUi: ReturnType<typeof createInitialSessionUi
     return "启动同传";
   }
   if (sessionUi.lifecycle === "active") {
-    return "会话驾驶舱";
+    return "正在同传";
   }
   if (sessionUi.lifecycle === "finished") {
     return "会话复盘";
@@ -662,6 +700,7 @@ function ControlCenter({
   onAsrProviderSelect,
   onSourceSelect,
   onTranslationProviderSelect,
+  onTtsProviderSelect,
   onReturnHome,
   onStart,
   onStop,
@@ -671,7 +710,8 @@ function ControlCenter({
   sessionUi,
   sourceId,
   toggleOverlayLocked,
-  translationProvider
+  translationProvider,
+  ttsProvider
 }: {
   activeLine?: CaptionLine;
   agentCapabilities: AgentCapabilities | null;
@@ -685,6 +725,7 @@ function ControlCenter({
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
+  onTtsProviderSelect: (provider: TtsProviderSelection) => void;
   onReturnHome: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -695,6 +736,7 @@ function ControlCenter({
   sourceId: DesktopAudioSourceId;
   toggleOverlayLocked: () => void;
   translationProvider: TranslationProviderSelection;
+  ttsProvider: TtsProviderSelection;
 }) {
   return (
     <section className={`controlCenter lifecycle-${sessionUi.lifecycle}`}>
@@ -710,10 +752,12 @@ function ControlCenter({
           onAsrProviderSelect={onAsrProviderSelect}
           onSourceSelect={onSourceSelect}
           onTranslationProviderSelect={onTranslationProviderSelect}
+          onTtsProviderSelect={onTtsProviderSelect}
           onStart={onStart}
           sessionUi={sessionUi}
           sourceId={sourceId}
           translationProvider={translationProvider}
+          ttsProvider={ttsProvider}
         />
       ) : null}
       {sessionUi.lifecycle === "active" ? (
@@ -729,7 +773,6 @@ function ControlCenter({
           sessionUi={sessionUi}
           sourceId={sourceId}
           toggleOverlayLocked={toggleOverlayLocked}
-          translationProvider={translationProvider}
         />
       ) : null}
       {sessionUi.lifecycle === "finished" ? (
@@ -756,10 +799,12 @@ function IdleDashboard({
   onAsrProviderSelect,
   onSourceSelect,
   onTranslationProviderSelect,
+  onTtsProviderSelect,
   onStart,
   sessionUi,
   sourceId,
-  translationProvider
+  translationProvider,
+  ttsProvider
 }: {
   agentCapabilities: AgentCapabilities | null;
   agentCapabilitiesError: string | null;
@@ -771,96 +816,337 @@ function IdleDashboard({
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
+  onTtsProviderSelect: (provider: TtsProviderSelection) => void;
   onStart: () => void;
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
   sourceId: DesktopAudioSourceId;
   translationProvider: TranslationProviderSelection;
+  ttsProvider: TtsProviderSelection;
 }) {
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [recordsOpen, setRecordsOpen] = useState(false);
+  const audioActive = sessionUi.audioActivity === "active" || sessionUi.audioActivity === "clipping";
+  const serviceReady = Boolean(agentCapabilities) && !agentCapabilitiesError;
+  const readinessSummary = buildHomeReadinessSummary({
+    audioActive,
+    engineReady: serviceReady,
+    overlayReady: true,
+    serviceReady
+  });
+
   return (
-    <div className="dashboardGrid">
-      <section className="heroStart">
-        <p className="eyebrow">默认开箱</p>
-        <h1>给当前视频挂上实时双语字幕</h1>
-        <p>默认使用 {currentSource.label}，先确认电平条有响应，再开始同传。</p>
-        <div className="sourceTabs horizontal">
-          {DESKTOP_AUDIO_SOURCES.map((source) => (
-            <button
-              className={source.id === sourceId ? "selected" : ""}
-              disabled={source.id === "mixed" || source.id === "file"}
-              key={source.id}
-              onClick={() => onSourceSelect(source.id)}
-              title={source.id === "mixed" || source.id === "file" ? "该音频源尚未完整接入" : source.description}
-            >
-              {source.label}
-            </button>
-          ))}
+    <div className="homeLauncher">
+      <section className="launcherSurface">
+        <div className="launcherIntro">
+          <p className="launcherState">{serviceReady ? "已就绪" : "需要检查"}</p>
+          <h1>{HOME_LAUNCHER_COPY.title}</h1>
+          <p>{HOME_LAUNCHER_COPY.description}</p>
         </div>
-        <div className="providerTabs" aria-label="ASR 识别方案选择">
-          {ASR_PROVIDER_OPTIONS.map((provider) => (
-            <button
-              className={provider.id === asrProvider ? "selected" : ""}
-              key={provider.id}
-              onClick={() => onAsrProviderSelect(provider.id)}
-            >
-              <strong>{provider.label}</strong>
-              <span>{provider.description}</span>
-            </button>
-          ))}
+
+        <div className="launcherForm" aria-label="同传启动设置">
+          <LauncherRow label="音频源" value={currentSource.label}>
+            <div className="choiceGroup">
+              {DESKTOP_AUDIO_SOURCES.filter((source) => source.id !== "mixed" && source.id !== "file").map((source) => (
+                <button
+                  className={source.id === sourceId ? "selected" : ""}
+                  key={source.id}
+                  onClick={() => onSourceSelect(source.id)}
+                  title={source.description}
+                >
+                  {source.label}
+                </button>
+              ))}
+            </div>
+          </LauncherRow>
+          <LauncherRow label="目标语言" value="English → 中文" />
+          <LauncherRow label="质量模式" value={asrLatencyModeLabel(asrLatencyMode)}>
+            <div className="choiceGroup qualityGroup">
+              {ASR_LATENCY_OPTIONS.map((mode) => (
+                <button
+                  className={mode.id === asrLatencyMode ? "selected" : ""}
+                  key={mode.id}
+                  onClick={() => onAsrLatencyModeSelect(mode.id)}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
+          </LauncherRow>
         </div>
-        <div className="providerTabs compact" aria-label="ASR 延迟模式选择">
-          {ASR_LATENCY_OPTIONS.map((mode) => (
-            <button
-              className={mode.id === asrLatencyMode ? "selected" : ""}
-              key={mode.id}
-              onClick={() => onAsrLatencyModeSelect(mode.id)}
-            >
-              <strong>{mode.label}</strong>
-              <span>{mode.description}</span>
-            </button>
-          ))}
+
+        <div className="launcherActions">
+          <button className="primary launcherPrimary" onClick={onStart}>{HOME_LAUNCHER_COPY.primaryAction}</button>
+          <button className="subtleAction" onClick={onShowOverlay}>{HOME_LAUNCHER_COPY.previewAction}</button>
         </div>
-        <div className="providerTabs" aria-label="翻译模型选择">
-          {TRANSLATION_PROVIDER_OPTIONS.map((provider) => (
-            <button
-              className={provider.id === translationProvider ? "selected" : ""}
-              key={provider.id}
-              onClick={() => onTranslationProviderSelect(provider.id)}
-            >
-              <strong>{provider.label}</strong>
-              <span>{provider.description}</span>
-            </button>
-          ))}
-        </div>
-        <div className="presetGrid">
-          {["视频/网课", "远程会议", "技术分享", "文件回放"].map((label, index) => (
-            <button className={index === 0 ? "presetCard selected" : "presetCard"} key={label}>
-              <strong>{label}</strong>
-              <span>{index === 0 ? "低风险开箱体验" : "专业场景预设"}</span>
-            </button>
-          ))}
-        </div>
-        <div className="startActions">
-          <button className="primary" onClick={onStart}>开始同传</button>
-          <button onClick={onShowOverlay}>打开字幕弹窗预览</button>
-        </div>
+
+        <section className="subtitlePreview" aria-label="字幕窗预览">
+          <span className="previewBadge">字幕窗预览</span>
+          <div className="previewCaptionBubble">
+            <p>The speaker is explaining how live captions work.</p>
+            <strong>演讲者正在解释实时字幕的工作方式。</strong>
+          </div>
+        </section>
+
         <PreflightAudioVisualizer sessionUi={sessionUi} />
+
+        <div className="launcherStatusLine">
+          <span>{readinessSummary}</span>
+          <button onClick={() => setRecordsOpen(true)}>会议记录</button>
+          <button onClick={() => setPreferencesOpen(true)}>{HOME_LAUNCHER_COPY.preferencesAction}</button>
+        </div>
+
+        {agentCapabilitiesError ? <p className="launcherError">{productizeHomeDiagnostic(agentCapabilitiesError)}</p> : null}
       </section>
-      <aside className="dashboardPanel">
-        <h2>准备就绪检查</h2>
-        <HealthMetric label="输入源" value={currentSource.label} />
-        <HealthMetric label="音频活动" value={sessionUi.audioActivity} />
-        <HealthMetric label="字幕窗" value="可打开" />
-        <HealthMetric label="Agent" value={agentCapabilitiesError ? "需要检查" : agentCapabilities ? "已读取能力" : "未连接"} />
-        <HealthMetric label="ASR" value={asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider)} />
-        <HealthMetric label="延迟模式" value={asrLatencyModeLabel(asrLatencyMode)} />
-        <HealthMetric
-          label="翻译模型"
-          value={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider)}
-        />
-        {agentCapabilitiesError ? <p className="statusBox">{agentCapabilitiesError}</p> : null}
-      </aside>
+
+      <PreferenceSettingsPanel
+        agentCapabilities={agentCapabilities}
+        asrLatencyMode={asrLatencyMode}
+        asrProvider={asrProvider}
+        currentSource={currentSource}
+        isOpen={preferencesOpen}
+        onAsrLatencyModeSelect={onAsrLatencyModeSelect}
+        onAsrProviderSelect={onAsrProviderSelect}
+        onClose={() => setPreferencesOpen(false)}
+        onTranslationProviderSelect={onTranslationProviderSelect}
+        onTtsProviderSelect={onTtsProviderSelect}
+        translationProvider={translationProvider}
+        ttsProvider={ttsProvider}
+      />
+      <SessionRecordsWindow isOpen={recordsOpen} onClose={() => setRecordsOpen(false)} />
     </div>
   );
+}
+
+function LauncherRow({
+  children,
+  label,
+  value
+}: {
+  children?: ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="launcherRow">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {children ? <div className="launcherRowControl">{children}</div> : null}
+    </div>
+  );
+}
+
+function PreferenceSettingsPanel({
+  agentCapabilities,
+  asrLatencyMode,
+  asrProvider,
+  currentSource,
+  isOpen,
+  onAsrLatencyModeSelect,
+  onAsrProviderSelect,
+  onClose,
+  onTranslationProviderSelect,
+  onTtsProviderSelect,
+  translationProvider,
+  ttsProvider
+}: {
+  agentCapabilities: AgentCapabilities | null;
+  asrLatencyMode: AsrLatencyMode;
+  asrProvider: AsrProviderSelection;
+  currentSource: DesktopAudioSource;
+  isOpen: boolean;
+  onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
+  onAsrProviderSelect: (provider: AsrProviderSelection) => void;
+  onClose: () => void;
+  onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
+  onTtsProviderSelect: (provider: TtsProviderSelection) => void;
+  translationProvider: TranslationProviderSelection;
+  ttsProvider: TtsProviderSelection;
+}) {
+  const [activeSection, setActiveSection] = useState<"general" | "captions" | "quality" | "privacy">("general");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const asrOptions = ASR_PROVIDER_OPTIONS.filter((provider) => provider.id !== "mock");
+  const translationOptions = TRANSLATION_PROVIDER_OPTIONS.filter((provider) => provider.id !== "mock");
+  const ttsOptions = TTS_PROVIDER_OPTIONS;
+
+  return (
+    <aside className="engineSettingsPanel preferenceSettingsPanel" aria-label="偏好设置">
+      <header>
+        <div>
+          <p>设置</p>
+          <h2>偏好设置</h2>
+        </div>
+        <button aria-label="关闭偏好设置" onClick={onClose}>×</button>
+      </header>
+      <nav aria-label="设置分组">
+        {PREFERENCE_SETTINGS_NAV.map((item) => (
+          <button
+            className={item.id === activeSection ? "selected" : ""}
+            key={item.id}
+            onClick={() => setActiveSection(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      {activeSection === "general" ? (
+        <section className="engineSettingsGroup">
+          <h3>常规</h3>
+          <PreferenceRow label="默认音频源" value={currentSource.label} />
+          <PreferenceRow label="默认语言方向" value="English → 中文" />
+          <PreferenceRow label="启动时打开字幕窗" value="开启" />
+        </section>
+      ) : null}
+      {activeSection === "captions" ? (
+        <section className="engineSettingsGroup">
+          <h3>字幕</h3>
+          <PreferenceRow label="显示模式" value="双语" />
+          <PreferenceRow label="字号" value="跟随字幕窗口" />
+          <PreferenceRow label="位置" value="由字幕窗口控制" />
+        </section>
+      ) : null}
+      {activeSection === "quality" ? (
+        <section className="engineSettingsGroup">
+          <h3>同传质量</h3>
+          <div className="choiceGroup qualityGroup">
+            {ASR_LATENCY_OPTIONS.map((mode) => (
+              <button
+                className={mode.id === asrLatencyMode ? "selected" : ""}
+                key={mode.id}
+                onClick={() => onAsrLatencyModeSelect(mode.id)}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
+          <PreferenceRow
+            label="语音播报"
+            value={ttsProviderLabel(ttsProvider, agentCapabilities?.defaults.tts_provider)}
+          />
+          <div className="choiceGroup qualityGroup">
+            {ttsOptions.map((option) => (
+              <button
+                className={option.id === ttsProvider ? "selected" : ""}
+                key={option.id}
+                onClick={() => onTtsProviderSelect(option.id)}
+                title={option.description}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <PreferenceRow label="引擎" value={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider).replace("通用模型", "自动")} />
+        </section>
+      ) : null}
+      {activeSection === "privacy" ? (
+        <section className="engineSettingsGroup">
+          <h3>记录与隐私</h3>
+          <PreferenceRow label="保存原始音频" value="本次会话后询问" />
+          <PreferenceRow label="保存双语记录" value="开启" />
+          <PreferenceRow label="自动清理" value="关闭" />
+        </section>
+      ) : null}
+      <details
+        className="developerSettings advancedSettings"
+        onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+        open={advancedOpen}
+      >
+        <summary>{PREFERENCE_ADVANCED_ENTRY.label}</summary>
+        {advancedOpen ? (
+          <>
+            <nav aria-label="高级设置分组">
+              {ADVANCED_SETTINGS_NAV.map((item) => (
+                <span key={item.id}>{item.label}</span>
+              ))}
+            </nav>
+            <EngineChoiceRow
+              label="语音识别"
+              options={asrOptions.map((option) => ({
+                id: option.id,
+                label: engineOptionLabel(option.label, option.id),
+                selected: option.id === asrProvider,
+                onSelect: () => onAsrProviderSelect(option.id)
+              }))}
+              status={asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider).replace("后端默认", "自动")}
+            />
+            <EngineChoiceRow
+              label="翻译"
+              options={translationOptions.map((option) => ({
+                id: option.id,
+                label: engineOptionLabel(option.label, option.id),
+                selected: option.id === translationProvider,
+                onSelect: () => onTranslationProviderSelect(option.id)
+              }))}
+              status={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider).replace("通用模型", "自动")}
+            />
+            <PreferenceRow label="故障处理" value="故障时尽量继续生成字幕" />
+            <PreferenceRow label="性能诊断" value="按需导出诊断报告" />
+            <PreferenceRow label="延迟日志" value="按需开启" />
+            <PreferenceRow label="WebSocket 地址" value="由桌面端管理" />
+            <PreferenceRow label="事件调试" value="开发者模式" />
+            <div className="choiceGroup">
+              <button
+                className={asrProvider === "mock" ? "selected" : ""}
+                onClick={() => onAsrProviderSelect("mock")}
+              >
+                Mock 引擎
+              </button>
+              <button
+                className={translationProvider === "mock" ? "selected" : ""}
+                onClick={() => onTranslationProviderSelect("mock")}
+              >
+                Mock 翻译
+              </button>
+            </div>
+          </>
+        ) : null}
+      </details>
+    </aside>
+  );
+}
+
+function PreferenceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="preferenceRow">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function EngineChoiceRow({
+  label,
+  options,
+  status
+}: {
+  label: string;
+  options: Array<{ id: string; label: string; selected: boolean; onSelect: () => void }>;
+  status: string;
+}) {
+  return (
+    <div className="engineChoiceRow">
+      <span>{label}</span>
+      <strong>{status}</strong>
+      <div className="choiceGroup">
+        {options.map((option) => (
+          <button className={option.selected ? "selected" : ""} key={option.id} onClick={option.onSelect}>
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function engineOptionLabel(label: string, id: string) {
+  if (id === "server-default") {
+    return "自动";
+  }
+  return label;
 }
 
 function ActiveDashboard({
@@ -874,8 +1160,7 @@ function ActiveDashboard({
   dispatchSessionUi,
   sessionUi,
   sourceId,
-  toggleOverlayLocked,
-  translationProvider
+  toggleOverlayLocked
 }: {
   activeLine?: CaptionLine;
   agentCapabilities: AgentCapabilities | null;
@@ -888,7 +1173,6 @@ function ActiveDashboard({
   sessionUi: ReturnType<typeof createInitialSessionUiState>;
   sourceId: DesktopAudioSourceId;
   toggleOverlayLocked: () => void;
-  translationProvider: TranslationProviderSelection;
 }) {
   return (
     <div className="dashboardGrid">
@@ -903,15 +1187,14 @@ function ActiveDashboard({
         <TranscriptMonitor activeLine={activeLine} dispatchSessionUi={dispatchSessionUi} lines={lines} sessionUi={sessionUi} />
       </section>
       <aside className="dashboardPanel">
-        <h2>会话驾驶舱</h2>
-        <HealthMetric label="ASR" value={asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider)} />
-        <HealthMetric label="延迟模式" value={asrLatencyModeLabel(asrLatencyMode)} />
-        <HealthMetric
-          label="翻译模型"
-          value={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider)}
-        />
-        <HealthPanel lines={lines} sessionUi={sessionUi} sourceId={sourceId} />
-        <TermQuickAdd dispatchSessionUi={dispatchSessionUi} sessionUi={sessionUi} />
+        <h2>正在同传</h2>
+        <HealthMetric label="质量模式" value={asrLatencyModeLabel(asrLatencyMode)} />
+        <HealthMetric label="字幕窗" value={overlayLocked ? "鼠标穿透" : "可交互"} />
+        <LiveSessionStatusPanel lines={lines} sessionUi={sessionUi} sourceId={sourceId} />
+        <details className="liveUtilityDetails">
+          <summary>临时术语</summary>
+          <TermQuickAdd dispatchSessionUi={dispatchSessionUi} sessionUi={sessionUi} />
+        </details>
       </aside>
     </div>
   );
@@ -977,7 +1260,6 @@ function FinishedDashboard({
       <section className="summaryPanel">
         <p className="eyebrow">本次复盘</p>
         <h1>{sessionArchive?.title ?? "同传已结束，可以清理后导出"}</h1>
-        <SessionSummaryPanel lines={lines} sessionUi={sessionUi} />
         {sessionArchive ? (
           <section className="archivePlaybackPanel" aria-label="会话录音回放">
             <audio
@@ -1010,9 +1292,9 @@ function FinishedDashboard({
           />
         </details>
         <div className="startActions">
-          <button className="primary" onClick={cleanUpTranscript}>快速清理</button>
           <button onClick={() => void copyMarkdown()}>复制 Markdown</button>
           <button onClick={() => void copySrt()}>复制 SRT</button>
+          <button onClick={cleanUpTranscript}>快速清理</button>
           <button onClick={startNewSession}>开始新会话</button>
         </div>
         <p className="exportStatus">{exportStatus}{sessionUi.preExportEdit.dirty ? " · 已编辑" : ""}</p>
@@ -1139,7 +1421,7 @@ function TranscriptMonitor({
       {sessionUi.autoScroll.mode === "locked" ? <div className="autoScrollState">已锁定回溯，新片段不会打断阅读。</div> : null}
       {visibleLines.map((line) => (
         <article className={`transcriptItem ${line.state}`} key={line.id}>
-          <span>{formatTime(line.startMs)}-{formatTime(line.endMs)} · {line.state.toUpperCase()}</span>
+          <span>{formatTime(line.startMs)}-{formatTime(line.endMs)} · {captionStateDisplayLabel(line.state)}</span>
           <p className="sourceText">{line.sourceText}</p>
           <p className="targetText">{line.targetText}</p>
         </article>
@@ -1166,9 +1448,29 @@ function HealthPanel({
       <HealthMetric label="音频活动" value={audioActivityLabel(metrics.audioLevel)} />
       <HealthMetric label="首字幕" value={formatMetricMs(metrics.firstCaptionLatencyMs)} />
       <HealthMetric label="稳定提交" value={formatMetricMs(metrics.stableCommitLatencyMs)} />
-      <HealthMetric label="Patch" value={`${metrics.patchCount} 次`} />
+      <HealthMetric label="自动修订" value={`${metrics.patchCount} 次`} />
       <HealthMetric label="稳定度" value={formatPercent(metrics.averageStability)} />
       <HealthMetric label="置信来源" value={metrics.confidenceLabel} />
+    </div>
+  );
+}
+
+function LiveSessionStatusPanel({
+  lines,
+  sessionUi,
+  sourceId
+}: {
+  lines: CaptionLine[];
+  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sourceId: DesktopAudioSourceId;
+}) {
+  const metrics = selectSessionHealthMetrics({ lines, sessionUi, sourceLabel: sourceLabel(sourceId) });
+  return (
+    <div className="healthGrid liveStatusGrid">
+      <HealthMetric label="音频输入" value={audioActivityLabel(metrics.audioLevel)} />
+      <HealthMetric label="延迟" value={formatMetricMs(metrics.firstCaptionLatencyMs)} />
+      <HealthMetric label="稳定提交" value={formatMetricMs(metrics.stableCommitLatencyMs)} />
+      <HealthMetric label="自动修订" value={`${metrics.patchCount} 次`} />
     </div>
   );
 }
@@ -1214,11 +1516,11 @@ function TermQuickAdd({
 
   return (
     <section className="termQuickAdd">
-      <h3>术语快加</h3>
+      <h3>临时术语</h3>
       <form className="termForm" onSubmit={submitTerm}>
-        <input aria-label="原文术语" onChange={(event) => setSource(event.target.value)} placeholder="agent" value={source} />
-        <input aria-label="译文术语" onChange={(event) => setTarget(event.target.value)} placeholder="智能体" value={target} />
-        <button type="submit">注入</button>
+        <input aria-label="原文术语" onChange={(event) => setSource(event.target.value)} placeholder="latency" value={source} />
+        <input aria-label="译文术语" onChange={(event) => setTarget(event.target.value)} placeholder="延迟" value={target} />
+        <button type="submit">加入</button>
       </form>
       <div className="termList">
         {sessionUi.terms.length > 0 ? (
@@ -1229,7 +1531,7 @@ function TermQuickAdd({
             </div>
           ))
         ) : (
-          <p className="statusBox">新术语会先显示注入中，完成后从后续片段开始生效。</p>
+          <p className="statusBox">新术语会先同步，完成后从后续片段开始生效。</p>
         )}
       </div>
     </section>
@@ -1253,13 +1555,182 @@ function SessionSummaryPanel({
   );
 }
 
+type SessionRecordListItem = {
+  id: string;
+  title: string;
+  endedAt: string;
+  duration: string;
+  sourceText: string;
+  targetText: string;
+};
+
+const recentSessionRecords: SessionRecordListItem[] = [
+  {
+    id: "record_2",
+    title: "2026年06月06日_记录_2",
+    endedAt: "2026年06月06日 09:57",
+    duration: "4分钟",
+    sourceText: "The speaker is explaining how live captions work.",
+    targetText: "演讲者正在解释实时字幕的工作方式。"
+  },
+  {
+    id: "record_1",
+    title: "2026年06月06日_记录_1",
+    endedAt: "2026年06月06日 09:26",
+    duration: "15分钟",
+    sourceText: "Latency matters for simultaneous interpretation.",
+    targetText: "延迟对同声传译体验非常关键。"
+  },
+  {
+    id: "record_0",
+    title: "2026年06月06日_记录",
+    endedAt: "2026年06月06日 09:10",
+    duration: "1分钟",
+    sourceText: "The session has been saved locally.",
+    targetText: "本次记录已保存在本地。"
+  }
+];
+
 function RecentSessionsPanel() {
   return (
-    <aside className="dashboardPanel">
-      <h2>最近记录</h2>
-      <article className="statusBox">技术分享 · 12 分钟 · 已生成双语转写</article>
-      <article className="statusBox">网课回放 · 8 分钟 · 可导出 SRT</article>
+    <aside className="dashboardPanel recentRecordsPanel">
+      <h2>会议记录</h2>
+      <SessionRecordTable compact records={recentSessionRecords.slice(0, 2)} />
     </aside>
+  );
+}
+
+function SessionRecordsWindow({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const [records, setRecords] = useState(recentSessionRecords);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [reviewScale, setReviewScale] = useState(1);
+  const selectedRecord = selectedId ? records.find((record) => record.id === selectedId) ?? null : null;
+  const isDetailView = Boolean(selectedRecord);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  function deleteRecord(recordId: string) {
+    setRecords((current) => current.filter((record) => record.id !== recordId));
+    setDeleteId(null);
+    if (selectedId === recordId) {
+      setSelectedId(null);
+    }
+  }
+
+  return (
+    <aside className="recordWindow" aria-label="会议记录">
+      <header className={isDetailView ? "recordHeader detail" : "recordHeader"}>
+        <div>
+          <p>{isDetailView ? "内容自动保存 · 数据安全保护 · 译文由 AI 生成" : "记录"}</p>
+          <h2>{selectedRecord?.title ?? "会议记录"}</h2>
+        </div>
+        {!isDetailView ? (
+          <label>
+            <span>搜索会议名称</span>
+            <input aria-label="搜索会议名称" placeholder="搜索会议名称" />
+          </label>
+        ) : null}
+        {isDetailView ? <button className="recordBackButton" onClick={() => setSelectedId(null)}>返回列表</button> : null}
+        <button aria-label="关闭会议记录" onClick={onClose}>×</button>
+      </header>
+      {!isDetailView ? (
+        <>
+          <SessionRecordTable
+            onDelete={(recordId) => setDeleteId(recordId)}
+            onView={(recordId) => setSelectedId(recordId)}
+            records={records}
+          />
+          {deleteId ? (
+            <section className="recordDeleteConfirm" role="alert">
+              <span>删除后将移除本地记录。</span>
+              <button onClick={() => setDeleteId(null)}>取消</button>
+              <button onClick={() => deleteRecord(deleteId)}>确认删除</button>
+            </section>
+          ) : null}
+          {records.length === 0 ? <p className="archiveMissing">暂无已保存记录。</p> : null}
+        </>
+      ) : null}
+      {selectedRecord ? (
+        <section className="recordDetailPanel" aria-label="记录详情">
+          <header>
+            <div>
+              <p>点击片段可定位回放，播放时会高亮对应文本。</p>
+              <h3>双语复盘</h3>
+            </div>
+            <div className="recordDetailActions">
+              <button onClick={() => setReviewScale((value) => Math.max(0.9, Number((value - 0.05).toFixed(2))))}>字号 -</button>
+              <button onClick={() => setReviewScale((value) => Math.min(1.25, Number((value + 0.05).toFixed(2))))}>字号 +</button>
+              <button className="primaryAction">导出</button>
+            </div>
+          </header>
+          <div className="recordAudioPlayer" aria-label="原始音频回放">
+            <button className="roundRecordButton" aria-label="播放原始音频">▶</button>
+            <span>原始音频回放</span>
+            <progress max={100} value={34} />
+            <time>00:00 / {selectedRecord.duration}</time>
+          </div>
+          <div className="recordTranscriptPair" style={{ fontSize: `${reviewScale}em` }}>
+            <article className="active">
+              <h4>原文</h4>
+              <time>00:00-00:18</time>
+              <p>{selectedRecord.sourceText}</p>
+            </article>
+            <article className="active">
+              <h4>译文</h4>
+              <time>00:00-00:18</time>
+              <p>{selectedRecord.targetText}</p>
+            </article>
+          </div>
+          <details className="recordDiagnostics">
+            <summary>诊断信息</summary>
+            <div>
+              <span>首字幕延迟：按需生成</span>
+              <span>平均识别延迟：按需生成</span>
+              <span>平均翻译延迟：按需生成</span>
+              <span>字幕显示延迟：按需生成</span>
+            </div>
+          </details>
+        </section>
+      ) : null}
+    </aside>
+  );
+}
+
+function SessionRecordTable({
+  compact = false,
+  onDelete,
+  onView,
+  records,
+  selectedId
+}: {
+  compact?: boolean;
+  onDelete?: (recordId: string) => void;
+  onView?: (recordId: string) => void;
+  records: SessionRecordListItem[];
+  selectedId?: string;
+}) {
+  return (
+    <div className={compact ? "recordTable compact" : "recordTable"} role="table" aria-label="会议记录列表">
+      <div className="recordTableHead" role="row">
+        {RECORD_LIST_COLUMNS.map((column) => (
+          <span key={column} role="columnheader">{column}</span>
+        ))}
+      </div>
+      {records.map((record) => (
+        <div className={record.id === selectedId ? "recordTableRow selected" : "recordTableRow"} key={record.id} role="row">
+          <strong role="cell">{record.title}</strong>
+          <span role="cell">{record.endedAt}</span>
+          <span role="cell">{record.duration}</span>
+          <span className="recordActions" role="cell">
+            <button onClick={() => onView?.(record.id)}>查看</button>
+            <button onClick={() => onDelete?.(record.id)}>删除</button>
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1269,8 +1740,7 @@ function OverlayWindow({
   onSourceStart,
   onStop,
   realtimeError,
-  snapshot,
-  translationProvider
+  snapshot
 }: {
   activeLine?: CaptionLine;
   lines: CaptionLine[];
@@ -1278,7 +1748,6 @@ function OverlayWindow({
   onStop: () => void;
   realtimeError: string | null;
   snapshot: DesktopCaptureSnapshot;
-  translationProvider: TranslationProviderSelection;
 }) {
   const isListening = snapshot.state === "listening";
   const [interaction, setInteraction] = useState(createInitialOverlayInteractionState);
@@ -1288,15 +1757,22 @@ function OverlayWindow({
   const [displayBuffer, setDisplayBuffer] = useState<CaptionDisplayBuffer>(createInitialCaptionDisplayBuffer);
   const displayBufferRef = useRef<CaptionDisplayBuffer>(displayBuffer);
   const [displayNowMs, setDisplayNowMs] = useState(() => Date.now());
+  const [sessionStartedAtMs, setSessionStartedAtMs] = useState<number | null>(null);
+  const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
   const displaySelection = useMemo(
     () => selectDisplayCaptionLines(displayBuffer, lines, displayNowMs),
     [displayBuffer, displayNowMs, lines]
   );
   const displayLines = displaySelection.lines;
-  const displayActiveLine = useMemo(() => selectActiveCaptionLine(displayLines), [displayLines]);
+  const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
+  const displayActiveLine = useMemo(
+    () => selectActiveCaptionLineForDisplay(displayLines, displayMode),
+    [displayLines, displayMode]
+  );
+  const captionLineForDisplay = displayActiveLine ?? (displayMode === "translation" ? undefined : activeLine);
   const historyLines = useMemo(
-    () => selectOverlayHistoryLines(interaction.layer, displayLines, displayActiveLine?.id),
-    [displayActiveLine?.id, displayLines, interaction.layer]
+    () => selectOverlayHistoryLinesForDisplay(interaction.layer, displayLines, displayActiveLine?.id, displayMode),
+    [displayActiveLine?.id, displayLines, displayMode, interaction.layer]
   );
   const [overlayInteractionLocked, setOverlayInteractionLocked] = useState(false);
   const subtitleVars = {
@@ -1347,6 +1823,26 @@ function OverlayWindow({
   useEffect(() => {
     void window.echosyncDesktop?.setOverlayLayer(interaction.layer);
   }, [interaction.layer]);
+
+  useEffect(() => {
+    if (!isListening) {
+      setSessionStartedAtMs(null);
+      return;
+    }
+
+    const startedAt = Date.now();
+    setSessionStartedAtMs((current) => current ?? startedAt);
+    setSessionNowMs(startedAt);
+    const timer = window.setInterval(() => setSessionNowMs(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [isListening]);
+
+  const sessionDurationMs = selectSessionClockMs({
+    isListening,
+    lines,
+    nowMs: sessionNowMs,
+    startedAtMs: sessionStartedAtMs
+  });
 
   async function toggleOverlayInteractionLock() {
     const nextLocked = !overlayInteractionLocked;
@@ -1417,7 +1913,7 @@ function OverlayWindow({
             </div>
           ) : null}
           {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
-          <CaptionText line={displayActiveLine ?? activeLine} subtitleStyle={subtitleStyle} />
+          <CaptionText line={captionLineForDisplay} subtitleStyle={subtitleStyle} />
           {realtimeError ? <p className="overlayError">{realtimeError}</p> : null}
           <div className="overlayMeta">
             <span className={`liveDot state-${snapshot.state}`} />
@@ -1428,14 +1924,13 @@ function OverlayWindow({
           {showChrome ? (
             <div className="captionBottomChrome">
               <OverlaySessionBar
+                durationMs={sessionDurationMs}
                 isListening={isListening}
-                lines={displayLines}
                 onCaptureToggle={() => void toggleOverlayCapture()}
                 onDisplayModeChange={(displayMode) => updateSubtitleStyle({ displayMode })}
                 onMicrophoneSelect={() => void selectMicrophoneCapture()}
                 snapshot={snapshot}
                 subtitleStyle={subtitleStyle}
-                translationProvider={translationProvider}
               />
             </div>
           ) : null}
@@ -1569,7 +2064,7 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
             <p
               className={`overlaySource ${part.state}`}
               key="source"
-              style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: subtitleStyle.sourceBold ? 760 : 540 }}
+              style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: selectSubtitleFontWeight("source", subtitleStyle.sourceBold) }}
             >
               {part.text}
             </p>
@@ -1581,7 +2076,7 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
             aria-hidden={part.isPlaceholder ? true : undefined}
             className={`${part.state}${part.isPlaceholder ? " placeholderText" : ""}`}
             key="target"
-            style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: subtitleStyle.targetBold ? 800 : 620 }}
+            style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: selectSubtitleFontWeight("target", subtitleStyle.targetBold) }}
           >
             {part.text}
           </h1>
@@ -1603,7 +2098,7 @@ function OverlayCaptionHistory({ lines, subtitleStyle }: { lines: CaptionLine[];
     <div className="overlayCaptionHistory" ref={historyRef}>
       {lines.map((line, index, visibleLines) => (
         <article className={`historyLine ${line.state} ${index === visibleLines.length - 1 ? "current" : ""}`} key={line.id}>
-          <span className="overlayStateBadge">{captionStateLabel(line.state)}</span>
+          <span className="overlayStateBadge">{captionStateDisplayLabel(line.state)}</span>
           <CaptionText line={line} subtitleStyle={subtitleStyle} />
         </article>
       ))}
@@ -1657,25 +2152,22 @@ function OverlayToolbar({
 }
 
 function OverlaySessionBar({
+  durationMs,
   isListening,
-  lines,
   onCaptureToggle,
   onDisplayModeChange,
   onMicrophoneSelect,
   snapshot,
-  subtitleStyle,
-  translationProvider
+  subtitleStyle
 }: {
+  durationMs: number;
   isListening: boolean;
-  lines: CaptionLine[];
   onCaptureToggle: () => void;
   onDisplayModeChange: (mode: SubtitleDisplayMode) => void;
   onMicrophoneSelect: () => void;
   snapshot: DesktopCaptureSnapshot;
   subtitleStyle: SubtitleStyleState;
-  translationProvider: TranslationProviderSelection;
 }) {
-  const durationMs = Math.max(0, ...lines.map((line) => line.endMs)) + (isListening ? 10400 : 0);
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
   return (
     <div className="overlaySessionBar">
@@ -1694,19 +2186,19 @@ function OverlaySessionBar({
         <ToolbarIcon name="power" />
       </button>
       <span className="sessionTimer">{formatClock(durationMs)}</span>
-      <span className="sessionPill">{translationProviderLabel(translationProvider)}</span>
+      <span className="sessionPill">{isListening ? "同传中" : "待开始"}</span>
       <span className="sessionPill">{sourceLabel(snapshot.sourceId)}</span>
       <details className="displayModePicker">
-        <summary>{styleOptionLabel(displayMode)}</summary>
+        <summary>{subtitleDisplayModeLabel(displayMode)}</summary>
         <div className="displayModeMenu">
           <button className={displayMode === "bilingual" ? "selected" : ""} onClick={() => onDisplayModeChange("bilingual")}>
             双语字幕
           </button>
           <button className={displayMode === "source" ? "selected" : ""} onClick={() => onDisplayModeChange("source")}>
-            主字幕
+            只看原文
           </button>
           <button className={displayMode === "translation" ? "selected" : ""} onClick={() => onDisplayModeChange("translation")}>
-            翻译字幕
+            只看译文
           </button>
         </div>
       </details>
@@ -1749,13 +2241,13 @@ function SubtitleStylePanel({
         </button>
       </header>
       <div className="subtitleStylePanelBody">
-        <StyleSection title="主字幕">
+        <StyleSection title="原文字幕">
           <StepperRow label="字号" max={28} min={12} onChange={(sourceScale) => onChange({ sourceScale })} value={subtitleStyle.sourceScale} />
           <SwatchRow label="颜色" onChange={(sourceColor) => onChange({ sourceColor })} value={subtitleStyle.sourceColor} />
           <SelectRow label="字体" onChange={(sourceFont) => onChange({ sourceFont })} options={fontOptions} value={subtitleStyle.sourceFont} />
           <SwitchRow label="加粗" onChange={(sourceBold) => onChange({ sourceBold })} value={subtitleStyle.sourceBold} />
         </StyleSection>
-        <StyleSection title="翻译字幕">
+        <StyleSection title="译文字幕">
           <StepperRow label="字号" max={40} min={20} onChange={(targetScale) => onChange({ targetScale })} value={subtitleStyle.targetScale} />
           <SwatchRow label="颜色" onChange={(targetColor) => onChange({ targetColor })} value={subtitleStyle.targetColor} />
           <SelectRow label="字体" onChange={(targetFont) => onChange({ targetFont })} options={fontOptions} value={subtitleStyle.targetFont} />
@@ -1771,12 +2263,26 @@ function SubtitleStylePanel({
             options={["shadow", "outline", "none"]}
             value={subtitleStyle.outlineStyle}
           />
-          <SwitchRow label="翻译字幕优先" onChange={(translationFirst) => onChange({ translationFirst })} value={subtitleStyle.translationFirst} />
+          <SwitchRow label="译文在上" onChange={(translationFirst) => onChange({ translationFirst })} value={subtitleStyle.translationFirst} />
           <SelectRow
             label="显示模式"
             onChange={(displayMode) => onChange({ displayMode: displayMode as SubtitleDisplayMode })}
             options={["bilingual", "source", "translation"]}
             value={subtitleStyle.displayMode}
+          />
+          <ActionRow
+            label="窗口位置"
+            actions={[
+              { label: "锁定位置", onClick: () => void window.echosyncDesktop?.setOverlayPinned(true) },
+              { label: "重置位置", onClick: () => void window.echosyncDesktop?.recenterOverlay() }
+            ]}
+          />
+          <ActionRow
+            label="鼠标交互"
+            actions={[
+              { label: "鼠标穿透", onClick: () => void window.echosyncDesktop?.setOverlayLocked(true) },
+              { label: "允许点击", onClick: () => void window.echosyncDesktop?.setOverlayLocked(false) }
+            ]}
           />
         </StyleSection>
       </div>
@@ -1878,6 +2384,27 @@ function SelectRow({
   );
 }
 
+function ActionRow({
+  actions,
+  label
+}: {
+  actions: Array<{ label: string; onClick: () => void }>;
+  label: string;
+}) {
+  return (
+    <div className="settingRow actionSettingRow">
+      <span>{label}</span>
+      <div>
+        {actions.map((action) => (
+          <button key={action.label} onClick={action.onClick} type="button">
+            {action.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ToolbarIcon({ name }: { name: "settings" | "lock" | "pin" | "target" | "more" | "close" | "mic" | "power" }) {
   const common = { fill: "none", stroke: "currentColor", strokeLinecap: "round" as const, strokeLinejoin: "round" as const, strokeWidth: 1.9 };
   return (
@@ -1935,9 +2462,9 @@ function fontFamilyValue(value: string) {
 
 function styleOptionLabel(value: string) {
   const labels: Record<string, string> = {
-    bilingual: "双语字幕",
-    source: "主字幕",
-    translation: "翻译字幕",
+    bilingual: subtitleDisplayModeLabel("bilingual"),
+    source: subtitleDisplayModeLabel("source"),
+    translation: subtitleDisplayModeLabel("translation"),
     shadow: "阴影",
     outline: "描边",
     none: "无"
@@ -1947,16 +2474,6 @@ function styleOptionLabel(value: string) {
 
 function sourceLabel(sourceId: DesktopAudioSourceId) {
   return DESKTOP_AUDIO_SOURCES.find((source: DesktopAudioSource) => source.id === sourceId)?.label ?? "未知来源";
-}
-
-function captionStateLabel(state: CaptionLine["state"]) {
-  const labels: Record<CaptionLine["state"], string> = {
-    interim: "确认中",
-    stable: "已稳定",
-    revised: "已修订",
-    locked: "已锁定"
-  };
-  return labels[state];
 }
 
 function scrollTranscriptToBottom(element: HTMLDivElement | null) {
@@ -1998,7 +2515,7 @@ function termStatusLabel(status: ReturnType<typeof createInitialSessionUiState>[
   const labels: Record<ReturnType<typeof createInitialSessionUiState>["terms"][number]["status"], string> = {
     active: "已生效",
     failed: "失败",
-    syncing: "注入中"
+    syncing: "同步中"
   };
   return labels[status];
 }
