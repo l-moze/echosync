@@ -5,6 +5,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from dataclasses import replace
 
 from echosync_agent.domain import (
@@ -47,6 +48,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         stable_refresh_min_chars: int = 12,
         partial_translation_min_audio_ms: int = 600,
         partial_translation_min_chars: int = 8,
+        translate_partial_checkpoints: bool = False,
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
@@ -58,6 +60,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         self.stable_refresh_min_chars = stable_refresh_min_chars
         self.partial_translation_min_audio_ms = partial_translation_min_audio_ms
         self.partial_translation_min_chars = partial_translation_min_chars
+        self.translate_partial_checkpoints = translate_partial_checkpoints
         # 统一转为 Glossary 对象
         if isinstance(glossary, dict):
             self._glossary = Glossary.from_dict(glossary)
@@ -98,6 +101,21 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 async for transcript in assembled_transcripts:
                     await event_queue.put(self._source_only_translation(transcript))
                     if transcript.status == SegmentStatus.PARTIAL:
+                        if not self.translate_partial_checkpoints:
+                            if self._is_partial_checkpoint_candidate(transcript):
+                                logger.info(
+                                    "translation_checkpoint_skipped session_id=%s "
+                                    "segment_id=%s rev=%d status=%s reason=partial_disabled "
+                                    "audio_start_ms=%d audio_end_ms=%d source_chars=%d",
+                                    transcript.session_id,
+                                    transcript.segment_id,
+                                    transcript.rev,
+                                    transcript.status,
+                                    transcript.start_ms,
+                                    transcript.end_ms,
+                                    len(transcript.text),
+                                )
+                            continue
                         if not self._should_queue_partial_checkpoint(
                             transcript,
                             partial_checkpoint_history,
@@ -332,6 +350,12 @@ class CascadedInterpretationEngine(InterpretationEngine):
             return False
         return audio_gap_ms >= self.partial_translation_min_audio_ms
 
+    def _is_partial_checkpoint_candidate(self, transcript: TranscriptSegment) -> bool:
+        text = transcript.text.strip()
+        if _visible_char_count(text) < self.partial_translation_min_chars:
+            return False
+        return transcript.end_ms - transcript.start_ms >= self.partial_translation_min_audio_ms
+
     @staticmethod
     def _queue_translation_checkpoint(
         pending_checkpoints: dict[tuple[str, SegmentStatus], TranscriptSegment],
@@ -364,10 +388,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
         checkpoint_key: tuple[str, SegmentStatus],
     ) -> None:
         pending_checkpoints.pop(checkpoint_key, None)
-        try:
+        with suppress(ValueError):
             pending_order.remove(checkpoint_key)
-        except ValueError:
-            pass
 
     def _should_queue_stable_checkpoint(
         self,

@@ -176,13 +176,13 @@ SessionArchiveDraft
 
 选型：实时字幕采用行业常见的 interim hypothesis 模型，而不是等完整句子稳定后再显示。ASR 适配器持续输出 delta，`TranscriptAssembler` 负责把 delta 聚合成同一个活动片段：
 
-- `partial`：每个 ASR delta 都会更新当前源文，用于英文/原文打字机效果；不触发翻译请求。
+- `partial`：每个 ASR delta 都会更新当前源文，用于英文/原文打字机效果；默认不触发翻译请求，避免把不稳定尾巴送进 DeepSeek。
 - `stable`：默认约 1 秒形成一次 checkpoint，触发一次流式翻译；前端用同一个 `segment_id` 和递增 `rev` 替换尾部文字。
 - `committed`：遇到标点、供应商 final 或音频流结束时锁定片段，输出最终译文并发布 `segment.commit`。
 
 翻译器以 `translate()` 一次性接口作为最小契约，适合 DeepL、传统机器翻译 API、录播视频回放等可接受时间差的场景。支持实时 token 的供应商再额外实现 `StreamingTranslator.stream_translate()`；DeepSeek 使用 OpenAI-compatible `stream=True`，收到 token delta 后累计成当前译文并持续发布 `translation.partial`。如果供应商暂时不支持流式，级联引擎会回退到一次性 `translate()`，不影响管道契约。
 
-级联引擎会优先发布 `transcript.partial` 源文 hypothesis，翻译在后台按 checkpoint 顺序处理；如果同一活动片段已经排入更高 `rev`，旧 checkpoint 会被跳过，避免慢翻译把前文回滚或浪费 API。
+级联引擎会优先发布 `transcript.partial` 源文 hypothesis，翻译在后台只处理 stable/committed checkpoint；如果同一活动片段已经排入更高 `rev`，旧 checkpoint 会被跳过，避免慢翻译把前文回滚或浪费 API。低延迟实验可以显式打开 `translate_partial_checkpoints=True`，但默认链路遵循“DeepSeek 只吃稳定文本”的同传策略。
 
 前端约定：`transcript.partial` 只更新源文草稿，不清空已有译文；`translation.partial` 更新目标译文。为了兼容旧事件，当前空 `translation.partial.target_text` 仍按源文草稿处理。悬浮字幕优先显示最新有译文的行，避免慢翻译或 batch 翻译模式下被空译文草稿抢焦点。
 
@@ -193,8 +193,9 @@ SessionArchiveDraft
 当前链路的瓶颈主要来自流式音频、增量文本和多模型排队，不适合优先上 DFS 或背包。已落地的优化方向如下：
 
 - 音频门控：`audio-gate.ts` 使用分片队列读取固定长度 chunk，避免每次 `push()` 都把残留 buffer 与新样本整体拼接，也避免每次切片后复制剩余样本。该优化把热路径从“重复搬运余量样本”收敛为“只复制输出 chunk 一次”，降低 renderer GC 和音频抖动。
+- FunASR endpoint：FunASR 适配器遇到上游 `is_final=true` 会把当前窗口作为 endpoint final 推理，并在之后重置 provider cache，避免上一句上下文污染下一句。每次 ASR 推理都会输出 `funasr_inference_chunk` 日志，包含 `input_audio_ms`、`transport_frames`、`final`、`latency_ms` 和 `rtf`。
 - ASR 分段：`TranscriptAssembler` 维护 `current_text` 增量文本，不再每个 ASR delta 都 `join(buffer)`。输出契约仍保持 `partial/stable/committed` 三态，避免改变字幕 UI 和翻译器边界。
-- 翻译排队：`CascadedInterpretationEngine` 对待翻译 checkpoint 按 `segment_id` 去重，同一活动片段在队列中只保留最新 `rev`。这属于实时系统背压和队列合并问题，优先级高于复杂组合优化。
+- 翻译排队：`CascadedInterpretationEngine` 对待翻译 checkpoint 按 `segment_id` 去重，同一活动片段在队列中只保留最新 `rev`。默认跳过 partial 翻译，并输出 `translation_checkpoint_skipped reason=partial_disabled`，让日志能证明 DeepSeek 请求没有被不稳定文本放大。
 - 译文显示合帧：DeepSeek 等流式翻译模型可能按中文单字 token 返回。后端 `DeepSeekTranslator` 会按最小可见字符数和标点合并 token 后再发布，前端只即时展示 Agent 已发布的事件文本，不再二次语义切块。最终 `committed` 事件仍完整覆盖字幕。
 - 术语匹配：小词表继续使用预编译 Regex，大词表使用 Aho-Corasick 多模式匹配。后续若 ASR 错词导致术语漏匹配，应先做 normalized text + offset map，再对高优先级术语做轻量近似匹配，避免全量编辑距离扫描。
 

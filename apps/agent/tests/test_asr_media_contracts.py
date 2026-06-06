@@ -265,6 +265,52 @@ def test_funasr_transcriber_flushes_final_remainder() -> None:
     assert segments[0].end_ms == 200
 
 
+def test_funasr_transcriber_resets_cache_after_endpoint_final_and_records_window_metrics(
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeModel:
+        def generate(self, **kwargs: object) -> list[dict[str, str]]:
+            calls.append(kwargs)
+            return [{"text": f"chunk-{len(calls)}"}]
+
+    async def frames() -> AsyncIterator[AudioFrame]:
+        for seq in range(3):
+            yield AudioFrame(
+                session_id="sess_endpoint_reset",
+                seq=seq + 1,
+                pcm=b"\x01\x00" * 4800,
+                sample_rate=16_000,
+                channels=1,
+                start_ms=seq * 300,
+                end_ms=(seq + 1) * 300,
+                source_lang="zh",
+                is_final=seq == 1,
+            )
+
+    transcriber = FunAsrTranscriber(
+        model_factory=lambda: FakeModel(),
+        config=FunAsrStreamingConfig(chunk_ms=300),
+    )
+
+    segments = asyncio.run(_collect(transcriber.stream(frames())))
+
+    assert len(calls) == 3
+    assert calls[0]["cache"] is calls[1]["cache"]
+    assert calls[2]["cache"] is not calls[1]["cache"]
+    assert calls[1]["is_final"] is True
+    assert calls[2]["is_final"] is False
+    assert [segment.status for segment in segments] == [
+        SegmentStatus.PARTIAL,
+        SegmentStatus.COMMITTED,
+        SegmentStatus.PARTIAL,
+    ]
+    assert segments[0].metrics["asr_input_audio_ms"] == 300.0
+    assert segments[0].metrics["asr_transport_frames"] == 1.0
+    assert segments[1].metrics["asr_endpoint_final"] == 1.0
+    assert segments[2].metrics["asr_endpoint_final"] == 0.0
+
+
 def test_funasr_transcriber_uses_frame_sample_rate_for_aggregation_window() -> None:
     calls: list[dict[str, object]] = []
 

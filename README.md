@@ -107,13 +107,15 @@ FUNASR_DEVICE=auto
 - `audio_stream_started`：桌面端已开始送系统音频。
 - `audio_chunk_received`：实时 PCM chunk 已进入 Agent。
 - `audio_stream_metrics`：Agent 每秒聚合打印音频帧、音频毫秒数、字节数、传输延迟和队列深度。
+- `funasr_inference_chunk`：FunASR 每次模型推理的真实窗口，包含 `input_audio_ms`、`transport_frames`、`final`、`latency_ms`、`rtf`，用于证明 80ms 传输帧没有被直接变成 80ms 模型调用。
+- `translation_checkpoint_skipped`：默认跳过 `partial` 翻译时出现，表示 DeepSeek 没有收到不稳定半句话。
 - `caption_event_published`：ASR/翻译后的字幕事件已推给桌面端，并带 `published_at_ms` 与模型指标；`transcript.partial` 是源文草稿，`translation.partial` 是译文更新。
 
 当前 MVP 的采集节点使用 `ScriptProcessorNode` 做快速验证；后续会替换为 `AudioWorklet` 或 WASAPI loopback，以降低抖动和长期运行风险。
 
 当前 renderer 已加轻量门控：低于响度阈值时不发送音频块，连续静音后自动把上一块活跃音频标记为 `is_final=true`，避免静音时持续打满 ASR。字幕弹窗会显示当前片段时间范围。
 
-实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理。Voxtral 会按同一 `asr_latency_mode` 映射 `target_streaming_delay_ms`：`low_latency` 最多 480ms，`balanced` 沿用 `.env`，`accuracy` 至少 1600ms。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 按 `segment_id` 合并待处理项，降低模型慢响应时的队列积压。MP4/音频文件源使用 ffmpeg stdout 流式分帧，真实样本 `vido/videoplayback.mp4` 的首个 80ms PCM frame 约 40ms 产出，不再等待完整文件解码。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
+实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理；遇到上游 endpoint final 会以 `is_final=True` flush 并重置 FunASR cache。Voxtral 会按同一 `asr_latency_mode` 映射 `target_streaming_delay_ms`：`low_latency` 最多 480ms，`balanced` 沿用 `.env`，`accuracy` 至少 1600ms。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 默认只处理 `stable/committed`，`partial` 只显示源文并通过 `translation_checkpoint_skipped` 记录跳过原因；待翻译项仍按 `segment_id` 合并，降低模型慢响应时的队列积压。MP4/音频文件源使用 ffmpeg stdout 流式分帧，真实样本 `vido/videoplayback.mp4` 的首个 80ms PCM frame 约 40ms 产出，不再等待完整文件解码。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
 
 实时控制事件语义：`realtime.error` 表示本次会话启动失败或 pipeline 失败，客户端应进入错误态并停止本地媒体流；`realtime.done` 只表示正常完成。用户主动停止时，如果 pipeline 已经失败，Agent 会优先上报错误；如果仍在处理队列，则取消未完成的 pipeline，避免停止后继续推送晚到字幕。
 

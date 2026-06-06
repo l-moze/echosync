@@ -75,6 +75,22 @@ def test_cascaded_engine_translates_long_partial_before_stable_checkpoint() -> N
     asyncio.run(_assert_cascaded_engine_translates_long_partial_before_stable_checkpoint())
 
 
+def test_cascaded_engine_skips_partial_translation_by_default(caplog) -> None:
+    caplog.set_level(
+        logging.INFO,
+        logger="echosync_agent.services.engine.cascaded_engine",
+    )
+
+    asyncio.run(_assert_cascaded_engine_skips_partial_translation_by_default())
+
+    messages = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "echosync_agent.services.engine.cascaded_engine"
+    ]
+    assert any("translation_checkpoint_skipped" in message for message in messages)
+
+
 async def _assert_engine_translates_segments_and_records_latency_metrics() -> None:
     translator = RecordingTranslator()
     engine = CascadedInterpretationEngine(
@@ -281,6 +297,7 @@ async def _assert_cascaded_engine_translates_long_partial_before_stable_checkpoi
         transcriber=LongPartialBeforeStableTranscriber(first_translated),
         translator=translator,
         correction_engine=NoopCorrectionEngine(),
+        translate_partial_checkpoints=True,
     )
 
     events = [event async for event in engine.stream(_frames())]
@@ -297,6 +314,29 @@ async def _assert_cascaded_engine_translates_long_partial_before_stable_checkpoi
         and event.target_text == "[zh] 今天我们来讲实时翻译"
         for event in translated
     )
+
+
+async def _assert_cascaded_engine_skips_partial_translation_by_default() -> None:
+    first_translated = asyncio.Event()
+    translator = SignalingTranslator(first_translated, asyncio.Event())
+    engine = CascadedInterpretationEngine(
+        transcriber=LongPartialBeforeStableTranscriber(first_translated),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+    )
+
+    events = [event async for event in engine.stream(_frames())]
+    translated = [
+        event
+        for event in events
+        if isinstance(event, TranslationSegment) and event.target_text
+    ]
+
+    assert [segment.status for segment in translator.seen_segments] == [
+        SegmentStatus.COMMITTED
+    ]
+    assert translator.seen_segments[0].text == "今天我们来讲实时翻译。"
+    assert all(event.status != SegmentStatus.PARTIAL for event in translated)
 
 
 class DeltaTranscriber(Transcriber):

@@ -206,21 +206,33 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
    DeepSeek 流式译文仍在 Agent 侧合帧，但默认阈值从“首包/增量均 6 个可见字符”调整为“首包 4 个可见字符、增量 2 个可见字符”。这样能过滤 1 字 token 刷屏，同时允许“今天”“因此”这类短语级增量快速进入前端。
 
-7. **partial 预翻译 checkpoint**
+7. **stable-only DeepSeek 调度**
 
-   `CascadedInterpretationEngine` 不再只等待 `stable/committed` 才进入翻译。对于已经达到最小音频窗口和最小可见字符数的 `partial`，Engine 会先发起一次低延迟预翻译；当后续 `stable/committed` 到达时，会丢弃尚未执行的旧 `partial` checkpoint，让稳定译文接管。
+   `CascadedInterpretationEngine` 默认不再把 `partial` 送进翻译模型。`partial` 只负责源文实时吐字；DeepSeek 只处理 `stable/committed` checkpoint，避免半句话触发错译、Token 浪费和字幕回滚。低延迟实验仍可通过 `translate_partial_checkpoints=True` 显式打开，但不是默认主链路。
 
    ```text
-   transcript.partial(足够长)
-     -> translation.partial(预翻译，不触发 correction，不写入历史)
+   transcript.partial
+     -> translation_checkpoint_skipped reason=partial_disabled
      -> transcript.stable / transcript.committed
      -> translation.partial(稳定翻译)
      -> segment.commit(最终锁定)
    ```
 
-   算法收益：ASR 在连续口播中还没形成 stable 时，悬浮窗也能先拿到可读译文，减少长时间显示“正在翻译...”。
+   算法收益：在“长 partial 后接 committed”的典型场景里，默认翻译请求从 partial+committed 两次降为 committed 一次；测试用例可观测到 translator 调用数下降 50%，并且日志会出现 `translation_checkpoint_skipped` 作为证据。
 
-8. **前端空译文 fallback**
+8. **FunASR endpoint cache reset + 推理窗口日志**
+
+   FunASR 适配器现在把上游 `is_final=true` 当作 endpoint final：先 flush 当前窗口并以 `is_final=True` 调用 FunASR，然后重置 provider cache，让下一句话从干净上下文开始。每次推理都会打印：
+
+   ```text
+   funasr_inference_chunk session_id=... start_ms=... end_ms=...
+     input_audio_ms=... transport_frames=... final=...
+     latency_ms=... rtf=... text_chars=...
+   ```
+
+   算法收益：80ms 传输帧仍保持实时上行，但 FunASR 推理窗口继续按 320/600/900ms 聚合。以 balanced 的 600ms 窗口估算，模型调用频率从每秒 12.5 次传输帧降到约 1.67 次推理，理论调用压力降低约 86.7%；真实运行时直接看 `transport_frames` 和 `input_audio_ms` 验证是否达到预期。
+
+9. **前端空译文 fallback**
 
    Desktop 的字幕状态机现在区分“底层记录”和“当前展示”。底层 `CaptionLine[]` 仍按事件真实保存；但悬浮字幕选择当前行时，如果最新源文草稿暂时没有译文，会借用最近一条可用译文展示，直到当前行自己的译文到达。
 
@@ -255,7 +267,9 @@ current='Feels funny to say that at normal speed,' incoming='but'
 | 事件名 | 触发点 | 用途 |
 |--------|--------|------|
 | `audio_stream_metrics` | Agent 实时音频入口 | 统计接收帧数、音频时长和 transport 侧吞吐。 |
-| `translation_checkpoint_queued` | Engine 收到 partial/stable/committed checkpoint | 判断翻译任务是否被 latest-wins 合并或排队；低延迟模式下 partial 预翻译会先进入这里。 |
+| `funasr_inference_chunk` | FunASR 适配器每次模型调用 | 统计一次 ASR 推理吃掉多少音频、聚合了多少传输帧、是否 endpoint final、ASR RTF。 |
+| `translation_checkpoint_queued` | Engine 收到 stable/committed checkpoint | 判断翻译任务是否被 latest-wins 合并或排队；只有显式开启 partial 实验开关时，partial 才会进入这里。 |
+| `translation_checkpoint_skipped` | Engine 跳过不稳定 checkpoint | 默认跳过 partial 翻译时记录，证明 DeepSeek 请求没有被半句话放大。 |
 | `translation_checkpoint_started` | 翻译任务开始 | 记录 `asr_latency_ms`、`merge_wait_ms`、术语命中数。 |
 | `translation_checkpoint_first_token` | 翻译流首个 delta | 定位模型首 token 慢还是完整输出慢。 |
 | `translation_checkpoint_finished` | 翻译任务结束 | 记录完整翻译耗时、delta 数和译文长度。 |
