@@ -79,13 +79,23 @@ export function selectOverlayHistoryLines(
   layer: OverlayLayer,
   lines: CaptionLine[],
   activeLineId?: string,
-  maxLines = 6
+  maxLines = overlayHistoryLimit(layer)
 ): CaptionLine[] {
   const candidates = lines.filter((line) => (line.sourceText || line.targetText) && line.id !== activeLineId);
   if (layer === "default") {
     return candidates.filter((line) => line.state === "locked" || line.targetText.trim()).slice(-1);
   }
   return candidates.slice(-maxLines);
+}
+
+function overlayHistoryLimit(layer: OverlayLayer): number {
+  if (layer === "pinned") {
+    return 24;
+  }
+  if (layer === "controls" || layer === "settings") {
+    return 10;
+  }
+  return 1;
 }
 
 function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs: number): CaptionLine[] {

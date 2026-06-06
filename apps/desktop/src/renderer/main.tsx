@@ -1412,13 +1412,6 @@ function OverlayWindow({
           {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
           <CaptionText line={displayActiveLine ?? activeLine} subtitleStyle={subtitleStyle} />
           {realtimeError ? <p className="overlayError">{realtimeError}</p> : null}
-          <div className={isListening ? "focusMeter active" : "focusMeter"} aria-label={isListening ? "正在同传" : "实时字幕待命"}>
-            <span />
-            <span />
-            <span />
-            <span />
-            <span />
-          </div>
           <div className="overlayMeta">
             <span className={`liveDot state-${snapshot.state}`} />
             <span>{isListening ? "正在同传" : "实时字幕"}</span>
@@ -1577,8 +1570,15 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
 }
 
 function OverlayCaptionHistory({ lines, subtitleStyle }: { lines: CaptionLine[]; subtitleStyle: SubtitleStyleState }) {
+  const historyRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => scrollTranscriptToBottom(historyRef.current));
+    return () => window.cancelAnimationFrame(frame);
+  }, [lines]);
+
   return (
-    <div className="overlayCaptionHistory">
+    <div className="overlayCaptionHistory" ref={historyRef}>
       {lines.map((line, index, visibleLines) => (
         <article className={`historyLine ${line.state} ${index === visibleLines.length - 1 ? "current" : ""}`} key={line.id}>
           <span className="overlayStateBadge">{captionStateLabel(line.state)}</span>

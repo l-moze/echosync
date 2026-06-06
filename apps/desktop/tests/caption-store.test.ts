@@ -690,6 +690,7 @@ describe("桌面字幕状态机", () => {
 
     expect(selectOverlayHistoryLines("default", lines, "seg_8").map((line) => line.id)).toEqual(["seg_7"]);
     expect(selectOverlayHistoryLines("controls", lines, "seg_8").map((line) => line.id)).toEqual([
+      "seg_1",
       "seg_2",
       "seg_3",
       "seg_4",
@@ -698,6 +699,7 @@ describe("桌面字幕状态机", () => {
       "seg_7"
     ]);
     expect(selectOverlayHistoryLines("pinned", lines, "seg_8").map((line) => line.id)).toEqual([
+      "seg_1",
       "seg_2",
       "seg_3",
       "seg_4",
@@ -705,6 +707,26 @@ describe("桌面字幕状态机", () => {
       "seg_6",
       "seg_7"
     ]);
+  });
+
+  it("驻留字幕保留足够历史，让有限高度窗口自然滚动", () => {
+    const lines: CaptionLine[] = Array.from({ length: 28 }, (_, index) => ({
+      id: `seg_${index + 1}`,
+      rev: 1,
+      state: index === 27 ? "stable" : "locked",
+      sourceText: `source ${index + 1}`,
+      targetText: `target ${index + 1}`,
+      stability: 1,
+      startMs: index * 1000,
+      endMs: index * 1000 + 800,
+      patchCount: 0
+    }));
+
+    const history = selectOverlayHistoryLines("pinned", lines, "seg_28");
+
+    expect(history).toHaveLength(24);
+    expect(history.at(0)?.id).toBe("seg_4");
+    expect(history.at(-1)?.id).toBe("seg_27");
   });
 
   it("只接收当前活跃会话的实时事件，停止后忽略晚到字幕", () => {

@@ -1374,9 +1374,10 @@ button:focus-visible {
   display: grid;
   width: 100%;
   height: 100%;
-  place-items: center;
-  padding: 10px 18px;
+  place-items: stretch;
+  padding: 0;
   background: transparent;
+  pointer-events: none;
 }
 
 .overlayStage {
@@ -1385,13 +1386,14 @@ button:focus-visible {
   display: grid;
   grid-template-rows: auto;
   gap: 0;
-  width: min(100%, 1160px);
+  width: 100%;
   height: 100%;
   min-height: 0;
-  align-content: center;
-  align-items: center;
-  justify-items: center;
-  pointer-events: auto;
+  overflow: hidden;
+  align-content: stretch;
+  align-items: stretch;
+  justify-items: stretch;
+  pointer-events: none;
 }
 
 .overlayStage.layer-default {
@@ -1409,11 +1411,14 @@ button:focus-visible {
 }
 
 .floatingCaption {
+  -webkit-app-region: drag;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  width: min(100%, 980px);
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
   min-height: 106px;
   padding: 18px 30px 18px 34px;
   overflow: visible;
@@ -1428,6 +1433,7 @@ button:focus-visible {
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(var(--subtitle-blur, 24px)) saturate(1.18);
   opacity: 1;
+  pointer-events: auto;
   transition:
     width 180ms ease,
     min-height 180ms ease,
@@ -1437,10 +1443,12 @@ button:focus-visible {
 }
 
 .floatingCaption.withChrome {
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto auto;
-  gap: 12px 18px;
-  min-height: 192px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  align-items: stretch;
 }
 
 .floatingCaption.hasHistory {
@@ -1448,7 +1456,7 @@ button:focus-visible {
 }
 
 .floatingCaption.withChrome.hasHistory {
-  grid-template-rows: auto auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
 }
 
 .floatingCaption:hover,
@@ -1469,8 +1477,8 @@ button:focus-visible {
 }
 
 .overlayStage.layer-default .floatingCaption {
-  min-height: 86px;
-  width: min(100%, 940px);
+  min-height: 0;
+  width: 100%;
   padding: 8px 24px 10px;
   border-color: rgba(255, 255, 255, 0.1);
   border-radius: 18px;
@@ -1486,7 +1494,7 @@ button:focus-visible {
 
 .overlayStage.layer-default .floatingCaption:hover,
 .overlayStage.layer-default .floatingCaption:focus-visible {
-  min-height: 86px;
+  min-height: 0;
   border-color: rgba(255, 255, 255, 0.1);
   border-radius: 18px;
   background:
@@ -1501,8 +1509,8 @@ button:focus-visible {
 
 .overlayStage.layer-controls .floatingCaption,
 .overlayStage.layer-settings .floatingCaption {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-content: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: stretch;
   transform: none;
 }
 
@@ -1516,11 +1524,11 @@ button:focus-visible {
 }
 
 .overlayStage.layer-pinned .floatingCaption {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-content: start;
-  align-items: start;
-  width: min(100%, 980px);
-  min-height: 330px;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: stretch;
+  align-items: stretch;
+  width: 100%;
+  min-height: 0;
   transform: none;
 }
 
@@ -1552,18 +1560,18 @@ button:focus-visible {
 
 .floatingCaption.withChrome > .captionText {
   grid-column: 1;
-  grid-row: 1;
-  padding-right: 8px;
+  grid-row: 2;
+  align-self: center;
+  padding: 10px 28px;
 }
 
 .floatingCaption.withChrome.hasHistory > .captionText {
   grid-row: 3;
+  padding: 8px 28px 10px;
 }
 
 .floatingCaption > .focusMeter {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
+  display: none;
 }
 
 .floatingCaption.hasHistory > .focusMeter {
@@ -1597,17 +1605,23 @@ button:focus-visible {
   z-index: 8;
   display: flex;
   width: 100%;
+  background: rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(18px) saturate(1.08);
 }
 
 .captionTopChrome {
   grid-column: 1 / -1;
   grid-row: 1;
   justify-content: flex-end;
+  padding: 7px 10px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .captionBottomChrome {
   grid-column: 1 / -1;
   justify-content: center;
+  padding: 6px 10px 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .floatingCaption > .overlaySessionBar {
@@ -1815,8 +1829,8 @@ button:focus-visible {
 .resize-nw,
 .resize-se,
 .resize-sw {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
 }
 
 .resize-ne {
@@ -1841,17 +1855,6 @@ button:focus-visible {
   bottom: -6px;
   left: -6px;
   cursor: nesw-resize;
-}
-
-.resize-se::after {
-  position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid rgba(255, 255, 255, 0.34);
-  border-bottom: 2px solid rgba(255, 255, 255, 0.34);
-  content: "";
 }
 
 .overlayToolbar button,
@@ -2230,12 +2233,14 @@ button:focus-visible {
   -webkit-app-region: no-drag;
   display: grid;
   width: 100%;
+  min-height: 0;
   max-height: 172px;
   gap: 10px;
   margin-top: 16px;
   padding: 4px 10px 2px 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-behavior: smooth;
   scrollbar-gutter: stable;
 }
 
@@ -2249,12 +2254,17 @@ button:focus-visible {
 
 .overlayStage.layer-controls .overlayCaptionHistory,
 .overlayStage.layer-settings .overlayCaptionHistory {
-  max-height: 76px;
-  margin-top: 2px;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 10px 24px 8px;
 }
 
 .overlayStage.layer-pinned .overlayCaptionHistory {
-  max-height: 242px;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 12px 24px 8px;
 }
 
 .overlayCaptionHistory::-webkit-scrollbar {
@@ -2355,7 +2365,7 @@ button:focus-visible {
 
   .floatingCaption,
   .overlayStage.layer-default .floatingCaption {
-    width: min(100%, 92vw);
+    width: 100%;
   }
 
   .overlayToolbar {
