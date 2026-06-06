@@ -91,6 +91,14 @@ def test_cascaded_engine_skips_partial_translation_by_default(caplog) -> None:
     assert any("translation_checkpoint_skipped" in message for message in messages)
 
 
+def test_cascaded_engine_populates_caption_text_regions() -> None:
+    asyncio.run(_assert_cascaded_engine_populates_caption_text_regions())
+
+
+def test_cascaded_engine_passes_current_segment_revision_context() -> None:
+    asyncio.run(_assert_cascaded_engine_passes_current_segment_revision_context())
+
+
 async def _assert_engine_translates_segments_and_records_latency_metrics() -> None:
     translator = RecordingTranslator()
     engine = CascadedInterpretationEngine(
@@ -111,6 +119,58 @@ async def _assert_engine_translates_segments_and_records_latency_metrics() -> No
     assert translated[0].metrics["translation_latency_ms"] >= 0
     assert translated[-1].metrics["merge_wait_ms"] >= 0
     assert translated[-1].metrics["translation_latency_ms"] >= 0
+
+
+async def _assert_cascaded_engine_populates_caption_text_regions() -> None:
+    engine = CascadedInterpretationEngine(
+        transcriber=DeltaTranscriber(),
+        translator=RecordingTranslator(),
+        correction_engine=NoopCorrectionEngine(),
+    )
+
+    events = [event async for event in engine.stream(_frames())]
+    source_only = next(
+        event
+        for event in events
+        if isinstance(event, TranslationSegment)
+        and event.source_text == "Hello"
+        and event.target_text == ""
+    )
+    final_translation = next(
+        event
+        for event in events
+        if isinstance(event, TranslationSegment)
+        and event.source_text == "Hello, world."
+        and event.target_text
+    )
+    commit = next(event for event in events if isinstance(event, SegmentCommit))
+
+    assert source_only.source_stable_text == ""
+    assert source_only.source_unstable_text == "Hello"
+    assert final_translation.source_stable_text == "Hello, world."
+    assert final_translation.source_unstable_text == ""
+    assert final_translation.target_stable_text == "[zh] Hello, world."
+    assert final_translation.target_unstable_text == ""
+    assert commit.source_stable_text == "Hello, world."
+    assert commit.target_stable_text == "[zh] Hello, world."
+
+
+async def _assert_cascaded_engine_passes_current_segment_revision_context() -> None:
+    first_translated = asyncio.Event()
+    second_translated = asyncio.Event()
+    translator = ContextRecordingSignalingTranslator(first_translated, second_translated)
+    engine = CascadedInterpretationEngine(
+        transcriber=RefreshingStableTranscriber(first_translated, second_translated),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    await _collect_events(engine.stream(_frames()))
+
+    assert translator.contexts[0].current_segment_revisions == ()
+    assert translator.contexts[1].current_segment_revisions[-1].source_text == "The model starts,"
+    assert translator.contexts[1].current_segment_revisions[-1].target_text == "[zh] The model starts,"
 
 
 async def _assert_cascaded_engine_streams_source_hypotheses_and_translation_deltas() -> None:
@@ -619,6 +679,20 @@ class SignalingTranslator(RecordingTranslator):
         return result
 
 
+class ContextRecordingSignalingTranslator(SignalingTranslator):
+    def __init__(self, first_translated: asyncio.Event, second_translated: asyncio.Event) -> None:
+        super().__init__(first_translated, second_translated)
+        self.contexts: list[CorrectionContext] = []
+
+    async def translate(
+        self,
+        segment: TranscriptSegment,
+        context: CorrectionContext,
+    ) -> TranslationSegment:
+        self.contexts.append(context)
+        return await super().translate(segment, context)
+
+
 class SlowStreamingTranslator(RecordingTranslator):
     async def stream_translate(
         self,
@@ -696,3 +770,7 @@ async def _frames() -> AsyncIterator[AudioFrame]:
         end_ms=2400,
         source_lang="en",
     )
+
+
+async def _collect_events(items: AsyncIterator[object]) -> list[object]:
+    return [item async for item in items]

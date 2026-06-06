@@ -102,6 +102,70 @@ def test_transcript_assembler_streams_cjk_deltas_as_cumulative_same_segment_text
     assert len({segment.segment_id for segment in segments}) == 1
 
 
+def test_transcript_assembler_populates_stable_and_unstable_text_regions() -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=10_000,
+        max_segment_audio_ms=10_000,
+        max_segment_chars=200,
+    )
+
+    segments = asyncio.run(
+        _collect(
+            assembler.stream(
+                _partial_segments(
+                    [
+                        "I think",
+                        " this module",
+                        " should",
+                        " be",
+                        " improved",
+                    ]
+                )
+            )
+        )
+    )
+
+    partial = segments[-2]
+    committed = segments[-1]
+
+    assert partial.text == "I think this module should be improved"
+    assert partial.stable_text == "I think this module"
+    assert partial.unstable_text == "should be improved"
+    assert committed.stable_text == "I think this module should be improved"
+    assert committed.unstable_text == ""
+
+
+def test_transcript_assembler_commits_on_endpoint_final_marker_without_sentence_punctuation(
+) -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=10_000,
+        max_segment_audio_ms=10_000,
+        max_segment_chars=200,
+    )
+
+    segments = asyncio.run(
+        _collect(
+            assembler.stream(
+                _timed_segments(
+                    [
+                        ("we", 0, 320, SegmentStatus.PARTIAL),
+                        (" are ready", 320, 960, SegmentStatus.COMMITTED),
+                        (" continuing", 960, 1_280, SegmentStatus.PARTIAL),
+                    ],
+                    final_metrics={1: {"asr_endpoint_final": 1.0}},
+                )
+            )
+        )
+    )
+
+    committed = [segment for segment in segments if segment.status == SegmentStatus.COMMITTED]
+
+    assert [segment.text for segment in committed] == ["we are ready", "continuing"]
+    assert len({segment.segment_id for segment in committed}) == 2
+    assert committed[0].stable_text == "we are ready"
+    assert committed[0].unstable_text == ""
+
+
 def test_transcript_assembler_keeps_legacy_source_emission_config_without_delaying_source() -> None:
     assembler = TranscriptAssembler(
         checkpoint_audio_ms=10_000,
@@ -291,7 +355,8 @@ async def _timed_partial_segments(
 
 
 async def _timed_segments(
-    items: list[tuple[str, int, int, SegmentStatus]]
+    items: list[tuple[str, int, int, SegmentStatus]],
+    final_metrics: dict[int, dict[str, float]] | None = None,
 ) -> AsyncIterator[TranscriptSegment]:
     for index, (text, start_ms, end_ms, status) in enumerate(items):
         yield TranscriptSegment(
@@ -304,7 +369,7 @@ async def _timed_segments(
             text=text,
             status=status,
             stability=1.0 if status == SegmentStatus.COMMITTED else 0.72,
-            metrics={"asr_latency_ms": 12.0},
+            metrics={"asr_latency_ms": 12.0, **(final_metrics or {}).get(index, {})},
         )
 
 

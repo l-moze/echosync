@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from echosync_agent.services.translation.deepseek_translator import should_flush_streaming_target
+from echosync_agent.domain import CorrectionContext, SegmentStatus, TranslationSegment
+from echosync_agent.services.translation.deepseek_translator import (
+    DeepSeekTranslator,
+    should_flush_streaming_target,
+)
 
 
 def test_deepseek_streaming_target_waits_for_short_cjk_deltas() -> None:
@@ -34,3 +38,37 @@ def test_deepseek_streaming_target_flushes_on_final_and_rewrite() -> None:
         )
         is True
     )
+
+
+def test_deepseek_prompt_includes_current_segment_revision_context() -> None:
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://example.invalid/v1",
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+    previous = TranslationSegment(
+        session_id="sess_prompt",
+        segment_id="seg_live",
+        rev=2,
+        source_rev=2,
+        start_ms=0,
+        end_ms=1_200,
+        source_lang="en",
+        target_lang="zh-CN",
+        source_text="I think this model",
+        target_text="我认为这个模型",
+        status=SegmentStatus.STABLE,
+        stability=0.9,
+    )
+    context = CorrectionContext(
+        recent_segments=(),
+        current_segment_revisions=(previous,),
+    )
+
+    prompt = translator._build_user_prompt("I think this module", context)
+
+    assert "<current_segment_revisions>" in prompt
+    assert "<source>I think this model</source>" in prompt
+    assert "<target>我认为这个模型</target>" in prompt
+    assert "<source>I think this module</source>" in prompt

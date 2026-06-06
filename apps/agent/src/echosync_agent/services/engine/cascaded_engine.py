@@ -27,6 +27,7 @@ from echosync_agent.interfaces import (
     Translator,
 )
 from echosync_agent.services.asr.transcript_assembler import TranscriptAssembler
+from echosync_agent.services.realtime.text_regions import split_realtime_text
 from echosync_agent.services.translation.terminology import Glossary
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         else:
             self._glossary = glossary
         self._history: deque[TranslationSegment] = deque(maxlen=revision_window_segments + 4)
+        self._segment_revisions: dict[str, deque[TranslationSegment]] = {}
 
     @property
     def profile(self) -> ModelProfile:
@@ -204,7 +206,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         self,
         transcript: TranscriptSegment,
     ) -> AsyncIterator[InterpretationEvent]:
-        context = self._context(transcript.text)
+        context = self._context(transcript.text, transcript.segment_id)
         translation_started_at = time.perf_counter()
         translation_first_token_ms: float | None = None
         translation_delta_count = 0
@@ -249,6 +251,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
                     "translation_delta_count": float(translation_delta_count),
                 },
             )
+            translation = self._with_text_regions(translation)
             final_translation = translation
             yield translation
 
@@ -291,6 +294,9 @@ class CascadedInterpretationEngine(InterpretationEngine):
         if patch is not None:
             yield patch
 
+        if final_translation.status != SegmentStatus.PARTIAL:
+            self._remember_segment_revision(final_translation)
+
         if final_translation.status == SegmentStatus.COMMITTED:
             self._history.append(final_translation)
 
@@ -306,6 +312,10 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 source_text=final_translation.source_text,
                 target_text=final_translation.target_text,
                 speaker=final_translation.speaker,
+                source_stable_text=final_translation.source_stable_text,
+                source_unstable_text=final_translation.source_unstable_text,
+                target_stable_text=final_translation.target_stable_text,
+                target_unstable_text=final_translation.target_unstable_text,
             )
 
     @staticmethod
@@ -416,6 +426,11 @@ class CascadedInterpretationEngine(InterpretationEngine):
         )
 
     def _source_only_translation(self, transcript: TranscriptSegment) -> TranslationSegment:
+        source_regions = split_realtime_text(
+            transcript.text,
+            status=transcript.status,
+            language=transcript.source_lang,
+        )
         return TranslationSegment(
             session_id=transcript.session_id,
             segment_id=transcript.segment_id,
@@ -431,6 +446,8 @@ class CascadedInterpretationEngine(InterpretationEngine):
             stability=transcript.stability,
             speaker=transcript.speaker,
             metrics=dict(transcript.metrics),
+            source_stable_text=source_regions.stable_text,
+            source_unstable_text=source_regions.unstable_text,
         )
 
     async def _stream_translation(
@@ -447,7 +464,33 @@ class CascadedInterpretationEngine(InterpretationEngine):
 
         yield await self.translator.translate(transcript, context)
 
-    def _context(self, current_source_text: str) -> CorrectionContext:
+    def _with_text_regions(self, translation: TranslationSegment) -> TranslationSegment:
+        source_regions = split_realtime_text(
+            translation.source_text,
+            status=translation.status,
+            language=translation.source_lang,
+        )
+        target_regions = split_realtime_text(
+            translation.target_text,
+            status=translation.status,
+            language=translation.target_lang,
+        )
+        return replace(
+            translation,
+            source_stable_text=source_regions.stable_text,
+            source_unstable_text=source_regions.unstable_text,
+            target_stable_text=target_regions.stable_text,
+            target_unstable_text=target_regions.unstable_text,
+        )
+
+    def _remember_segment_revision(self, translation: TranslationSegment) -> None:
+        history = self._segment_revisions.setdefault(
+            translation.segment_id,
+            deque(maxlen=self.revision_window_segments + 1),
+        )
+        history.append(translation)
+
+    def _context(self, current_source_text: str, current_segment_id: str) -> CorrectionContext:
         """构建翻译上下文，包含基于流式窗口的术语匹配。
 
         窗口 = 最近 1-2 个 final/committed 段 + 当前段。
@@ -481,6 +524,9 @@ class CascadedInterpretationEngine(InterpretationEngine):
 
         return CorrectionContext(
             recent_segments=tuple(self._history),
+            current_segment_revisions=tuple(
+                self._segment_revisions.get(current_segment_id, ())
+            ),
             glossary=context_glossary,
             glossary_constraints=context_constraints,
             max_revision_segments=self.revision_window_segments,

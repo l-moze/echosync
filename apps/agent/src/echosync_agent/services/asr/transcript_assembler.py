@@ -13,6 +13,7 @@ from echosync_agent.services.realtime.text_emission_policy import (
     DEFAULT_TEXT_EMISSION_POLICY,
     TextEmissionPolicy,
 )
+from echosync_agent.services.realtime.text_regions import split_realtime_text
 
 
 class TranscriptAssembler:
@@ -71,7 +72,10 @@ class TranscriptAssembler:
                 not force_checkpointed
                 and self._should_force_checkpoint(current_text, first, last)
             )
-            should_commit = self._should_commit(current_text)
+            should_commit = self._should_commit(current_text) or self._should_endpoint_commit(
+                current_text,
+                segment,
+            )
             should_checkpoint = (
                 not should_commit
                 and (
@@ -140,6 +144,12 @@ class TranscriptAssembler:
     def _should_commit(self, text: str) -> bool:
         return text.rstrip().endswith(tuple(self.commit_punctuation))
 
+    @staticmethod
+    def _should_endpoint_commit(text: str, segment: TranscriptSegment) -> bool:
+        if not text.strip() or segment.status != SegmentStatus.COMMITTED:
+            return False
+        return float(segment.metrics.get("asr_endpoint_final", 0.0)) >= 1.0
+
     def _should_weak_boundary(self, text: str) -> bool:
         return text.rstrip().endswith((",", "，", ";", "；", ":", "："))
 
@@ -183,6 +193,7 @@ class TranscriptAssembler:
     ) -> TranscriptSegment:
         metrics = dict(last.metrics)
         metrics["merge_wait_ms"] = max((time.perf_counter() - last_delta_at) * 1000, 0.0)
+        regions = split_realtime_text(text, status=status, language=last.source_lang)
         return replace(
             last,
             segment_id=segment_id,
@@ -192,6 +203,8 @@ class TranscriptAssembler:
             status=status,
             stability=1.0 if status == SegmentStatus.COMMITTED else last.stability,
             metrics=metrics,
+            stable_text=regions.stable_text,
+            unstable_text=regions.unstable_text,
         )
 
 

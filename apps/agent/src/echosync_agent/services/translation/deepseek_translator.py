@@ -151,11 +151,19 @@ class DeepSeekTranslator(Translator):
             glossary_block = ""
 
         recent = self._recent_context(context)
+        current_segment_revisions = self._current_segment_revision_context(context)
+        current_segment_block = ""
+        if current_segment_revisions:
+            current_segment_block = (
+                "\n<current_segment_revisions>\n"
+                f"{current_segment_revisions}\n"
+                "</current_segment_revisions>"
+            )
         context_block = ""
         if recent:
             context_block = f"\n<context>\n{recent}\n</context>"
 
-        result = f"{source_block}{context_block}{glossary_block}"
+        result = f"{source_block}{current_segment_block}{context_block}{glossary_block}"
         logger.debug("deepseek_prompt_len", extra={"prompt_chars": len(result)})
         return result
 
@@ -167,6 +175,17 @@ class DeepSeekTranslator(Translator):
             f"<target>{_xml_text(item.target_text)}</target>"
             "</item>"
             for item in context.recent_segments[-context.max_revision_segments :]
+        ]
+        return "\n".join(lines) if lines else ""
+
+    @staticmethod
+    def _current_segment_revision_context(context: CorrectionContext) -> str:
+        lines = [
+            "<item>"
+            f"<source>{_xml_text(item.source_text)}</source>"
+            f"<target>{_xml_text(item.target_text)}</target>"
+            "</item>"
+            for item in context.current_segment_revisions[-context.max_revision_segments :]
         ]
         return "\n".join(lines) if lines else ""
 

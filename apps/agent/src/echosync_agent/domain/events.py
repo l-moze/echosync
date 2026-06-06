@@ -74,6 +74,8 @@ class TranscriptSegment:
     stability: float
     speaker: str | None = None
     metrics: dict[str, float] = field(default_factory=dict)
+    stable_text: str = ""
+    unstable_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +94,10 @@ class TranslationSegment:
     stability: float
     speaker: str | None = None
     metrics: dict[str, float] = field(default_factory=dict)
+    source_stable_text: str = ""
+    source_unstable_text: str = ""
+    target_stable_text: str = ""
+    target_unstable_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +105,7 @@ class CorrectionContext:
     """传给修正策略的有界上下文。"""
 
     recent_segments: tuple[TranslationSegment, ...]
+    current_segment_revisions: tuple[TranslationSegment, ...] = ()
     glossary: dict[str, str] = field(default_factory=dict)
     glossary_constraints: dict[str, str] = field(default_factory=dict)
     max_revision_segments: int = 2
@@ -138,6 +145,10 @@ class SegmentCommit:
     target_text: str
     speaker: str | None = None
     final: bool = True
+    source_stable_text: str = ""
+    source_unstable_text: str = ""
+    target_stable_text: str = ""
+    target_unstable_text: str = ""
 
 
 @dataclass(frozen=True, slots=True)

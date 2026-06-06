@@ -8,6 +8,10 @@ export type CaptionTextEvent = {
   target_lang: string;
   source_text: string;
   target_text: string;
+  source_stable_text?: string;
+  source_unstable_text?: string;
+  target_stable_text?: string;
+  target_unstable_text?: string;
   status: SegmentStatus;
   stability: number;
   start_ms: number;
@@ -73,6 +77,10 @@ export type SubtitleCommitEvent = {
   target_lang: string;
   source_text: string;
   target_text: string;
+  source_stable_text?: string;
+  source_unstable_text?: string;
+  target_stable_text?: string;
+  target_unstable_text?: string;
   speaker?: string | null;
   final: boolean;
   published_at_ms?: number;
