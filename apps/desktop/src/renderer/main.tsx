@@ -1294,8 +1294,8 @@ function OverlayWindow({
   const displayLines = displaySelection.lines;
   const displayActiveLine = useMemo(() => selectActiveCaptionLine(displayLines), [displayLines]);
   const historyLines = useMemo(
-    () => selectOverlayHistoryLines(interaction.layer, displayLines),
-    [displayLines, interaction.layer]
+    () => selectOverlayHistoryLines(interaction.layer, displayLines, displayActiveLine?.id),
+    [displayActiveLine?.id, displayLines, interaction.layer]
   );
   const [overlayInteractionLocked, setOverlayInteractionLocked] = useState(false);
   const subtitleVars = {
@@ -1381,7 +1381,7 @@ function OverlayWindow({
         }}
       >
         <section
-          className={`floatingCaption ${showChrome ? "withChrome" : ""} mode-${subtitleStyle.displayMode} outline-${subtitleStyle.outlineStyle} ${
+          className={`floatingCaption ${showChrome ? "withChrome" : ""} ${historyLines.length > 0 ? "hasHistory" : ""} mode-${subtitleStyle.displayMode} outline-${subtitleStyle.outlineStyle} ${
             subtitleStyle.translationFirst ? "translationFirst" : ""
           }`}
           style={subtitleVars}
@@ -1406,9 +1406,9 @@ function OverlayWindow({
               onClose={() => void window.echosyncDesktop?.setOverlayVisible(false)}
             />
           ) : null}
+          {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
           <CaptionText line={displayActiveLine ?? activeLine} subtitleStyle={subtitleStyle} />
           {realtimeError ? <p className="overlayError">{realtimeError}</p> : null}
-          {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
           <div className={isListening ? "focusMeter active" : "focusMeter"} aria-label={isListening ? "正在同传" : "实时字幕待命"}>
             <span />
             <span />
@@ -1442,9 +1442,10 @@ function OverlayWindow({
 
 function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyle: SubtitleStyleState }) {
   const parts = selectCaptionTextParts(line, subtitleStyle);
+  const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
 
   return (
-    <div className="captionText">
+    <div className={`captionText mode-${displayMode}`}>
       {parts.map((part) => {
         if (part.kind === "source") {
           return (
@@ -1460,7 +1461,8 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
 
         return (
           <h1
-            className={part.state}
+            aria-hidden={part.isPlaceholder ? true : undefined}
+            className={`${part.state}${part.isPlaceholder ? " placeholderText" : ""}`}
             key="target"
             style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: subtitleStyle.targetBold ? 800 : 620 }}
           >

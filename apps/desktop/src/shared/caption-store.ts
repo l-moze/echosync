@@ -63,7 +63,7 @@ export function isRealtimeEventForActiveSession(
 }
 
 export function selectActiveCaptionLine(lines: CaptionLine[]): CaptionLine | undefined {
-  const latestLine = lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
+  return lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
     if (!line.sourceText && !line.targetText) {
       return latest;
     }
@@ -73,40 +73,19 @@ export function selectActiveCaptionLine(lines: CaptionLine[]): CaptionLine | und
     }
     return latest;
   }, undefined)?.line;
-
-  if (!latestLine || latestLine.targetText.trim()) {
-    return latestLine;
-  }
-
-  const fallbackTargetLine = lines.reduce<{ line: CaptionLine; order: number } | undefined>(
-    (latest, line, index) => {
-      if (!line.targetText.trim()) {
-        return latest;
-      }
-      const order = line.receivedAtMs ?? index;
-      if (!latest || order >= latest.order) {
-        return { line, order };
-      }
-      return latest;
-    },
-    undefined
-  )?.line;
-
-  if (!fallbackTargetLine) {
-    return latestLine;
-  }
-
-  return {
-    ...latestLine,
-    targetText: fallbackTargetLine.targetText
-  };
 }
 
-export function selectOverlayHistoryLines(layer: OverlayLayer, lines: CaptionLine[], maxLines = 6): CaptionLine[] {
+export function selectOverlayHistoryLines(
+  layer: OverlayLayer,
+  lines: CaptionLine[],
+  activeLineId?: string,
+  maxLines = 6
+): CaptionLine[] {
+  const candidates = lines.filter((line) => (line.sourceText || line.targetText) && line.id !== activeLineId);
   if (layer === "default") {
-    return [];
+    return candidates.filter((line) => line.state === "locked" || line.targetText.trim()).slice(-1);
   }
-  return lines.filter((line) => line.sourceText || line.targetText).slice(-maxLines);
+  return candidates.slice(-maxLines);
 }
 
 function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs: number): CaptionLine[] {

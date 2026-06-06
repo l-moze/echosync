@@ -611,7 +611,7 @@ describe("桌面字幕状态机", () => {
     expect(selectActiveCaptionLine(lines)?.id).toBe("seg_live");
   });
 
-  it("悬浮字幕优先显示最新有译文的行，避免源文草稿抢走译文焦点", () => {
+  it("最新源文草稿不借用上一句译文，避免上下两行语义错位", () => {
     const lines: CaptionLine[] = [
       {
         id: "seg_translated",
@@ -641,7 +641,7 @@ describe("桌面字幕状态机", () => {
 
     expect(active?.id).toBe("seg_source_draft");
     expect(active?.sourceText).toBe("then another model");
-    expect(active?.targetText).toBe("模型会遵循动态提示词。");
+    expect(active?.targetText).toBe("");
   });
 
   it("按前端接收顺序选择当前字幕，而不是依赖后端音频时间戳", () => {
@@ -675,7 +675,7 @@ describe("桌面字幕状态机", () => {
     expect(selectActiveCaptionLine(lines)?.id).toBe("seg_old_audio_new_event");
   });
 
-  it("默认字幕只显示当前双语，聚焦和驻留态显示可回看的历史字幕", () => {
+  it("默认字幕保留上一句作为滚动历史，聚焦和驻留态显示可回看的历史字幕", () => {
     const lines: CaptionLine[] = Array.from({ length: 8 }, (_, index) => ({
       id: `seg_${index + 1}`,
       rev: 1,
@@ -688,22 +688,22 @@ describe("桌面字幕状态机", () => {
       patchCount: 0
     }));
 
-    expect(selectOverlayHistoryLines("default", lines)).toEqual([]);
-    expect(selectOverlayHistoryLines("controls", lines).map((line) => line.id)).toEqual([
+    expect(selectOverlayHistoryLines("default", lines, "seg_8").map((line) => line.id)).toEqual(["seg_7"]);
+    expect(selectOverlayHistoryLines("controls", lines, "seg_8").map((line) => line.id)).toEqual([
+      "seg_2",
       "seg_3",
       "seg_4",
       "seg_5",
       "seg_6",
-      "seg_7",
-      "seg_8"
+      "seg_7"
     ]);
-    expect(selectOverlayHistoryLines("pinned", lines).map((line) => line.id)).toEqual([
+    expect(selectOverlayHistoryLines("pinned", lines, "seg_8").map((line) => line.id)).toEqual([
+      "seg_2",
       "seg_3",
       "seg_4",
       "seg_5",
       "seg_6",
-      "seg_7",
-      "seg_8"
+      "seg_7"
     ]);
   });
 

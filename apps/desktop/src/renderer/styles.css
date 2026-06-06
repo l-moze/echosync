@@ -1351,7 +1351,8 @@ button:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .focusMeter.active span,
-  .audioLoadingBars.active span {
+  .audioLoadingBars.active span,
+  .historyLine {
     animation: none;
   }
 }
@@ -1441,6 +1442,14 @@ button:focus-visible {
   min-height: 192px;
 }
 
+.floatingCaption.hasHistory {
+  grid-template-rows: auto auto auto;
+}
+
+.floatingCaption.withChrome.hasHistory {
+  grid-template-rows: auto auto auto auto;
+}
+
 .floatingCaption:hover,
 .floatingCaption:focus-visible {
   min-height: 106px;
@@ -1514,9 +1523,19 @@ button:focus-visible {
   text-align: left;
 }
 
+.captionText.mode-bilingual {
+  grid-template-rows:
+    minmax(calc(var(--source-size, 18px) * 1.28), auto)
+    minmax(calc(var(--target-size, 30px) * 1.2), auto);
+}
+
 .floatingCaption > .captionText {
   grid-column: 1;
   grid-row: 1;
+}
+
+.floatingCaption.hasHistory > .captionText {
+  grid-row: 2;
 }
 
 .floatingCaption.withChrome > .captionText {
@@ -1525,10 +1544,18 @@ button:focus-visible {
   padding-right: 8px;
 }
 
+.floatingCaption.withChrome.hasHistory > .captionText {
+  grid-row: 3;
+}
+
 .floatingCaption > .focusMeter {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
+}
+
+.floatingCaption.hasHistory > .focusMeter {
+  grid-row: 2;
 }
 
 .floatingCaption.withChrome > .focusMeter {
@@ -1550,9 +1577,25 @@ button:focus-visible {
   grid-column: 1 / -1;
 }
 
+.floatingCaption.hasHistory > .overlayCaptionHistory {
+  grid-row: 1;
+}
+
+.floatingCaption.withChrome.hasHistory > .overlayCaptionHistory {
+  grid-row: 2;
+}
+
 .floatingCaption > .overlaySessionBar {
   grid-column: 1 / -1;
   justify-self: center;
+}
+
+.floatingCaption.hasHistory > .overlaySessionBar {
+  grid-row: 3;
+}
+
+.floatingCaption.withChrome.hasHistory > .overlaySessionBar {
+  grid-row: 4;
 }
 
 .floatingCaption.withChrome > .overlayMeta {
@@ -1572,12 +1615,16 @@ button:focus-visible {
   white-space: normal;
   display: -webkit-box;
   -webkit-box-orient: vertical;
+  transition: opacity 160ms ease, color 160ms ease, text-decoration-color 180ms ease;
+  direction: ltr;
+  unicode-bidi: plaintext;
 }
 
 .overlaySource {
   color: var(--source-color, rgba(255, 255, 255, 0.7));
   font-size: var(--source-size, 18px);
   line-height: 1.26;
+  min-height: calc(var(--source-size, 18px) * 1.26);
   opacity: 0.76;
   -webkit-line-clamp: 2;
 }
@@ -1586,7 +1633,22 @@ button:focus-visible {
   color: var(--target-color, #ffffff);
   font-size: var(--target-size, 30px);
   line-height: 1.18;
+  min-height: calc(var(--target-size, 30px) * 1.18);
   -webkit-line-clamp: 2;
+}
+
+.floatingCaption:hover .overlaySource,
+.floatingCaption:focus-visible .overlaySource {
+  font-size: var(--source-size, 18px);
+}
+
+.floatingCaption:hover h1,
+.floatingCaption:focus-visible h1 {
+  font-size: var(--target-size, 30px);
+}
+
+.placeholderText {
+  visibility: hidden;
 }
 
 .overlayError {
@@ -2051,6 +2113,14 @@ button:focus-visible {
   scrollbar-gutter: stable;
 }
 
+.overlayStage.layer-default .overlayCaptionHistory {
+  max-height: 74px;
+  margin: 0 0 5px;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0.66;
+}
+
 .overlayStage.layer-controls .overlayCaptionHistory,
 .overlayStage.layer-settings .overlayCaptionHistory {
   max-height: 76px;
@@ -2077,6 +2147,12 @@ button:focus-visible {
   gap: 6px;
   padding: 10px 0 0;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+  animation: historyLineLift 180ms ease both;
+}
+
+.overlayStage.layer-default .historyLine {
+  padding: 0 0 5px;
+  border-top: 0;
 }
 
 .historyLine .captionText {
@@ -2132,6 +2208,18 @@ button:focus-visible {
   color: rgba(255, 255, 255, 0.66);
   font-size: 11px;
   font-weight: 720;
+}
+
+@keyframes historyLineLift {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 760px) {

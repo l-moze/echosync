@@ -18,7 +18,7 @@ describe("字幕文本视图", () => {
     expect(parts.map((part) => part.text)).toEqual(["action generation", "动作生成"]);
   });
 
-  it("译文尚未返回时只显示源文，不显示正在翻译占位", () => {
+  it("译文尚未返回时保留译文行槽位，但不显示正在翻译占位", () => {
     const parts = selectCaptionTextParts(
       line({
         sourceText: "So another option",
@@ -27,7 +27,9 @@ describe("字幕文本视图", () => {
       defaultSubtitleStyle
     );
 
-    expect(parts.map((part) => part.text)).toEqual(["So another option"]);
+    expect(parts.map((part) => part.kind)).toEqual(["source", "target"]);
+    expect(parts.map((part) => part.text)).toEqual(["So another option", ""]);
+    expect(parts[1].isPlaceholder).toBe(true);
     expect(parts.some((part) => part.text.includes("正在翻译"))).toBe(false);
   });
 });

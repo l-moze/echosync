@@ -5,6 +5,7 @@ export type CaptionTextPart = {
   kind: "source" | "target";
   text: string;
   state: CaptionLine["state"];
+  isPlaceholder?: boolean;
 };
 
 export function selectCaptionTextParts(
@@ -20,14 +21,16 @@ export function selectCaptionTextParts(
   const source: CaptionTextPart = { kind: "source", text: sourceText, state };
   const target: CaptionTextPart | null = targetText
     ? { kind: "target", text: targetText, state }
-    : null;
+    : line
+      ? { kind: "target", text: "", state, isPlaceholder: true }
+      : null;
 
   if (displayMode === "source") {
     return [source];
   }
 
   if (displayMode === "translation") {
-    return target ? [target] : [];
+    return target && !target.isPlaceholder ? [target] : [];
   }
 
   if (subtitleStyle.translationFirst && target) {
