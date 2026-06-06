@@ -1,4 +1,27 @@
 export type SegmentStatus = "partial" | "stable" | "committed";
+export type CaptionUpdateState = "loading" | "interim" | "stable" | "final";
+
+export type CaptionUpdateText = {
+  full_text: string;
+  stable_text?: string;
+  unstable_text?: string;
+  language: string;
+};
+
+export type CaptionUpdateEvent = {
+  type: "caption_update";
+  session_id: string;
+  segment_id: string;
+  revision: number;
+  state: CaptionUpdateState;
+  source: CaptionUpdateText;
+  target?: CaptionUpdateText;
+  timing: {
+    start_ms: number;
+    end_ms: number;
+  };
+  published_at_ms?: number;
+};
 
 export type CaptionTextEvent = {
   session_id: string;
@@ -102,6 +125,7 @@ export type RealtimeDoneEvent = {
 export type RealtimeEvent =
   | TranscriptEvent
   | SubtitleEvent
+  | CaptionUpdateEvent
   | SubtitlePatchEvent
   | SubtitleCommitEvent
   | RealtimeErrorEvent
