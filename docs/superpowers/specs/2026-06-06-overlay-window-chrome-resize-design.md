@@ -80,19 +80,29 @@ Transparent BrowserWindow
    └─ resizeHandles   鼠标动态调整
 ```
 
+字幕窗的几何和字幕文本渲染必须解耦：
+
+- `captionWindow` 只负责圆角、背景、边框、CSS 窗口阴影、拖拽和 resize 命中区。
+- `captionTrack` 负责字幕 segment 的平滑上滚，使用 `transform`，不改变窗口高度。
+- `captionSegment` 负责原文/译文逐句对照，内部可以软换行，但不能撑大 BrowserWindow。
+- 字符级 typewriter、局部修订、修订高亮衰减只发生在 `captionSegment` 内部，不触发窗口 resize、圆角变化或 chrome 重排。
+- 工具栏出现/隐藏只能改变 chrome 可见性，不能改变字幕窗口圆角、外阴影和内容轨道基准高度。
+
 ### Default 失焦态
 
 - 显示轻背景、弱边框、可调窗口阴影。
 - 不显示工具栏和 resize handles。
 - 鼠标穿透仍按当前交互状态控制。
 - 内容为历史上一句 + 当前双语字幕。
+- 字幕文本按 visual buffer 的 `visibleText` 渲染；后端 snapshot 变长时不能整段跳出，也不能撑高窗口。
 
 ### Focus / Controls 聚焦态
 
 - 顶部 chrome 显示设置、锁定、Pin、召回、隐藏等工具。
-- 底部 chrome 显示暂停/停止、时间、引擎摘要、显示模式。
+- 底部 chrome 显示暂停/停止、时间、音频源、同传状态和显示模式。
 - 四角或右下角显示 resize affordance。
 - resize handles 使用 `app-region: no-drag`，避免和窗口拖拽冲突。
+- chrome 应贴住窗口上边和下边，作为同一个圆角窗口内的系统层；不能出现独立圆角工具组外框或额外父层阴影。
 
 ### Pinned 驻留态
 
@@ -167,6 +177,19 @@ height <= workArea.height - 48
 - width 在所有 layer 共享。
 - height 按当前 layer 保存。
 - layer 切换时使用用户保存值和最小高度取最大值。
+- 字幕 token 更新、翻译修订、segment settling、history 上滚都不得写入 overlay size state。
+- overlay size 只由用户 resize、layer 切换和主进程 workArea clamp 变更。
+
+## 圆角稳定策略
+
+用户目标是稳定圆角窗口，而不是直角窗口。圆角抖动的正确修复不是取消圆角，而是让圆角只有一个 owner。
+
+- `.captionWindow` / `.floatingCaption` 统一拥有 `border-radius`。
+- 默认、hover、controls、settings、pinned 状态使用同一个 radius token。
+- `transition` 禁止包含 `border-radius`。
+- 内部 top chrome、bottom chrome、toolbar、session bar 不声明外层 `border-radius`，只在父窗口圆角内被 `overflow: hidden` 裁切。
+- resize handles 是透明命中区，应放在窗口内部边缘，避免为了扩大命中区把圆角外侧撑出矩形父层。
+- BrowserWindow 透明父层必须紧贴 captionWindow；如需可点击 resize，不能在窗口外留下可见或可交互的淡色矩形。
 
 ## 实现入口
 

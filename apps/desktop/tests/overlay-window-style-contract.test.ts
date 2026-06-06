@@ -46,16 +46,18 @@ describe("字幕弹窗样式契约", () => {
     expect(stylesheet).not.toContain(".resize-se::after");
   });
 
-  it("字幕窗口本体保持直角，避免露出圆角透明父层", () => {
+  it("字幕窗口本体保持稳定圆角，避免 hover 或 layer 切换时抖动", () => {
     const captionRules = rootCaptionWindowRules();
 
     expect(captionRules.length).toBeGreaterThan(0);
     for (const captionRule of captionRules) {
       const radiusValues = [...captionRule.matchAll(/\bborder-radius\s*:\s*([^;]+);/g)].map((match) => match[1].trim());
-      expect(radiusValues.every((value) => /^0(?:px)?$/.test(value))).toBe(true);
+      expect(radiusValues.every((value) => value === "var(--caption-radius)")).toBe(true);
       const transitionValues = [...captionRule.matchAll(/\btransition\s*:\s*([^;]+);/g)].map((match) => match[1].trim());
       expect(transitionValues.every((value) => !/\bborder-radius\b/.test(value))).toBe(true);
     }
+    expect(cssRule(".floatingCaption")).toContain("--caption-radius: 18px");
+    expect(cssRule(".floatingCaption")).toContain("overflow: hidden");
   });
 
   it("resize 手柄始终渲染，不依赖工具栏显示状态", () => {

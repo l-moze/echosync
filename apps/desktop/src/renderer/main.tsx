@@ -1286,6 +1286,7 @@ function OverlayWindow({
   const isPinned = interaction.layer === "pinned";
   const showChrome = interaction.layer === "controls" || interaction.layer === "settings" || isPinned;
   const [displayBuffer, setDisplayBuffer] = useState<CaptionDisplayBuffer>(createInitialCaptionDisplayBuffer);
+  const displayBufferRef = useRef<CaptionDisplayBuffer>(displayBuffer);
   const [displayNowMs, setDisplayNowMs] = useState(() => Date.now());
   const displaySelection = useMemo(
     () => selectDisplayCaptionLines(displayBuffer, lines, displayNowMs),
@@ -1313,7 +1314,12 @@ function OverlayWindow({
   }
 
   useEffect(() => {
-    const nextSelection = selectDisplayCaptionLines(displayBuffer, lines, Date.now());
+    displayBufferRef.current = displayBuffer;
+  }, [displayBuffer]);
+
+  useEffect(() => {
+    const nextSelection = selectDisplayCaptionLines(displayBufferRef.current, lines, Date.now());
+    displayBufferRef.current = nextSelection.buffer;
     setDisplayBuffer(nextSelection.buffer);
   }, [lines]);
 
@@ -1323,12 +1329,13 @@ function OverlayWindow({
     }
     const timer = window.setTimeout(() => {
       const nowMs = Date.now();
-      const nextSelection = selectDisplayCaptionLines(displayBuffer, lines, nowMs);
+      const nextSelection = selectDisplayCaptionLines(displayBufferRef.current, lines, nowMs);
+      displayBufferRef.current = nextSelection.buffer;
       setDisplayBuffer(nextSelection.buffer);
       setDisplayNowMs(nowMs);
-    }, 50);
+    }, 24);
     return () => window.clearTimeout(timer);
-  }, [displayBuffer, displaySelection.pendingLineIds.length, lines]);
+  }, [displaySelection.pendingLineIds.length, displayNowMs, lines]);
 
   useEffect(() => {
     const remove = window.echosyncDesktop?.onOverlayWake(() => {

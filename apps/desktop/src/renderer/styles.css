@@ -1082,6 +1082,7 @@ button:focus-visible {
 
 .floatingCaption {
   -webkit-app-region: drag;
+  --caption-radius: 18px;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1091,7 +1092,7 @@ button:focus-visible {
   padding: 12px 28px 14px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0);
-  border-radius: 0;
+  border-radius: var(--caption-radius);
   background:
     linear-gradient(90deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.08) 18%, rgba(0, 0, 0, 0.08) 82%, rgba(0, 0, 0, 0));
   box-shadow: none;
@@ -1111,7 +1112,7 @@ button:focus-visible {
 .floatingCaption:focus-visible {
   min-height: 104px;
   border-color: rgba(255, 255, 255, 0.2);
-  border-radius: 0;
+  border-radius: var(--caption-radius);
   background:
     linear-gradient(180deg, rgba(18, 22, 30, 0.78), rgba(8, 10, 14, 0.72)),
     rgba(12, 14, 18, 0.74);
@@ -1411,6 +1412,7 @@ button:focus-visible {
 
 .floatingCaption {
   -webkit-app-region: drag;
+  --caption-radius: 18px;
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1420,9 +1422,9 @@ button:focus-visible {
   height: 100%;
   min-height: 106px;
   padding: 18px 30px 18px 34px;
-  overflow: visible;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 0;
+  border-radius: var(--caption-radius);
   background:
     linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
     rgba(12, 14, 18, 0.72);
@@ -1537,6 +1539,7 @@ button:focus-visible {
   align-items: start;
   justify-items: start;
   text-align: left;
+  overflow: hidden;
 }
 
 .captionText.mode-bilingual {
@@ -1665,6 +1668,7 @@ button:focus-visible {
   transition: opacity 160ms ease, color 160ms ease, text-decoration-color 180ms ease;
   direction: ltr;
   unicode-bidi: plaintext;
+  contain: layout paint;
 }
 
 .overlaySource {
@@ -1792,11 +1796,11 @@ button:focus-visible {
 }
 
 .resize-n {
-  top: -5px;
+  top: 0;
 }
 
 .resize-s {
-  bottom: -5px;
+  bottom: 0;
 }
 
 .resize-e,
@@ -1808,11 +1812,11 @@ button:focus-visible {
 }
 
 .resize-e {
-  right: -5px;
+  right: 0;
 }
 
 .resize-w {
-  left: -5px;
+  left: 0;
 }
 
 .resize-ne,
@@ -1824,26 +1828,26 @@ button:focus-visible {
 }
 
 .resize-ne {
-  top: -6px;
-  right: -6px;
+  top: 0;
+  right: 0;
   cursor: nesw-resize;
 }
 
 .resize-nw {
-  top: -6px;
-  left: -6px;
+  top: 0;
+  left: 0;
   cursor: nwse-resize;
 }
 
 .resize-se {
-  right: -6px;
-  bottom: -6px;
+  right: 0;
+  bottom: 0;
   cursor: nwse-resize;
 }
 
 .resize-sw {
-  bottom: -6px;
-  left: -6px;
+  bottom: 0;
+  left: 0;
   cursor: nesw-resize;
 }
 
