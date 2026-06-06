@@ -1771,12 +1771,6 @@ button:focus-visible {
   align-items: center;
   justify-self: end;
   gap: 7px;
-  padding: 5px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: none;
-  backdrop-filter: blur(16px) saturate(1.1);
 }
 
 .overlayResizeHandles {
@@ -1911,15 +1905,9 @@ button:focus-visible {
   align-items: center;
   gap: 9px;
   max-width: 100%;
-  min-height: 44px;
-  padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  box-shadow: none;
+  min-height: 34px;
   color: rgba(255, 255, 255, 0.84);
   transform: none;
-  backdrop-filter: blur(24px) saturate(1.2);
 }
 
 .sessionTimer {
@@ -2375,7 +2363,6 @@ button:focus-visible {
   .overlaySessionBar {
     flex-wrap: wrap;
     justify-content: center;
-    border-radius: 20px;
   }
 
   .sessionPill {
