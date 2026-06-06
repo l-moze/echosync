@@ -11,8 +11,8 @@ import {
 } from "../src/shared/subtitle-style-state";
 
 describe("字幕样式共享状态", () => {
-  it("默认使用双语双行字幕，符合实时悬浮字幕的中英对照主场景", () => {
-    expect(defaultSubtitleStyle.displayMode).toBe("bilingual");
+  it("默认使用逐句对照，符合实时悬浮字幕的中英对照主场景", () => {
+    expect(defaultSubtitleStyle.displayMode).toBe("sentencePair");
   });
 
   it("默认双语模式先显示源文，再显示译文", () => {
@@ -25,16 +25,15 @@ describe("字幕样式共享状态", () => {
     expect(defaultSubtitleStyle.outlineStyle).toBe("shadow");
   });
 
-  it("支持双语、主字幕、翻译字幕三种显示模式", () => {
-    const modes: SubtitleDisplayMode[] = ["bilingual", "source", "translation"];
+  it("支持逐句对照和分区对照两种双语显示模式", () => {
+    const modes: SubtitleDisplayMode[] = ["sentencePair", "zonedPair"];
 
-    expect(modes).toEqual(["bilingual", "source", "translation"]);
+    expect(modes).toEqual(["sentencePair", "zonedPair"]);
   });
 
   it("显示模式使用面向用户的中文文案", () => {
-    expect(subtitleDisplayModeLabel("bilingual")).toBe("双语字幕");
-    expect(subtitleDisplayModeLabel("source")).toBe("只看原文");
-    expect(subtitleDisplayModeLabel("translation")).toBe("只看译文");
+    expect(subtitleDisplayModeLabel("sentencePair")).toBe("逐句对照");
+    expect(subtitleDisplayModeLabel("zonedPair")).toBe("分区对照");
   });
 
   it("字幕状态标签不暴露内部英文枚举", () => {
@@ -71,8 +70,12 @@ describe("字幕样式共享状态", () => {
     expect(selectSubtitleFontWeight("target", true)).toBe(850);
   });
 
-  it("兼容旧版 line/split 显示模式配置", () => {
-    expect(normalizeSubtitleDisplayMode("line")).toBe("bilingual");
-    expect(normalizeSubtitleDisplayMode("split")).toBe("bilingual");
+  it("兼容旧版显示模式配置并归一到逐句对照", () => {
+    expect(normalizeSubtitleDisplayMode("line")).toBe("sentencePair");
+    expect(normalizeSubtitleDisplayMode("split")).toBe("sentencePair");
+    expect(normalizeSubtitleDisplayMode("bilingual")).toBe("sentencePair");
+    expect(normalizeSubtitleDisplayMode("source")).toBe("sentencePair");
+    expect(normalizeSubtitleDisplayMode("translation")).toBe("sentencePair");
+    expect(normalizeSubtitleDisplayMode("zonedPair")).toBe("zonedPair");
   });
 });

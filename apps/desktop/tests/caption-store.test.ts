@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyRealtimeEvent,
@@ -11,6 +11,10 @@ import {
 import type { CaptionLine } from "../src/shared/caption-store";
 
 describe("桌面字幕状态机", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("按 partial、patch、commit 更新同一个字幕片段", () => {
     const initialLines: CaptionLine[] = [];
     const withPartial = applyRealtimeEvent(initialLines, {
@@ -328,6 +332,180 @@ describe("桌面字幕状态机", () => {
     expect(shortAppend).toHaveLength(1);
     expect(shortAppend[0].targetText).toBe("模型开始了");
   });
+
+  it("同一段晚到译文重启为短前缀时不回滚已有可读译文", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_log_restart",
+        rev: 38,
+        state: "stable",
+        sourceText: "But a high-level idea is that once you have trained individual models.",
+        targetText: "但一个高层次的想法是，一旦你为每种新关系训练了独立模型，现在对于一组新关系，你只需组合即可。",
+        stability: 0.9,
+        startMs: 0,
+        endMs: 5200,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_log_restart",
+      rev: 39,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "But a high-level idea is that once you have trained individual models.",
+      target_text: "但一个高层次",
+      status: "stable",
+      stability: 0.82,
+      start_ms: 0,
+      end_ms: 5400
+    });
+
+    expect(lines[0].targetText).toBe(initialLines[0].targetText);
+    expect(lines[0].rev).toBe(39);
+  });
+
+  it("committed 译文候选短前缀重启也不回滚，最终 segment.commit 再 flush", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_committed_restart",
+        rev: 14,
+        state: "stable",
+        sourceText: "More simplified from actually sampling from the target distribution.",
+        targetText: "更简化自实际从目标分布采样，但它是无偏的。",
+        stability: 0.92,
+        startMs: 0,
+        endMs: 3200,
+        patchCount: 0
+      }
+    ];
+
+    const held = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_committed_restart",
+      rev: 15,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "More simplified from actually sampling from the target distribution.",
+      target_text: "更简化自",
+      status: "committed",
+      stability: 0.96,
+      start_ms: 0,
+      end_ms: 3400
+    });
+
+    const flushed = applyRealtimeEvent(held, {
+      type: "segment.commit",
+      session_id: "sess_demo",
+      segment_id: "seg_committed_restart",
+      rev: 16,
+      start_ms: 0,
+      end_ms: 3600,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "More simplified from actually sampling from the target distribution.",
+      target_text: "更简化自实际从目标分布采样。",
+      final: true
+    });
+
+    expect(held[0].targetText).toBe(initialLines[0].targetText);
+    expect(held[0].state).toBe("stable");
+    expect(flushed[0].targetText).toBe("更简化自实际从目标分布采样。");
+    expect(flushed[0].state).toBe("locked");
+  });
+
+  it("非前缀的译文缩短也先保持可见稳定，等待 patch 或 segment.commit 修订", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_small_rewrite",
+        rev: 6,
+        state: "stable",
+        sourceText: "the horizon plan shown in the demo",
+        targetText: "显示地平线计划",
+        stability: 0.9,
+        startMs: 0,
+        endMs: 2400,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_small_rewrite",
+      rev: 7,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "the horizon plan shown in the demo",
+      target_text: "演示中显示",
+      status: "committed",
+      stability: 0.96,
+      start_ms: 0,
+      end_ms: 2600
+    });
+
+    expect(lines[0].targetText).toBe("显示地平线计划");
+    expect(lines[0].rev).toBe(7);
+  });
+
+  it("双语当前行按最新源文接收顺序选择，不被旧段晚到译文抢焦点", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(500);
+    const oldSource = applyRealtimeEvent([], {
+      type: "transcript.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_old",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The previous sentence",
+      target_text: "",
+      status: "stable",
+      stability: 0.8,
+      start_ms: 0,
+      end_ms: 1200
+    });
+
+    vi.setSystemTime(1000);
+    const currentSource = applyRealtimeEvent(oldSource, {
+      type: "transcript.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_current",
+      rev: 1,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The current sentence is arriving",
+      target_text: "",
+      status: "partial",
+      stability: 0.7,
+      start_ms: 1200,
+      end_ms: 2200
+    });
+
+    vi.setSystemTime(2000);
+    const withLateTranslation = applyRealtimeEvent(currentSource, {
+      type: "translation.partial",
+      session_id: "sess_demo",
+      segment_id: "seg_old",
+      rev: 2,
+      source_lang: "en",
+      target_lang: "zh-CN",
+      source_text: "The previous sentence",
+      target_text: "上一句译文晚到了",
+      status: "stable",
+      stability: 0.9,
+      start_ms: 0,
+      end_ms: 1200
+    });
+
+    expect(selectActiveCaptionLineForDisplay(withLateTranslation, "bilingual")?.id).toBe("seg_current");
+    expect(selectActiveCaptionLineForDisplay(withLateTranslation, "source")?.id).toBe("seg_current");
+    expect(selectActiveCaptionLineForDisplay(withLateTranslation, "translation")?.id).toBe("seg_old");
+  });
+
 
   it("已有译文的短增量也要保存到 desired 状态", () => {
     const initialLines: CaptionLine[] = [

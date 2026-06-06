@@ -2532,10 +2532,15 @@ button:focus-visible {
   overflow: hidden;
 }
 
-.captionText.mode-bilingual {
+.captionText.mode-sentencePair,
+.captionText.mode-zonedPair {
   grid-template-rows:
     minmax(calc(var(--source-size, 18px) * 1.28), auto)
     minmax(calc(var(--target-size, 30px) * 1.2), auto);
+}
+
+.captionText.mode-zonedPair {
+  gap: 10px;
 }
 
 .floatingCaption > .captionText {

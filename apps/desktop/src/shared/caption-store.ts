@@ -13,10 +13,12 @@ export type CaptionLine = {
   startMs: number;
   endMs: number;
   receivedAtMs?: number;
+  sourceReceivedAtMs?: number;
+  targetReceivedAtMs?: number;
   patchCount: number;
 };
 
-export type CaptionLineDisplayMode = "bilingual" | "source" | "translation";
+export type CaptionLineDisplayMode = "sentencePair" | "zonedPair" | "bilingual" | "source" | "translation";
 
 export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): CaptionLine[] {
   const receivedAtMs = Date.now();
@@ -33,6 +35,7 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
   }
 
   if (event.type === "segment.commit") {
+    const previousLine = lines.find((line) => line.id === event.segment_id);
     const nextLine: CaptionLine = withReceivedAt({
       id: event.segment_id,
       rev: event.rev,
@@ -42,8 +45,8 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
       stability: 1,
       startMs: event.start_ms,
       endMs: event.end_ms,
-      patchCount: lines.find((line) => line.id === event.segment_id)?.patchCount ?? 0
-    }, receivedAtMs);
+      patchCount: previousLine?.patchCount ?? 0
+    }, receivedAtMs, { previousLine, source: true, target: true });
 
     if (lines.some((line) => line.id === event.segment_id)) {
       return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
@@ -65,7 +68,18 @@ export function isRealtimeEventForActiveSession(
 }
 
 export function selectActiveCaptionLine(lines: CaptionLine[]): CaptionLine | undefined {
-  return selectLatestCaptionLine(lines, (line) => Boolean(line.sourceText || line.targetText));
+  return (
+    selectLatestCaptionLine(
+      lines,
+      (line) => Boolean(line.sourceText.trim()),
+      (line, index) => line.sourceReceivedAtMs ?? line.receivedAtMs ?? index
+    ) ??
+    selectLatestCaptionLine(
+      lines,
+      (line) => Boolean(line.targetText.trim()),
+      (line, index) => line.targetReceivedAtMs ?? line.receivedAtMs ?? index
+    )
+  );
 }
 
 export function selectActiveCaptionLineForDisplay(
@@ -73,11 +87,21 @@ export function selectActiveCaptionLineForDisplay(
   displayMode: CaptionLineDisplayMode
 ): CaptionLine | undefined {
   if (displayMode === "translation") {
-    return selectLatestCaptionLine(lines, (line) => Boolean(line.targetText.trim()));
+    return selectLatestCaptionLine(
+      lines,
+      (line) => Boolean(line.targetText.trim()),
+      (line, index) => line.targetReceivedAtMs ?? line.receivedAtMs ?? index
+    );
   }
 
   if (displayMode === "source") {
-    return selectLatestCaptionLine(lines, (line) => Boolean(line.sourceText.trim())) ?? selectActiveCaptionLine(lines);
+    return (
+      selectLatestCaptionLine(
+        lines,
+        (line) => Boolean(line.sourceText.trim()),
+        (line, index) => line.sourceReceivedAtMs ?? line.receivedAtMs ?? index
+      ) ?? selectActiveCaptionLine(lines)
+    );
   }
 
   return selectActiveCaptionLine(lines);
@@ -136,13 +160,14 @@ function overlayHistoryLimit(layer: OverlayLayer): number {
 
 function selectLatestCaptionLine(
   lines: CaptionLine[],
-  predicate: (line: CaptionLine) => boolean
+  predicate: (line: CaptionLine) => boolean,
+  orderOf: (line: CaptionLine, index: number) => number = (line, index) => line.receivedAtMs ?? index
 ): CaptionLine | undefined {
   return lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
     if (!predicate(line)) {
       return latest;
     }
-    const order = line.receivedAtMs ?? index;
+    const order = orderOf(line, index);
     if (!latest || order >= latest.order) {
       return { line, order };
     }
@@ -164,24 +189,29 @@ function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs:
         ...previousLine,
         targetText: event.target_text,
         stability: Math.max(previousLine.stability, event.stability)
-      }, receivedAtMs);
+      }, receivedAtMs, { previousLine, target: true });
 
       return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
     }
 
     return lines;
   }
+  const target = selectTranslationTargetText(previousLine, event);
   const nextLine: CaptionLine = withReceivedAt({
     id: event.segment_id,
     rev: event.rev,
     state: mapStatus(event.status),
-    sourceText: event.source_text,
-    targetText: event.target_text || previousLine?.targetText || "",
+    sourceText: selectTranslationSourceText(previousLine, event.source_text),
+    targetText: target.text,
     stability: event.stability,
     startMs: event.start_ms,
     endMs: event.end_ms,
     patchCount: previousLine?.patchCount ?? 0
-  }, receivedAtMs);
+  }, receivedAtMs, {
+    previousLine,
+    source: !previousLine,
+    target: target.accepted
+  });
 
   if (lines.some((line) => line.id === event.segment_id)) {
     return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
@@ -212,7 +242,7 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     startMs: event.start_ms,
     endMs: event.end_ms,
     patchCount: previousLine?.patchCount ?? 0
-  }, receivedAtMs);
+  }, receivedAtMs, { previousLine, source: true });
 
   if (previousLine) {
     return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
@@ -264,17 +294,39 @@ function applyPatch(lines: CaptionLine[], event: SubtitlePatchEvent, receivedAtM
       targetText,
       stability: event.stability,
       patchCount: line.patchCount + event.operations.length
-    }, receivedAtMs);
+    }, receivedAtMs, { previousLine: line, target: true });
   });
 }
 
-function withReceivedAt(line: CaptionLine, receivedAtMs: number): CaptionLine {
+function withReceivedAt(
+  line: CaptionLine,
+  receivedAtMs: number,
+  options: { previousLine?: CaptionLine; source?: boolean; target?: boolean } = {}
+): CaptionLine {
+  const sourceReceivedAtMs = options.source ? receivedAtMs : options.previousLine?.sourceReceivedAtMs;
+  const targetReceivedAtMs = options.target ? receivedAtMs : options.previousLine?.targetReceivedAtMs;
   Object.defineProperty(line, "receivedAtMs", {
     configurable: true,
     enumerable: false,
     value: receivedAtMs,
     writable: true
   });
+  if (sourceReceivedAtMs !== undefined) {
+    Object.defineProperty(line, "sourceReceivedAtMs", {
+      configurable: true,
+      enumerable: false,
+      value: sourceReceivedAtMs,
+      writable: true
+    });
+  }
+  if (targetReceivedAtMs !== undefined) {
+    Object.defineProperty(line, "targetReceivedAtMs", {
+      configurable: true,
+      enumerable: false,
+      value: targetReceivedAtMs,
+      writable: true
+    });
+  }
   return line;
 }
 
@@ -288,4 +340,50 @@ function mapStatus(status: SubtitleEvent["status"]): CaptionLineState {
 
 function countVisibleCharacters(text: string): number {
   return Array.from(text).filter((char) => char.trim() !== "").length;
+}
+
+function selectTranslationSourceText(previousLine: CaptionLine | undefined, sourceText: string): string {
+  if (!previousLine) {
+    return sourceText;
+  }
+
+  if (countVisibleCharacters(sourceText) < countVisibleCharacters(previousLine.sourceText)) {
+    return previousLine.sourceText;
+  }
+
+  return sourceText;
+}
+
+function selectTranslationTargetText(
+  previousLine: CaptionLine | undefined,
+  event: SubtitleEvent
+): { text: string; accepted: boolean } {
+  const nextTarget = event.target_text;
+  if (!previousLine) {
+    return { text: nextTarget, accepted: Boolean(nextTarget.trim()) };
+  }
+
+  if (!nextTarget.trim()) {
+    return { text: previousLine.targetText, accepted: false };
+  }
+
+  if (shouldHoldTransientTargetShrink(previousLine.targetText, nextTarget, event.status)) {
+    return { text: previousLine.targetText, accepted: false };
+  }
+
+  return { text: nextTarget, accepted: nextTarget !== previousLine.targetText };
+}
+
+function shouldHoldTransientTargetShrink(
+  previousTarget: string,
+  nextTarget: string,
+  status: SubtitleEvent["status"]
+): boolean {
+  if (!previousTarget.trim() || !nextTarget.trim()) {
+    return false;
+  }
+
+  const previousLength = countVisibleCharacters(previousTarget);
+  const nextLength = countVisibleCharacters(nextTarget);
+  return nextLength < previousLength;
 }

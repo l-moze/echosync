@@ -1,4 +1,5 @@
-export type SubtitleDisplayMode = "bilingual" | "source" | "translation";
+export type SubtitleDisplayMode = "sentencePair" | "zonedPair";
+export type LegacySubtitleDisplayMode = "bilingual" | "source" | "translation" | "line" | "split";
 export type SubtitleOutlineStyle = "outline" | "shadow" | "none";
 
 export type SubtitleStyleState = {
@@ -32,7 +33,7 @@ export const defaultSubtitleStyle: SubtitleStyleState = {
   windowShadow: 0.72,
   outlineStyle: "shadow",
   translationFirst: false,
-  displayMode: "bilingual"
+  displayMode: "sentencePair"
 };
 
 export function reduceSubtitleStyleState(
@@ -51,19 +52,18 @@ export function selectSubtitleFontWeight(kind: "source" | "target", bold: boolea
   return bold ? 850 : 500;
 }
 
-export function normalizeSubtitleDisplayMode(mode: SubtitleDisplayMode | "line" | "split"): SubtitleDisplayMode {
-  if (mode === "source" || mode === "translation") {
-    return mode;
+export function normalizeSubtitleDisplayMode(mode: SubtitleDisplayMode | LegacySubtitleDisplayMode): SubtitleDisplayMode {
+  if (mode === "zonedPair") {
+    return "zonedPair";
   }
 
-  return "bilingual";
+  return "sentencePair";
 }
 
 export function subtitleDisplayModeLabel(mode: SubtitleDisplayMode): string {
   const labels: Record<SubtitleDisplayMode, string> = {
-    bilingual: "双语字幕",
-    source: "只看原文",
-    translation: "只看译文"
+    sentencePair: "逐句对照",
+    zonedPair: "分区对照"
   };
   return labels[mode];
 }

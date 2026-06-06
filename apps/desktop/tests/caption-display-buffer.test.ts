@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createInitialCaptionDisplayBuffer,
+  selectDisplayCaptionPresentation,
   selectDisplayCaptionLines,
   type CaptionDisplayBuffer
 } from "../src/shared/caption-display-buffer";
@@ -35,6 +36,17 @@ describe("字幕显示视觉合成器", () => {
     expect(second.lines[0].sourceText.length).toBeGreaterThan(second.lines[0].targetText.length);
     expect(second.lines[0].targetText).not.toContain("正在翻译");
     expect(second.pendingLineIds).toEqual(["seg_1"]);
+  });
+
+  it("译文队列在 24ms 高频 tick 下会累计时间，不会因为每帧重置而卡住", () => {
+    const desired = [line({ id: "seg_1", sourceText: "Hello", targetText: "测试" })];
+
+    const first = selectDisplayCaptionLines(createInitialCaptionDisplayBuffer(), desired, 1000);
+    const second = selectDisplayCaptionLines(first.buffer, desired, 1024);
+    const third = selectDisplayCaptionLines(second.buffer, desired, 1048);
+
+    expect(second.lines[0].targetText).toBe("测");
+    expect(third.lines[0].targetText).toBe("测试");
   });
 
   it("同一 segment 修订时保留公共前缀，只让新尾部进入可见队列", () => {
@@ -76,7 +88,7 @@ describe("字幕显示视觉合成器", () => {
     expect(final.lines[0].targetText).toBe("我正在测试");
   });
 
-  it("locked 行先进入 settling 并 flush 最终文本，不立即滚入 history", () => {
+  it("locked 行先进入 readable dwell，不直接瞬移成最终文本", () => {
     const partial = selectDisplayCaptionLines(
       createInitialCaptionDisplayBuffer(),
       [line({ id: "seg_1", sourceText: "Final", targetText: "最终", state: "stable" })],
@@ -89,10 +101,92 @@ describe("字幕显示视觉合成器", () => {
       1020
     );
 
-    expect(committed.lines[0].sourceText).toBe("Final line.");
-    expect(committed.lines[0].targetText).toBe("最终字幕。");
-    expect(committed.buffer.entries.seg_1.phase).toBe("settling");
+    expect(committed.lines[0].sourceText).not.toBe("Final line.");
+    expect(committed.lines[0].targetText).not.toBe("最终字幕。");
+    expect(committed.buffer.entries.seg_1.source.desiredText).toBe("Final line.");
+    expect(committed.buffer.entries.seg_1.target.desiredText).toBe("最终字幕。");
+    expect(committed.buffer.entries.seg_1.phase).toBe("readable");
     expect(committed.buffer.entries.seg_1.settledAtMs).toBe(1020);
+  });
+
+  it("locked 短句至少驻留一段可读时间，避免还没看完就进入历史", () => {
+    const committed = selectDisplayCaptionLines(
+      createInitialCaptionDisplayBuffer(),
+      [line({ id: "seg_short", sourceText: "Yes.", targetText: "是的。", state: "locked" })],
+      1000
+    );
+
+    const tooSoon = selectDisplayCaptionLines(
+      committed.buffer,
+      [line({ id: "seg_short", sourceText: "Yes.", targetText: "是的。", state: "locked" })],
+      3300
+    );
+    const presentationTooSoon = selectDisplayCaptionPresentation(tooSoon, "sentencePair");
+
+    expect(tooSoon.buffer.entries.seg_short.phase).toBe("readable");
+    expect(presentationTooSoon.activeLine?.id).toBe("seg_short");
+    expect(presentationTooSoon.historyLines).toEqual([]);
+
+    const afterDwell = selectDisplayCaptionLines(
+      tooSoon.buffer,
+      [line({ id: "seg_short", sourceText: "Yes.", targetText: "是的。", state: "locked" })],
+      4100
+    );
+    const presentationAfterDwell = selectDisplayCaptionPresentation(afterDwell, "sentencePair");
+
+    expect(afterDwell.buffer.entries.seg_short.phase).toBe("past");
+    expect(presentationAfterDwell.activeLine).toBeUndefined();
+    expect(presentationAfterDwell.historyLines.map((historyLine) => historyLine.id)).toEqual(["seg_short"]);
+  });
+
+  it("当前源文新段到达时，刚 commit 的上一句仍在 readable 区，不被立即挤进历史", () => {
+    const committed = selectDisplayCaptionLines(
+      createInitialCaptionDisplayBuffer(),
+      [
+        line({ id: "seg_prev", sourceText: "The previous sentence.", targetText: "上一句。", state: "locked" }),
+        line({ id: "seg_next", sourceText: "And", targetText: "", state: "interim" })
+      ],
+      1000
+    );
+    const presentation = selectDisplayCaptionPresentation(committed, "sentencePair");
+
+    expect(presentation.activeLine?.id).toBe("seg_next");
+    expect(presentation.settlingLines.map((settlingLine) => settlingLine.id)).toEqual(["seg_prev"]);
+    expect(presentation.historyLines).toEqual([]);
+  });
+
+  it("desired 文本短暂回退为已有可见前缀时，可见文本不截短回跳", () => {
+    const buffer: CaptionDisplayBuffer = {
+      entries: {
+        seg_restart: {
+          phase: "active",
+          source: {
+            desiredText: "This is a long source sentence",
+            visibleText: "This is a long source sentence",
+            lastTypedAtMs: 1000,
+            revisedUntilMs: null
+          },
+          target: {
+            desiredText: "这是一个完整的可读译文",
+            visibleText: "这是一个完整的可读译文",
+            lastTypedAtMs: 1000,
+            revisedUntilMs: null
+          },
+          firstSeenAtMs: 1000,
+          lastVisibleAtMs: 1000,
+          settledAtMs: null
+        }
+      }
+    };
+
+    const restarted = selectDisplayCaptionLines(
+      buffer,
+      [line({ id: "seg_restart", sourceText: "This is a long source sentence", targetText: "这是", rev: 2 })],
+      1040
+    );
+
+    expect(restarted.lines[0].targetText).toBe("这是一个完整的可读译文");
+    expect(restarted.buffer.entries.seg_restart.target.desiredText).toBe("这是一个完整的可读译文");
   });
 });
 

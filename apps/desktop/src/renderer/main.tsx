@@ -27,6 +27,7 @@ import {
 } from "../shared/tts-provider-catalog";
 import {
   createInitialCaptionDisplayBuffer,
+  selectDisplayCaptionPresentation,
   selectDisplayCaptionLines,
   type CaptionDisplayBuffer
 } from "../shared/caption-display-buffer";
@@ -35,7 +36,6 @@ import {
   applyRealtimeEvent,
   isRealtimeEventForActiveSession,
   selectActiveCaptionLine,
-  selectActiveCaptionLineForDisplay,
   selectOverlayHistoryLinesForDisplay,
   type CaptionLine
 } from "../shared/caption-store";
@@ -1004,7 +1004,7 @@ function PreferenceSettingsPanel({
       {activeSection === "captions" ? (
         <section className="engineSettingsGroup">
           <h3>字幕</h3>
-          <PreferenceRow label="显示模式" value="双语" />
+          <PreferenceRow label="显示模式" value="逐句对照" />
           <PreferenceRow label="字号" value="跟随字幕窗口" />
           <PreferenceRow label="位置" value="由字幕窗口控制" />
         </section>
@@ -1763,16 +1763,20 @@ function OverlayWindow({
     () => selectDisplayCaptionLines(displayBuffer, lines, displayNowMs),
     [displayBuffer, displayNowMs, lines]
   );
-  const displayLines = displaySelection.lines;
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
-  const displayActiveLine = useMemo(
-    () => selectActiveCaptionLineForDisplay(displayLines, displayMode),
-    [displayLines, displayMode]
+  const displayPresentation = useMemo(
+    () => selectDisplayCaptionPresentation(displaySelection, displayMode),
+    [displayMode, displaySelection]
   );
-  const captionLineForDisplay = displayActiveLine ?? (displayMode === "translation" ? undefined : activeLine);
+  const displayActiveLine = displayPresentation.activeLine ?? displayPresentation.settlingLines.at(-1);
+  const captionLineForDisplay = displayActiveLine ?? activeLine;
   const historyLines = useMemo(
-    () => selectOverlayHistoryLinesForDisplay(interaction.layer, displayLines, displayActiveLine?.id, displayMode),
-    [displayActiveLine?.id, displayLines, displayMode, interaction.layer]
+    () => selectOverlayHistoryLinesForDisplay(interaction.layer, displayPresentation.historyLines, displayActiveLine?.id, displayMode),
+    [displayActiveLine?.id, displayMode, displayPresentation.historyLines, interaction.layer]
+  );
+  const settlingLines = useMemo(
+    () => displayPresentation.settlingLines.filter((line) => line.id !== displayActiveLine?.id),
+    [displayActiveLine?.id, displayPresentation.settlingLines]
   );
   const [overlayInteractionLocked, setOverlayInteractionLocked] = useState(false);
   const subtitleVars = {
@@ -1885,9 +1889,7 @@ function OverlayWindow({
         }}
       >
         <section
-          className={`floatingCaption captionWindow ${showChrome ? "withChrome" : ""} ${historyLines.length > 0 ? "hasHistory" : ""} mode-${subtitleStyle.displayMode} outline-${subtitleStyle.outlineStyle} ${
-            subtitleStyle.translationFirst ? "translationFirst" : ""
-          }`}
+          className={`floatingCaption captionWindow ${showChrome ? "withChrome" : ""} ${historyLines.length > 0 || settlingLines.length > 0 ? "hasHistory" : ""} mode-${displayMode} outline-${subtitleStyle.outlineStyle}`}
           style={subtitleVars}
         >
           {showChrome ? (
@@ -1913,6 +1915,7 @@ function OverlayWindow({
             </div>
           ) : null}
           {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
+          {settlingLines.length > 0 ? <OverlayCaptionHistory lines={settlingLines} subtitleStyle={subtitleStyle} variant="settling" /> : null}
           <CaptionText line={captionLineForDisplay} subtitleStyle={subtitleStyle} />
           {realtimeError ? <p className="overlayError">{realtimeError}</p> : null}
           <div className="overlayMeta">
@@ -2086,19 +2089,27 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
   );
 }
 
-function OverlayCaptionHistory({ lines, subtitleStyle }: { lines: CaptionLine[]; subtitleStyle: SubtitleStyleState }) {
+function OverlayCaptionHistory({
+  lines,
+  subtitleStyle,
+  variant = "history"
+}: {
+  lines: CaptionLine[];
+  subtitleStyle: SubtitleStyleState;
+  variant?: "history" | "settling";
+}) {
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const lineIds = lines.map((line) => line.id).join("|");
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => scrollTranscriptToBottom(historyRef.current));
     return () => window.cancelAnimationFrame(frame);
-  }, [lines]);
+  }, [lineIds]);
 
   return (
-    <div className="overlayCaptionHistory" ref={historyRef}>
+    <div className={`overlayCaptionHistory ${variant}`} ref={historyRef}>
       {lines.map((line, index, visibleLines) => (
         <article className={`historyLine ${line.state} ${index === visibleLines.length - 1 ? "current" : ""}`} key={line.id}>
-          <span className="overlayStateBadge">{captionStateDisplayLabel(line.state)}</span>
           <CaptionText line={line} subtitleStyle={subtitleStyle} />
         </article>
       ))}
@@ -2191,14 +2202,11 @@ function OverlaySessionBar({
       <details className="displayModePicker">
         <summary>{subtitleDisplayModeLabel(displayMode)}</summary>
         <div className="displayModeMenu">
-          <button className={displayMode === "bilingual" ? "selected" : ""} onClick={() => onDisplayModeChange("bilingual")}>
-            双语字幕
+          <button className={displayMode === "sentencePair" ? "selected" : ""} onClick={() => onDisplayModeChange("sentencePair")}>
+            逐句对照
           </button>
-          <button className={displayMode === "source" ? "selected" : ""} onClick={() => onDisplayModeChange("source")}>
-            只看原文
-          </button>
-          <button className={displayMode === "translation" ? "selected" : ""} onClick={() => onDisplayModeChange("translation")}>
-            只看译文
+          <button className={displayMode === "zonedPair" ? "selected" : ""} onClick={() => onDisplayModeChange("zonedPair")}>
+            分区对照
           </button>
         </div>
       </details>
@@ -2263,11 +2271,10 @@ function SubtitleStylePanel({
             options={["shadow", "outline", "none"]}
             value={subtitleStyle.outlineStyle}
           />
-          <SwitchRow label="译文在上" onChange={(translationFirst) => onChange({ translationFirst })} value={subtitleStyle.translationFirst} />
           <SelectRow
             label="显示模式"
             onChange={(displayMode) => onChange({ displayMode: displayMode as SubtitleDisplayMode })}
-            options={["bilingual", "source", "translation"]}
+            options={["sentencePair", "zonedPair"]}
             value={subtitleStyle.displayMode}
           />
           <ActionRow
@@ -2462,9 +2469,8 @@ function fontFamilyValue(value: string) {
 
 function styleOptionLabel(value: string) {
   const labels: Record<string, string> = {
-    bilingual: subtitleDisplayModeLabel("bilingual"),
-    source: subtitleDisplayModeLabel("source"),
-    translation: subtitleDisplayModeLabel("translation"),
+    sentencePair: subtitleDisplayModeLabel("sentencePair"),
+    zonedPair: subtitleDisplayModeLabel("zonedPair"),
     shadow: "阴影",
     outline: "描边",
     none: "无"
