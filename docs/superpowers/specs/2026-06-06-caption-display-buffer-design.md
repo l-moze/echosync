@@ -52,10 +52,11 @@ Dashboard / Export / Archive
 
 ### 字幕模式
 
-- `bilingual`：默认模式，翻译字幕作为主行显示，原文主字幕作为较小副行显示，双行纵向堆叠，不做左右分区。
+- `bilingual`：默认模式，源文在上、译文在下，双行纵向堆叠，不做左右分区。英语课程/演讲场景下，英文源文稳定锚定在上方，中文译文允许慢半拍出现。
 - `source`：只显示原文主字幕，用于用户想核对 ASR 识别内容时。
 - `translation`：只显示中文翻译字幕，用于沉浸式观看课程、演讲或会议时。
-- 双语模式允许“翻译字幕优先”配置，但默认必须中文优先，避免英文抢占阅读注意力。
+- 双语模式允许“翻译字幕优先”配置，但默认关闭，避免译文流式更新时把源文位置挤来挤去。
+- 译文尚未返回时不显示“正在翻译...”占位；前端只显示已经收到的源文或译文 snapshot。
 
 ### Store 层
 
@@ -75,6 +76,7 @@ Dashboard / Export / Archive
 ### 翻译发射层
 
 - LLM 可以内部 token streaming，但 `DeepSeekTranslator.stream_translate()` 只在可读译文片段、标点、rewrite 或 final 时发给字幕层。
+- 默认译文发射策略为首包至少 4 个可见字符，后续增量至少 2 个可见字符；1 字 delta 继续合帧，2 字短语可以快速刷新。
 - stable checkpoint 的译文可以比源文慢半拍；源文行继续实时更新，不等待翻译。
 - weak boundary stable 必须进入翻译队列，不能被后续 committed 覆盖。
 - committed 总是翻译最新终稿，并发送 `segment.commit` 锁定。

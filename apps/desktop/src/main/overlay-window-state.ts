@@ -40,11 +40,11 @@ export function reduceOverlayWindowState(state: OverlayWindowState, event: Overl
 
 export function selectOverlayWindowLayout(layer: OverlayUiLayer): OverlayWindowLayout {
   if (layer === "pinned") {
-    return { width: 1120, height: 520 };
+    return { width: 1120, height: 480 };
   }
 
   if (layer === "controls" || layer === "settings") {
-    return { width: 1120, height: 390 };
+    return { width: 1120, height: 260 };
   }
 
   return { width: 1120, height: 142 };

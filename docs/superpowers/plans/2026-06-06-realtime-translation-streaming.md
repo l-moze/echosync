@@ -16,6 +16,9 @@
 - Desktop Task 5 已完成“即时 snapshot 显示”“过期 patch / locked late partial 防护”和“committed partial 不提前锁行”，并通过 focused Vitest 与 typecheck。
 - P0 语义缺口已修复：`translation.partial(status=committed)` 不再映射为 `locked`；真正锁定只由 `segment.commit` 触发，因此 `segment.commit` 前的合法 `translation.patch` 仍可生效。
 - P0 流式体验缺口已修复：Engine 支持足够长的 `partial` 进入预翻译 checkpoint；Desktop 在最新源文草稿暂时无译文时，会用最近可用译文做展示 fallback，避免悬浮字幕长期显示“正在翻译...”。
+- 2026-06-06 UI 补丁：双语字幕默认源文在上、译文在下；译文为空时不再渲染“正在翻译...”占位；字幕文本左对齐，避免流式更新时整体居中跳动。
+- 2026-06-06 窗口补丁：overlay BrowserWindow 关闭系统 resize 边框和系统阴影，聚焦态窗口高度收紧到 260px，Pin 态保留历史字幕滚动空间。
+- 2026-06-06 翻译发射补丁：默认译文首包阈值降为 4 个可见字符，后续增量阈值降为 2 个可见字符；1 字 token 不刷屏，2 字短语可以快速刷新。
 - LocalAgreement buffer 和完整 LLM revision manager 仍是后续阶段，不属于本轮已完成范围。
 
 ### Task 1: Central Text Emission Policy

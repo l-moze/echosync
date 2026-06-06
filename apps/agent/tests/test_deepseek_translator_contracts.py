@@ -10,6 +10,8 @@ def test_deepseek_streaming_target_waits_for_short_cjk_deltas() -> None:
 
 
 def test_deepseek_streaming_target_flushes_on_enough_text_or_punctuation() -> None:
+    assert should_flush_streaming_target(previous_text="", next_text="大家好呀") is True
+    assert should_flush_streaming_target(previous_text="大家好呀", next_text="大家好呀今天") is True
     assert should_flush_streaming_target(previous_text="", next_text="大家好，欢迎") is True
     assert should_flush_streaming_target(previous_text="", next_text="大家好欢迎大家") is True
     assert should_flush_streaming_target(previous_text="大家好", next_text="大家好呀。") is True
@@ -17,13 +19,6 @@ def test_deepseek_streaming_target_flushes_on_enough_text_or_punctuation() -> No
         should_flush_streaming_target(
             previous_text="大家好欢迎大家",
             next_text="大家好欢迎大家今天",
-        )
-        is False
-    )
-    assert (
-        should_flush_streaming_target(
-            previous_text="大家好欢迎大家",
-            next_text="大家好欢迎大家今天继续学习",
         )
         is True
     )

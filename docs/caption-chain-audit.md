@@ -200,7 +200,13 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
    `caption-display-buffer` 当前不再做字素级慢放。Agent 已经完成语义合并后，前端直接显示最新事件，避免“后端已经有句子，前端还一个字一个字吐”的二次延迟。
 
-6. **partial 预翻译 checkpoint**
+   2026-06-06 补充：悬浮字幕默认改为源文在上、译文在下；译文未返回时不再渲染“正在翻译...”占位。字幕文本左对齐，避免居中排版在流式增量到达时产生整体横向跳动。
+
+6. **短语级译文发射**
+
+   DeepSeek 流式译文仍在 Agent 侧合帧，但默认阈值从“首包/增量均 6 个可见字符”调整为“首包 4 个可见字符、增量 2 个可见字符”。这样能过滤 1 字 token 刷屏，同时允许“今天”“因此”这类短语级增量快速进入前端。
+
+7. **partial 预翻译 checkpoint**
 
    `CascadedInterpretationEngine` 不再只等待 `stable/committed` 才进入翻译。对于已经达到最小音频窗口和最小可见字符数的 `partial`，Engine 会先发起一次低延迟预翻译；当后续 `stable/committed` 到达时，会丢弃尚未执行的旧 `partial` checkpoint，让稳定译文接管。
 
@@ -214,7 +220,7 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
    算法收益：ASR 在连续口播中还没形成 stable 时，悬浮窗也能先拿到可读译文，减少长时间显示“正在翻译...”。
 
-7. **前端空译文 fallback**
+8. **前端空译文 fallback**
 
    Desktop 的字幕状态机现在区分“底层记录”和“当前展示”。底层 `CaptionLine[]` 仍按事件真实保存；但悬浮字幕选择当前行时，如果最新源文草稿暂时没有译文，会借用最近一条可用译文展示，直到当前行自己的译文到达。
 

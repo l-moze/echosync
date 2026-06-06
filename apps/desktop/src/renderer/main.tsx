@@ -24,6 +24,7 @@ import {
   selectDisplayCaptionLines,
   type CaptionDisplayBuffer
 } from "../shared/caption-display-buffer";
+import { selectCaptionTextParts } from "../shared/caption-text-view";
 import {
   applyRealtimeEvent,
   isRealtimeEventForActiveSession,
@@ -1379,32 +1380,32 @@ function OverlayWindow({
           window.setTimeout(() => dispatchOverlay({ type: "collapse.timer.elapsed", atMs: Date.now() }), 340);
         }}
       >
-        {showChrome ? (
-          <OverlayToolbar
-            isPinned={isPinned}
-            isSettingsOpen={false}
-            isInteractionLocked={overlayInteractionLocked}
-            onInteractionLockToggle={() => void toggleOverlayInteractionLock()}
-            onPinToggle={() => {
-              const nextPinned = !isPinned;
-              dispatchOverlay(nextPinned ? { type: "pin.enabled" } : { type: "pin.disabled" });
-              if (nextPinned && overlayInteractionLocked) {
-                setOverlayInteractionLocked(false);
-              }
-              void window.echosyncDesktop?.setOverlayPinned(nextPinned);
-            }}
-            onRecenter={() => void window.echosyncDesktop?.recenterOverlay()}
-            onSettingsToggle={() => void window.echosyncDesktop?.setSubtitleStyleWindowVisible(true)}
-            onWakeHome={() => void window.echosyncDesktop?.wakeOverlayControls()}
-            onClose={() => void window.echosyncDesktop?.setOverlayVisible(false)}
-          />
-        ) : null}
         <section
-          className={`floatingCaption mode-${subtitleStyle.displayMode} outline-${subtitleStyle.outlineStyle} ${
+          className={`floatingCaption ${showChrome ? "withChrome" : ""} mode-${subtitleStyle.displayMode} outline-${subtitleStyle.outlineStyle} ${
             subtitleStyle.translationFirst ? "translationFirst" : ""
           }`}
           style={subtitleVars}
         >
+          {showChrome ? (
+            <OverlayToolbar
+              isPinned={isPinned}
+              isSettingsOpen={false}
+              isInteractionLocked={overlayInteractionLocked}
+              onInteractionLockToggle={() => void toggleOverlayInteractionLock()}
+              onPinToggle={() => {
+                const nextPinned = !isPinned;
+                dispatchOverlay(nextPinned ? { type: "pin.enabled" } : { type: "pin.disabled" });
+                if (nextPinned && overlayInteractionLocked) {
+                  setOverlayInteractionLocked(false);
+                }
+                void window.echosyncDesktop?.setOverlayPinned(nextPinned);
+              }}
+              onRecenter={() => void window.echosyncDesktop?.recenterOverlay()}
+              onSettingsToggle={() => void window.echosyncDesktop?.setSubtitleStyleWindowVisible(true)}
+              onWakeHome={() => void window.echosyncDesktop?.wakeOverlayControls()}
+              onClose={() => void window.echosyncDesktop?.setOverlayVisible(false)}
+            />
+          ) : null}
           <CaptionText line={displayActiveLine ?? activeLine} subtitleStyle={subtitleStyle} />
           {realtimeError ? <p className="overlayError">{realtimeError}</p> : null}
           {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
@@ -1421,56 +1422,52 @@ function OverlayWindow({
             <span>{displayActiveLine ? `${formatTime(displayActiveLine.startMs)}-${formatTime(displayActiveLine.endMs)}` : "等待时间帧"}</span>
             <span>{sourceLabel(snapshot.sourceId)}</span>
           </div>
+          {showChrome ? (
+            <OverlaySessionBar
+              isListening={isListening}
+              lines={displayLines}
+              onCaptureToggle={() => void toggleOverlayCapture()}
+              onDisplayModeChange={(displayMode) => updateSubtitleStyle({ displayMode })}
+              onMicrophoneSelect={() => void selectMicrophoneCapture()}
+              snapshot={snapshot}
+              subtitleStyle={subtitleStyle}
+              translationProvider={translationProvider}
+            />
+          ) : null}
         </section>
-        {showChrome ? (
-          <OverlaySessionBar
-            isListening={isListening}
-            lines={displayLines}
-            onCaptureToggle={() => void toggleOverlayCapture()}
-            onDisplayModeChange={(displayMode) => updateSubtitleStyle({ displayMode })}
-            onMicrophoneSelect={() => void selectMicrophoneCapture()}
-            snapshot={snapshot}
-            subtitleStyle={subtitleStyle}
-            translationProvider={translationProvider}
-          />
-        ) : null}
       </section>
     </main>
   );
 }
 
 function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyle: SubtitleStyleState }) {
-  const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
-  const sourceText = line?.sourceText ?? "Waiting for audio stream...";
-  const targetText = line?.targetText.trim() || (line ? "正在翻译..." : "等待 Windows 系统声音或麦克风输入");
-  const source = (
-    <p className={`overlaySource ${line?.state ?? "interim"}`} style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: subtitleStyle.sourceBold ? 760 : 540 }}>
-      {sourceText}
-    </p>
-  );
-  const target = (
-    <h1 className={line?.state ?? "interim"} style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: subtitleStyle.targetBold ? 800 : 620 }}>
-      {targetText}
-    </h1>
-  );
-
-  const bilingual = subtitleStyle.translationFirst ? (
-    <>
-      {target}
-      {source}
-    </>
-  ) : (
-    <>
-      {source}
-      {target}
-    </>
-  );
+  const parts = selectCaptionTextParts(line, subtitleStyle);
 
   return (
     <div className="captionText">
-      {displayMode === "source" ? source : null}
-      {displayMode === "translation" ? target : null}
-      {displayMode === "bilingual" ? bilingual : null}
+      {parts.map((part) => {
+        if (part.kind === "source") {
+          return (
+            <p
+              className={`overlaySource ${part.state}`}
+              key="source"
+              style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: subtitleStyle.sourceBold ? 760 : 540 }}
+            >
+              {part.text}
+            </p>
+          );
+        }
+
+        return (
+          <h1
+            className={part.state}
+            key="target"
+            style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: subtitleStyle.targetBold ? 800 : 620 }}
+          >
+            {part.text}
+          </h1>
+        );
+      })}
     </div>
   );
 }

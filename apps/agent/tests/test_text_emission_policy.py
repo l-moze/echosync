@@ -31,3 +31,11 @@ def test_policy_flushes_target_on_readable_chunks_punctuation_final_and_rewrite(
         policy.should_emit_target(previous_text="大家好", next_text="大家好呀", is_final=True)
         is True
     )
+
+
+def test_default_policy_flushes_translation_before_long_sentence_is_complete() -> None:
+    policy = TextEmissionPolicy()
+
+    assert policy.should_emit_target(previous_text="", next_text="大家好") is False
+    assert policy.should_emit_target(previous_text="", next_text="大家好呀") is True
+    assert policy.should_emit_target(previous_text="大家好呀", next_text="大家好呀今天") is True

@@ -10,6 +10,7 @@ export type DesktopWindowPreset = {
   alwaysOnTop: boolean;
   skipTaskbar: boolean;
   resizable: boolean;
+  hasShadow: boolean;
   backgroundColor: string;
 };
 
@@ -25,6 +26,7 @@ export const CONTROL_WINDOW_PRESET: DesktopWindowPreset = {
   alwaysOnTop: false,
   skipTaskbar: false,
   resizable: true,
+  hasShadow: true,
   backgroundColor: "#f7faff"
 };
 
@@ -39,6 +41,7 @@ export const OVERLAY_WINDOW_PRESET: DesktopWindowPreset = {
   transparent: true,
   alwaysOnTop: true,
   skipTaskbar: true,
-  resizable: true,
+  resizable: false,
+  hasShadow: false,
   backgroundColor: "#00000000"
 };

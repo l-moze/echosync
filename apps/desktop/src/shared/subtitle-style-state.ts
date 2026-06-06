@@ -29,7 +29,7 @@ export const defaultSubtitleStyle: SubtitleStyleState = {
   backgroundOpacity: 0.76,
   backgroundBlur: 24,
   outlineStyle: "shadow",
-  translationFirst: true,
+  translationFirst: false,
   displayMode: "bilingual"
 };
 

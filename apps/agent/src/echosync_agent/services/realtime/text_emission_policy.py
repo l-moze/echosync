@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-DEFAULT_TARGET_MIN_INITIAL_CHARS = 6
-DEFAULT_TARGET_MIN_DELTA_CHARS = 6
+DEFAULT_TARGET_MIN_INITIAL_CHARS = 4
+DEFAULT_TARGET_MIN_DELTA_CHARS = 2
 DEFAULT_TARGET_FLUSH_PUNCTUATION = "。！？!?，,；;：:"
 
 

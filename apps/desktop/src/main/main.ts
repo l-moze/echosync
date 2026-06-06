@@ -66,6 +66,7 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay" |
     alwaysOnTop: preset.alwaysOnTop,
     skipTaskbar: preset.skipTaskbar,
     resizable: preset.resizable,
+    hasShadow: preset.hasShadow,
     backgroundColor: preset.backgroundColor,
     webPreferences: {
       contextIsolation: true,
@@ -154,6 +155,7 @@ function ensureSubtitleStyleWindow() {
         alwaysOnTop: true,
         skipTaskbar: true,
         resizable: true,
+        hasShadow: false,
         backgroundColor: "#00000000"
       },
       "subtitle-style"

@@ -12,8 +12,8 @@ describe("字幕样式共享状态", () => {
     expect(defaultSubtitleStyle.displayMode).toBe("bilingual");
   });
 
-  it("默认双语模式优先显示翻译字幕主行", () => {
-    expect(defaultSubtitleStyle.translationFirst).toBe(true);
+  it("默认双语模式先显示源文，再显示译文", () => {
+    expect(defaultSubtitleStyle.translationFirst).toBe(false);
   });
 
   it("支持双语、主字幕、翻译字幕三种显示模式", () => {
