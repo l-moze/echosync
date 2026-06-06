@@ -98,6 +98,8 @@ ECHOSYNC_ASR_PROVIDER=funasr
 FUNASR_DEVICE=auto
 ```
 
+FunASR 默认启用 `livekit.plugins.silero` 做人声检测，并由 Agent 的 `SemanticEndpointTracker` 在连续静音达到 `FUNASR_VAD_SILENCE_MS=300` 后触发 soft endpoint。排查时可设置 `FUNASR_VAD_ENABLED=false` 退回仅依赖上游 final 和 hard timeout 的路径。
+
 也可以在 Desktop 会话启动时选择 ASR provider、ASR 延迟模式和翻译 provider。选择“后端默认/通用模型”时不发送覆盖字段，沿用 Agent `.env`；显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
 
 如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
@@ -116,7 +118,7 @@ FUNASR_DEVICE=auto
 
 当前 renderer 已加轻量门控：低于响度阈值时不发送音频块，连续静音后自动把上一块活跃音频标记为 `is_final=true`，避免静音时持续打满 ASR。字幕弹窗会显示当前片段时间范围。
 
-实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理；遇到上游 endpoint final 会以 `is_final=True` flush 并重置 FunASR cache。Agent 已新增 `SemanticAudioChunker`，支持 soft cut、hard cut 和 overlap；FunASR 流式路径使用轻量 `SemanticEndpointTracker`，可接入 `FrameVadDetector` 触发 soft endpoint，连续语音超过 hard timeout 时会强制 endpoint 并重置 cache，不等待说话人自然停顿。Voxtral 会按同一 `asr_latency_mode` 映射 `target_streaming_delay_ms`：`low_latency` 最多 480ms，`balanced` 沿用 `.env`，`accuracy` 至少 1600ms。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 默认只处理 `stable/committed`，`partial` 只显示源文并通过 `translation_checkpoint_skipped` 记录跳过原因；待翻译项仍按 `segment_id` 合并，降低模型慢响应时的队列积压。MP4/音频文件源使用 ffmpeg stdout 流式分帧，真实样本 `vido/videoplayback.mp4` 的首个 80ms PCM frame 约 40ms 产出，不再等待完整文件解码。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
+实时热路径已做首轮算法优化：Desktop 真实链路使用 `audio.start` JSON 控制帧 + `pcm16.binary.v1` 二进制 PCM frame，目标帧长 80ms；音频门控使用分片队列减少样本重复拷贝。FunASR 适配器内部会把 80ms 传输帧聚合成推理窗口，`balanced` 默认使用 `FUNASR_CHUNK_MS=600ms`，`low_latency` 使用约 320ms，`accuracy` 使用约 900ms，避免低延迟传输强迫本地模型一帧一推理；遇到上游 endpoint final 会以 `is_final=True` flush 并重置 FunASR cache。Agent 已新增 `SemanticAudioChunker`，支持 soft cut、hard cut 和 overlap；FunASR 流式路径使用轻量 `SemanticEndpointTracker`，默认接入 `LiveKitSileroFrameVadDetector` 触发 soft endpoint，连续语音超过 hard timeout 时会强制 endpoint 并重置 cache，不等待说话人自然停顿。Voxtral 会按同一 `asr_latency_mode` 映射 `target_streaming_delay_ms`：`low_latency` 最多 480ms，`balanced` 沿用 `.env`，`accuracy` 至少 1600ms。ASR 分段维护增量文本避免高频 `join`，翻译 checkpoint 默认只处理 `stable/committed`，`partial` 只显示源文并通过 `translation_checkpoint_skipped` 记录跳过原因；待翻译项仍按 `segment_id` 合并，降低模型慢响应时的队列积压。MP4/音频文件源使用 ffmpeg stdout 流式分帧，真实样本 `vido/videoplayback.mp4` 的首个 80ms PCM frame 约 40ms 产出，不再等待完整文件解码。旧 JSON `audio.chunk` / `pcm_base64` 仅作为兼容协议和部分测试路径保留。
 
 实时控制事件语义：`realtime.error` 表示本次会话启动失败或 pipeline 失败，客户端应进入错误态并停止本地媒体流；`realtime.done` 只表示正常完成。用户主动停止时，如果 pipeline 已经失败，Agent 会优先上报错误；如果仍在处理队列，则取消未完成的 pipeline，避免停止后继续推送晚到字幕。
 

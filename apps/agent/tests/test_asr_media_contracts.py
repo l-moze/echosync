@@ -398,12 +398,53 @@ def test_funasr_transcriber_marks_soft_endpoint_from_vad_detector() -> None:
     assert segments[3].metrics["asr_semantic_active_audio_ms"] == 400.0
 
 
+def test_funasr_transcriber_closes_vad_detector_after_stream() -> None:
+    class FakeModel:
+        def generate(self, **_: object) -> list[dict[str, str]]:
+            return [{"text": "done"}]
+
+    async def frames() -> AsyncIterator[AudioFrame]:
+        yield AudioFrame(
+            session_id="sess_close_vad",
+            seq=1,
+            pcm=b"\x01\x00" * 1600,
+            sample_rate=16_000,
+            channels=1,
+            start_ms=0,
+            end_ms=100,
+            source_lang="zh",
+            is_final=True,
+        )
+
+    detector = ClosingVadDetector()
+    transcriber = FunAsrTranscriber(
+        model_factory=lambda: FakeModel(),
+        config=FunAsrStreamingConfig(chunk_ms=100),
+        vad_detector=detector,
+    )
+
+    asyncio.run(_collect(transcriber.stream(frames())))
+
+    assert detector.closed is True
+
+
 class StartMsVadDetector(FrameVadDetector):
     def __init__(self, *, silence_from_ms: int) -> None:
         self.silence_from_ms = silence_from_ms
 
     def is_speech(self, frame: AudioFrame) -> bool:
         return frame.start_ms < self.silence_from_ms
+
+
+class ClosingVadDetector(FrameVadDetector):
+    def __init__(self) -> None:
+        self.closed = False
+
+    def is_speech(self, frame: AudioFrame) -> bool:
+        return True
+
+    async def aclose(self) -> None:
+        self.closed = True
 
 
 def test_funasr_transcriber_uses_frame_sample_rate_for_aggregation_window() -> None:
@@ -478,6 +519,7 @@ def test_runtime_assembly_builds_local_funasr_transcriber() -> None:
             mistral_api_key="",
             voxtral_model="voxtral-mini-transcribe-realtime-2602",
             voxtral_target_delay_ms=1000,
+            funasr_vad_enabled=False,
         )
     )
 

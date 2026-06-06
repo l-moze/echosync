@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
@@ -61,6 +62,10 @@ class FunAsrTranscriber(Transcriber):
         self._model: Any | None = None
         self._vad_detector = vad_detector
 
+    @property
+    def vad_detector(self) -> FrameVadDetector | None:
+        return self._vad_detector
+
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         cache: dict[str, Any] = {}
         pending: _PendingAudioBuffer | None = None
@@ -74,25 +79,17 @@ class FunAsrTranscriber(Transcriber):
             vad_detector=self._vad_detector,
         )
 
-        async for raw_frame in frames:
-            semantic_frame = endpoint_tracker.mark(raw_frame)
-            frame = semantic_frame.frame
-            if pending is None:
-                pending = _PendingAudioBuffer(
-                    sample_rate=frame.sample_rate,
-                    chunk_ms=self.config.chunk_ms,
-                )
-            pending.push(frame)
-            while not frame.is_final and pending.ready():
-                segment = self._recognize_frame(
-                    pending.take_chunk(is_final=False),
-                    cache=cache,
-                    is_final=False,
-                )
-                if segment is not None:
-                    yield segment
-            if frame.is_final and pending.has_audio():
-                while pending.has_more_than_one_chunk():
+        try:
+            async for raw_frame in frames:
+                semantic_frame = endpoint_tracker.mark(raw_frame)
+                frame = semantic_frame.frame
+                if pending is None:
+                    pending = _PendingAudioBuffer(
+                        sample_rate=frame.sample_rate,
+                        chunk_ms=self.config.chunk_ms,
+                    )
+                pending.push(frame)
+                while not frame.is_final and pending.ready():
                     segment = self._recognize_frame(
                         pending.take_chunk(is_final=False),
                         cache=cache,
@@ -100,29 +97,40 @@ class FunAsrTranscriber(Transcriber):
                     )
                     if segment is not None:
                         yield segment
+                if frame.is_final and pending.has_audio():
+                    while pending.has_more_than_one_chunk():
+                        segment = self._recognize_frame(
+                            pending.take_chunk(is_final=False),
+                            cache=cache,
+                            is_final=False,
+                        )
+                        if segment is not None:
+                            yield segment
+                    segment = self._recognize_frame(
+                        pending.take_all(is_final=True),
+                        cache=cache,
+                        is_final=True,
+                        semantic_boundary=semantic_frame.boundary,
+                        semantic_active_audio_ms=semantic_frame.active_audio_ms,
+                        semantic_overlap_ms=semantic_frame.overlap_ms,
+                    )
+                    if segment is not None:
+                        yield segment
+                    cache = {}
+
+            if pending is not None and pending.has_audio():
                 segment = self._recognize_frame(
                     pending.take_all(is_final=True),
                     cache=cache,
                     is_final=True,
-                    semantic_boundary=semantic_frame.boundary,
-                    semantic_active_audio_ms=semantic_frame.active_audio_ms,
-                    semantic_overlap_ms=semantic_frame.overlap_ms,
+                    semantic_boundary="stream_end",
+                    semantic_active_audio_ms=0,
+                    semantic_overlap_ms=0,
                 )
                 if segment is not None:
                     yield segment
-                cache = {}
-
-        if pending is not None and pending.has_audio():
-            segment = self._recognize_frame(
-                pending.take_all(is_final=True),
-                cache=cache,
-                is_final=True,
-                semantic_boundary="stream_end",
-                semantic_active_audio_ms=0,
-                semantic_overlap_ms=0,
-            )
-            if segment is not None:
-                yield segment
+        finally:
+            await _close_frame_vad_detector(self._vad_detector)
 
     def _recognize_frame(
         self,
@@ -245,6 +253,17 @@ def _torch_cuda_is_available() -> bool:
     except ImportError:
         return False
     return bool(torch.cuda.is_available())
+
+
+async def _close_frame_vad_detector(detector: FrameVadDetector | None) -> None:
+    if detector is None:
+        return
+    close = getattr(detector, "aclose", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
 
 
 def _extract_text(result: object) -> str:

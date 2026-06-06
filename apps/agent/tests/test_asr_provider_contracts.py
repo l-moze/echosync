@@ -6,6 +6,7 @@ from echosync_agent.runtime.settings import Settings
 from echosync_agent.services.asr.factory import build_transcriber_from_settings
 from echosync_agent.services.asr.funasr_transcriber import FunAsrTranscriber
 from echosync_agent.services.asr.mock_transcriber import MockTranscriber
+from echosync_agent.services.asr.semantic_chunker import FrameVadDetector
 from echosync_agent.services.asr.voxtral_transcriber import VoxtralRealtimeTranscriber
 
 
@@ -29,6 +30,44 @@ def test_asr_factory_builds_funasr_transcriber() -> None:
     assert transcriber.config.model == "paraformer-zh-streaming"
     assert transcriber.config.device == "cpu"
     assert transcriber.config.chunk_ms == 600
+
+
+def test_asr_factory_injects_funasr_vad_detector_when_enabled() -> None:
+    detector = StubVadDetector()
+
+    transcriber = build_transcriber_from_settings(
+        _settings(
+            asr_provider="funasr",
+            funasr_vad_enabled=True,
+            funasr_vad_silence_ms=240,
+        ),
+        vad_detector_factory=lambda settings: detector,
+    )
+
+    assert isinstance(transcriber, FunAsrTranscriber)
+    assert transcriber.vad_detector is detector
+    assert transcriber.config.vad_silence_ms == 240
+
+
+def test_asr_factory_skips_funasr_vad_detector_when_disabled() -> None:
+    called = False
+
+    def factory(_: Settings) -> FrameVadDetector:
+        nonlocal called
+        called = True
+        return StubVadDetector()
+
+    transcriber = build_transcriber_from_settings(
+        _settings(
+            asr_provider="funasr",
+            funasr_vad_enabled=False,
+        ),
+        vad_detector_factory=factory,
+    )
+
+    assert isinstance(transcriber, FunAsrTranscriber)
+    assert transcriber.vad_detector is None
+    assert called is False
 
 
 @pytest.mark.parametrize(
@@ -118,6 +157,12 @@ def _settings(**overrides: object) -> Settings:
         "mistral_api_key": "",
         "voxtral_model": "voxtral-mini-transcribe-realtime-2602",
         "voxtral_target_delay_ms": 1000,
+        "funasr_vad_enabled": False,
     }
     values.update(overrides)
     return Settings(**values)
+
+
+class StubVadDetector(FrameVadDetector):
+    def is_speech(self, frame: object) -> bool:
+        return True

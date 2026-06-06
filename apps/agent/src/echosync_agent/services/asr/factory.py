@@ -1,16 +1,29 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from echosync_agent.interfaces import Transcriber
 from echosync_agent.runtime.settings import Settings
 from echosync_agent.services.asr.funasr_transcriber import FunAsrStreamingConfig, FunAsrTranscriber
 from echosync_agent.services.asr.mock_transcriber import MockTranscriber
+from echosync_agent.services.asr.semantic_chunker import FrameVadDetector
+from echosync_agent.services.asr.silero_vad_detector import (
+    LiveKitSileroVadConfig,
+    build_livekit_silero_vad_detector,
+)
 from echosync_agent.services.asr.voxtral_transcriber import (
     VoxtralRealtimeConfig,
     VoxtralRealtimeTranscriber,
 )
 
+VadDetectorFactory = Callable[[Settings], FrameVadDetector | None]
 
-def build_transcriber_from_settings(settings: Settings) -> Transcriber:
+
+def build_transcriber_from_settings(
+    settings: Settings,
+    *,
+    vad_detector_factory: VadDetectorFactory | None = None,
+) -> Transcriber:
     """按配置创建 ASR 适配器。
 
     装配层集中处理供应商选择，管道只依赖 Transcriber 抽象。
@@ -27,7 +40,12 @@ def build_transcriber_from_settings(settings: Settings) -> Transcriber:
                     base_chunk_ms=settings.funasr_chunk_ms,
                     latency_mode=settings.asr_latency_mode,
                 ),
-            )
+                vad_silence_ms=settings.funasr_vad_silence_ms,
+            ),
+            vad_detector=_build_funasr_vad_detector(
+                settings,
+                vad_detector_factory=vad_detector_factory,
+            ),
         )
     if settings.asr_provider == "voxtral":
         if not settings.mistral_api_key:
@@ -59,3 +77,19 @@ def _voxtral_target_delay_ms_for_latency_mode(*, base_delay_ms: int, latency_mod
     if latency_mode == "accuracy":
         return max(base_delay_ms, 1600)
     return base_delay_ms
+
+
+def _build_funasr_vad_detector(
+    settings: Settings,
+    *,
+    vad_detector_factory: VadDetectorFactory | None,
+) -> FrameVadDetector | None:
+    if not settings.funasr_vad_enabled:
+        return None
+    if vad_detector_factory is not None:
+        return vad_detector_factory(settings)
+    return build_livekit_silero_vad_detector(
+        LiveKitSileroVadConfig(
+            activation_threshold=settings.funasr_vad_activation_threshold,
+        )
+    )

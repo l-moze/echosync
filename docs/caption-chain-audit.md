@@ -224,7 +224,7 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
    `services/asr/semantic_chunker.py` 已提供第一版 `SemanticAudioChunker`：支持 soft endpoint、hard cut 和 hard cut 后保留 overlap。这个完整 chunker 适合未来 batch ASR 或非流式模型。
 
-   FunASR 是流式 ASR，不应该为了等待完整语义块牺牲现有 320/600/900ms 推理窗口。因此 FunASR 接的是同文件里的 `SemanticEndpointTracker`：它不缓存音频，只在上游 `is_final=true`、可插拔 `FrameVadDetector` 判定连续静音达到阈值，或连续语音超过 hard timeout 时，把当前 frame 标记为 final，触发 FunASR flush 和 cache reset。每次推理都会打印：
+   FunASR 是流式 ASR，不应该为了等待完整语义块牺牲现有 320/600/900ms 推理窗口。因此 FunASR 接的是同文件里的 `SemanticEndpointTracker`：它不缓存音频，只在上游 `is_final=true`、`LiveKitSileroFrameVadDetector` 判定连续静音达到阈值，或连续语音超过 hard timeout 时，把当前 frame 标记为 final，触发 FunASR flush 和 cache reset。每次推理都会打印：
 
    ```text
    funasr_inference_chunk session_id=... start_ms=... end_ms=...
@@ -235,7 +235,7 @@ current='Feels funny to say that at normal speed,' incoming='but'
      boundary=soft|hard|stream_end active_audio_ms=... overlap_ms=...
    ```
 
-   算法收益：80ms 传输帧仍保持实时上行，但 FunASR 推理窗口继续按 320/600/900ms 聚合。以 balanced 的 600ms 窗口估算，模型调用频率从每秒 12.5 次传输帧降到约 1.67 次推理，理论调用压力降低约 86.7%；真实运行时直接看 `transport_frames` 和 `input_audio_ms` 验证是否达到预期。soft endpoint 的证据是 `funasr_semantic_boundary boundary=soft`，hard endpoint 的证据是 `funasr_semantic_boundary boundary=hard`。本地依赖探查显示可用 VAD 库为 `livekit.plugins.silero`，下一步应实现它到 `FrameVadDetector` 的 adapter。
+   算法收益：80ms 传输帧仍保持实时上行，但 FunASR 推理窗口继续按 320/600/900ms 聚合。以 balanced 的 600ms 窗口估算，模型调用频率从每秒 12.5 次传输帧降到约 1.67 次推理，理论调用压力降低约 86.7%；真实运行时直接看 `transport_frames` 和 `input_audio_ms` 验证是否达到预期。soft endpoint 的证据是 `funasr_semantic_boundary boundary=soft`，hard endpoint 的证据是 `funasr_semantic_boundary boundary=hard`。`livekit.plugins.silero` 已通过 adapter 接入，后续优化必须用真实视频链路日志比较 soft endpoint 命中率、ASR RTF 和字幕端到端延迟。
 
 9. **前端空译文 fallback**
 
