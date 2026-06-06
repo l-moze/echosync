@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import { createRoot } from "react-dom/client";
 import log from "electron-log/renderer";
 
@@ -32,7 +32,7 @@ import {
   selectOverlayHistoryLines,
   type CaptionLine
 } from "../shared/caption-store";
-import type { DesktopCaptureSnapshot } from "../shared/desktop-api";
+import type { DesktopCaptureSnapshot, DesktopWindowBounds } from "../shared/desktop-api";
 import {
   createInitialOverlayInteractionState,
   reduceOverlayInteraction,
@@ -1301,6 +1301,7 @@ function OverlayWindow({
   const subtitleVars = {
     "--subtitle-bg-opacity": subtitleStyle.backgroundOpacity,
     "--subtitle-blur": `${subtitleStyle.backgroundBlur}px`,
+    "--caption-shadow-alpha": subtitleStyle.windowShadow,
     "--source-size": `${subtitleStyle.sourceScale}px`,
     "--target-size": `${subtitleStyle.targetScale}px`,
     "--source-color": subtitleStyle.sourceColor,
@@ -1381,30 +1382,32 @@ function OverlayWindow({
         }}
       >
         <section
-          className={`floatingCaption ${showChrome ? "withChrome" : ""} ${historyLines.length > 0 ? "hasHistory" : ""} mode-${subtitleStyle.displayMode} outline-${subtitleStyle.outlineStyle} ${
+          className={`floatingCaption captionWindow ${showChrome ? "withChrome" : ""} ${historyLines.length > 0 ? "hasHistory" : ""} mode-${subtitleStyle.displayMode} outline-${subtitleStyle.outlineStyle} ${
             subtitleStyle.translationFirst ? "translationFirst" : ""
           }`}
           style={subtitleVars}
         >
           {showChrome ? (
-            <OverlayToolbar
-              isPinned={isPinned}
-              isSettingsOpen={false}
-              isInteractionLocked={overlayInteractionLocked}
-              onInteractionLockToggle={() => void toggleOverlayInteractionLock()}
-              onPinToggle={() => {
-                const nextPinned = !isPinned;
-                dispatchOverlay(nextPinned ? { type: "pin.enabled" } : { type: "pin.disabled" });
-                if (nextPinned && overlayInteractionLocked) {
-                  setOverlayInteractionLocked(false);
-                }
-                void window.echosyncDesktop?.setOverlayPinned(nextPinned);
-              }}
-              onRecenter={() => void window.echosyncDesktop?.recenterOverlay()}
-              onSettingsToggle={() => void window.echosyncDesktop?.setSubtitleStyleWindowVisible(true)}
-              onWakeHome={() => void window.echosyncDesktop?.wakeOverlayControls()}
-              onClose={() => void window.echosyncDesktop?.setOverlayVisible(false)}
-            />
+            <div className="captionTopChrome">
+              <OverlayToolbar
+                isPinned={isPinned}
+                isSettingsOpen={false}
+                isInteractionLocked={overlayInteractionLocked}
+                onInteractionLockToggle={() => void toggleOverlayInteractionLock()}
+                onPinToggle={() => {
+                  const nextPinned = !isPinned;
+                  dispatchOverlay(nextPinned ? { type: "pin.enabled" } : { type: "pin.disabled" });
+                  if (nextPinned && overlayInteractionLocked) {
+                    setOverlayInteractionLocked(false);
+                  }
+                  void window.echosyncDesktop?.setOverlayPinned(nextPinned);
+                }}
+                onRecenter={() => void window.echosyncDesktop?.recenterOverlay()}
+                onSettingsToggle={() => void window.echosyncDesktop?.setSubtitleStyleWindowVisible(true)}
+                onWakeHome={() => void window.echosyncDesktop?.wakeOverlayControls()}
+                onClose={() => void window.echosyncDesktop?.setOverlayVisible(false)}
+              />
+            </div>
           ) : null}
           {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
           <CaptionText line={displayActiveLine ?? activeLine} subtitleStyle={subtitleStyle} />
@@ -1423,21 +1426,120 @@ function OverlayWindow({
             <span>{sourceLabel(snapshot.sourceId)}</span>
           </div>
           {showChrome ? (
-            <OverlaySessionBar
-              isListening={isListening}
-              lines={displayLines}
-              onCaptureToggle={() => void toggleOverlayCapture()}
-              onDisplayModeChange={(displayMode) => updateSubtitleStyle({ displayMode })}
-              onMicrophoneSelect={() => void selectMicrophoneCapture()}
-              snapshot={snapshot}
-              subtitleStyle={subtitleStyle}
-              translationProvider={translationProvider}
-            />
+            <div className="captionBottomChrome">
+              <OverlaySessionBar
+                isListening={isListening}
+                lines={displayLines}
+                onCaptureToggle={() => void toggleOverlayCapture()}
+                onDisplayModeChange={(displayMode) => updateSubtitleStyle({ displayMode })}
+                onMicrophoneSelect={() => void selectMicrophoneCapture()}
+                snapshot={snapshot}
+                subtitleStyle={subtitleStyle}
+                translationProvider={translationProvider}
+              />
+            </div>
           ) : null}
+          {showChrome ? <OverlayResizeHandles /> : null}
         </section>
       </section>
     </main>
   );
+}
+
+type OverlayResizeDirection = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
+
+function OverlayResizeHandles() {
+  const directions: OverlayResizeDirection[] = ["n", "e", "s", "w", "ne", "nw", "se", "sw"];
+
+  function startResize(direction: OverlayResizeDirection, event: ReactPointerEvent<HTMLSpanElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.screenX;
+    const startY = event.screenY;
+    let initialBounds: DesktopWindowBounds | null = null;
+    let frame: number | null = null;
+    let pendingBounds: Partial<DesktopWindowBounds> | null = null;
+
+    function scheduleResize(bounds: Partial<DesktopWindowBounds>) {
+      pendingBounds = bounds;
+      if (frame !== null) {
+        return;
+      }
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        const nextBounds = pendingBounds;
+        pendingBounds = null;
+        if (nextBounds) {
+          void window.echosyncDesktop?.resizeOverlay(nextBounds);
+        }
+      });
+    }
+
+    function stopResize() {
+      window.removeEventListener("pointermove", moveResize);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+    }
+
+    function moveResize(moveEvent: PointerEvent) {
+      if (!initialBounds) {
+        return;
+      }
+      const dx = moveEvent.screenX - startX;
+      const dy = moveEvent.screenY - startY;
+      scheduleResize(resizeBoundsFromPointer(direction, initialBounds, dx, dy));
+    }
+
+    window.addEventListener("pointermove", moveResize);
+    window.addEventListener("pointerup", stopResize, { once: true });
+    window.addEventListener("pointercancel", stopResize, { once: true });
+
+    void window.echosyncDesktop?.getOverlayBounds().then((startBounds) => {
+      if (!startBounds) {
+        return;
+      }
+      initialBounds = startBounds;
+    });
+  }
+
+  return (
+    <div className="overlayResizeHandles" aria-hidden="true">
+      {directions.map((direction) => (
+        <span
+          className={`resizeHandle resize-${direction}`}
+          key={direction}
+          onPointerDown={(event) => startResize(direction, event)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function resizeBoundsFromPointer(
+  direction: OverlayResizeDirection,
+  bounds: DesktopWindowBounds,
+  dx: number,
+  dy: number
+): Partial<DesktopWindowBounds> {
+  const next: Partial<DesktopWindowBounds> = {};
+  if (direction.includes("e")) {
+    next.width = bounds.width + dx;
+  }
+  if (direction.includes("s")) {
+    next.height = bounds.height + dy;
+  }
+  if (direction.includes("w")) {
+    next.x = bounds.x + dx;
+    next.width = bounds.width - dx;
+  }
+  if (direction.includes("n")) {
+    next.y = bounds.y + dy;
+    next.height = bounds.height - dy;
+  }
+  return next;
 }
 
 function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyle: SubtitleStyleState }) {
@@ -1640,6 +1742,7 @@ function SubtitleStylePanel({
         <StyleSection title="其他设置">
           <StepperRow label="背景透明度" max={0.95} min={0.35} onChange={(backgroundOpacity) => onChange({ backgroundOpacity })} step={0.05} value={subtitleStyle.backgroundOpacity} />
           <StepperRow label="背景模糊" max={36} min={0} onChange={(backgroundBlur) => onChange({ backgroundBlur })} step={2} value={subtitleStyle.backgroundBlur} />
+          <StepperRow label="窗口阴影" max={1} min={0} onChange={(windowShadow) => onChange({ windowShadow })} step={0.05} value={subtitleStyle.windowShadow} />
           <SelectRow
             label="描边样式"
             onChange={(outlineStyle) => onChange({ outlineStyle: outlineStyle as SubtitleOutlineStyle })}

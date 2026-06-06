@@ -14,6 +14,13 @@ export type DesktopCaptureSnapshot = {
   sessionId?: string;
 };
 
+export type DesktopWindowBounds = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type DesktopApi = {
   getAgentCapabilities: () => Promise<AgentCapabilities>;
   listAudioSources: () => Promise<DesktopAudioSource[]>;
@@ -25,6 +32,8 @@ export type DesktopApi = {
   setOverlayLocked: (locked: boolean) => Promise<void>;
   setOverlayPinned: (pinned: boolean) => Promise<void>;
   setOverlayLayer: (layer: "default" | "controls" | "settings" | "pinned") => Promise<void>;
+  getOverlayBounds: () => Promise<DesktopWindowBounds | null>;
+  resizeOverlay: (bounds: Partial<DesktopWindowBounds>) => Promise<DesktopWindowBounds | null>;
   setSubtitleStyleWindowVisible: (visible: boolean) => Promise<void>;
   updateSubtitleStyle: (patch: Partial<SubtitleStyleState>) => Promise<SubtitleStyleState>;
   wakeOverlayControls: () => Promise<void>;

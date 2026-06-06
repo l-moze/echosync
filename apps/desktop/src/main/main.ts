@@ -14,10 +14,15 @@ import {
 import { createCaptionEventBuffer } from "./caption-event-buffer";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
 import {
+  createDefaultOverlayWindowSizeState,
+  reduceOverlayWindowSizeState,
   reduceOverlayWindowState,
+  selectOverlayResizeBounds,
   selectOverlayWindowLayout,
   selectSubtitleStyleWindowLayout,
   type OverlayUiLayer,
+  type OverlayWindowRectangle,
+  type OverlayWindowSizeState,
   type OverlayWindowState
 } from "./overlay-window-state";
 import { CONTROL_WINDOW_PRESET, OVERLAY_WINDOW_PRESET, type DesktopWindowPreset } from "./window-config";
@@ -42,6 +47,8 @@ let overlayWindowState: OverlayWindowState = {
   pinned: false,
   ignoreMouse: false
 };
+let overlayLayer: OverlayUiLayer = "default";
+let overlayWindowSizeState: OverlayWindowSizeState = createDefaultOverlayWindowSizeState();
 let captureSnapshot: DesktopCaptureSnapshot = {
   sourceId: "windows-system",
   state: "idle",
@@ -180,7 +187,8 @@ function placeSubtitleStyleWindowNearOverlay(window: BrowserWindow) {
 
 function applyOverlayLayout(layer: OverlayUiLayer) {
   const window = ensureOverlayWindow();
-  const layout = selectOverlayWindowLayout(layer);
+  overlayLayer = layer;
+  const layout = selectOverlayWindowLayout(layer, overlayWindowSizeState);
   const [currentWidth, currentHeight] = window.getSize();
   if (currentWidth === layout.width && currentHeight === layout.height) {
     return window;
@@ -250,6 +258,28 @@ function registerIpc() {
 
   ipcMain.handle("overlay:layer", (_event, layer: OverlayUiLayer) => {
     applyOverlayLayout(layer);
+  });
+
+  ipcMain.handle("overlay:get-bounds", () => {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      return null;
+    }
+    return overlayWindow.getBounds();
+  });
+
+  ipcMain.handle("overlay:resize", (_event, requestedBounds: Partial<OverlayWindowRectangle>) => {
+    const window = ensureOverlayWindow();
+    const currentBounds = window.getBounds();
+    const workArea = screen.getDisplayMatching(currentBounds).workArea;
+    const nextBounds = selectOverlayResizeBounds({
+      currentBounds,
+      layer: overlayLayer,
+      requestedBounds,
+      workArea
+    });
+    overlayWindowSizeState = reduceOverlayWindowSizeState(overlayWindowSizeState, overlayLayer, nextBounds);
+    window.setBounds(nextBounds, false);
+    return window.getBounds();
   });
 
   ipcMain.handle("subtitle-style:visible", (_event, visible: boolean) => {

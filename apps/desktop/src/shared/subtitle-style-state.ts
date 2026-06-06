@@ -12,6 +12,7 @@ export type SubtitleStyleState = {
   targetBold: boolean;
   backgroundOpacity: number;
   backgroundBlur: number;
+  windowShadow: number;
   outlineStyle: SubtitleOutlineStyle;
   translationFirst: boolean;
   displayMode: SubtitleDisplayMode;
@@ -28,6 +29,7 @@ export const defaultSubtitleStyle: SubtitleStyleState = {
   targetBold: true,
   backgroundOpacity: 0.76,
   backgroundBlur: 24,
+  windowShadow: 0.72,
   outlineStyle: "shadow",
   translationFirst: false,
   displayMode: "bilingual"

@@ -16,6 +16,12 @@ describe("字幕样式共享状态", () => {
     expect(defaultSubtitleStyle.translationFirst).toBe(false);
   });
 
+  it("默认提供独立的窗口阴影强度，不复用文字描边设置", () => {
+    expect(defaultSubtitleStyle.windowShadow).toBeGreaterThan(0);
+    expect(defaultSubtitleStyle.windowShadow).toBeLessThanOrEqual(1);
+    expect(defaultSubtitleStyle.outlineStyle).toBe("shadow");
+  });
+
   it("支持双语、主字幕、翻译字幕三种显示模式", () => {
     const modes: SubtitleDisplayMode[] = ["bilingual", "source", "translation"];
 
@@ -31,6 +37,15 @@ describe("字幕样式共享状态", () => {
     expect(next.targetScale).toBe(34);
     expect(next.targetColor).toBe("#f8e38c");
     expect(next.sourceScale).toBe(defaultSubtitleStyle.sourceScale);
+  });
+
+  it("窗口阴影强度可以独立更新", () => {
+    const next = reduceSubtitleStyleState(defaultSubtitleStyle, {
+      windowShadow: 0.24
+    });
+
+    expect(next.windowShadow).toBe(0.24);
+    expect(next.outlineStyle).toBe(defaultSubtitleStyle.outlineStyle);
   });
 
   it("兼容旧版 line/split 显示模式配置", () => {

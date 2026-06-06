@@ -1423,7 +1423,8 @@ button:focus-visible {
     linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
     rgba(12, 14, 18, 0.72);
   box-shadow:
-    0 26px 72px rgba(0, 0, 0, 0.42),
+    0 24px 72px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.56)),
+    0 8px 24px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.32)),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(var(--subtitle-blur, 24px)) saturate(1.18);
   opacity: 1;
@@ -1459,7 +1460,8 @@ button:focus-visible {
     linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
     rgba(12, 14, 18, 0.72);
   box-shadow:
-    0 26px 72px rgba(0, 0, 0, 0.42),
+    0 24px 72px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.56)),
+    0 8px 24px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.32)),
     inset 0 1px 0 rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(var(--subtitle-blur, 24px)) saturate(1.18);
   opacity: 1;
@@ -1470,21 +1472,31 @@ button:focus-visible {
   min-height: 86px;
   width: min(100%, 940px);
   padding: 8px 24px 10px;
-  border-color: transparent;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(31, 35, 43, calc(var(--subtitle-bg-opacity, 0.76) * 0.78)), rgba(10, 12, 16, calc(var(--subtitle-bg-opacity, 0.76) * 0.78))),
+    rgba(12, 14, 18, 0.52);
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.44)),
+    0 6px 18px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.24)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(calc(var(--subtitle-blur, 24px) * 0.62)) saturate(1.08);
 }
 
 .overlayStage.layer-default .floatingCaption:hover,
 .overlayStage.layer-default .floatingCaption:focus-visible {
   min-height: 86px;
-  border-color: transparent;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(31, 35, 43, calc(var(--subtitle-bg-opacity, 0.76) * 0.78)), rgba(10, 12, 16, calc(var(--subtitle-bg-opacity, 0.76) * 0.78))),
+    rgba(12, 14, 18, 0.52);
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.44)),
+    0 6px 18px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.24)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(calc(var(--subtitle-blur, 24px) * 0.62)) saturate(1.08);
 }
 
 .overlayStage.layer-controls .floatingCaption,
@@ -1562,13 +1574,6 @@ button:focus-visible {
   display: none;
 }
 
-.floatingCaption > .overlayToolbar {
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  justify-self: end;
-}
-
 .floatingCaption > .overlayError {
   grid-column: 1 / -1;
 }
@@ -1585,6 +1590,26 @@ button:focus-visible {
   grid-row: 2;
 }
 
+.captionTopChrome,
+.captionBottomChrome {
+  -webkit-app-region: no-drag;
+  position: relative;
+  z-index: 8;
+  display: flex;
+  width: 100%;
+}
+
+.captionTopChrome {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-content: flex-end;
+}
+
+.captionBottomChrome {
+  grid-column: 1 / -1;
+  justify-content: center;
+}
+
 .floatingCaption > .overlaySessionBar {
   grid-column: 1 / -1;
   justify-self: center;
@@ -1594,7 +1619,19 @@ button:focus-visible {
   grid-row: 3;
 }
 
+.floatingCaption.withChrome > .captionText {
+  grid-row: 2;
+}
+
+.floatingCaption.withChrome > .captionBottomChrome {
+  grid-row: 3;
+}
+
 .floatingCaption.withChrome.hasHistory > .overlaySessionBar {
+  grid-row: 4;
+}
+
+.floatingCaption.withChrome.hasHistory > .captionBottomChrome {
   grid-row: 4;
 }
 
@@ -1726,6 +1763,95 @@ button:focus-visible {
   background: rgba(255, 255, 255, 0.06);
   box-shadow: none;
   backdrop-filter: blur(16px) saturate(1.1);
+}
+
+.overlayResizeHandles {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  pointer-events: none;
+}
+
+.resizeHandle {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+}
+
+.resize-n,
+.resize-s {
+  left: 18px;
+  right: 18px;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.resize-n {
+  top: -5px;
+}
+
+.resize-s {
+  bottom: -5px;
+}
+
+.resize-e,
+.resize-w {
+  top: 18px;
+  bottom: 18px;
+  width: 10px;
+  cursor: ew-resize;
+}
+
+.resize-e {
+  right: -5px;
+}
+
+.resize-w {
+  left: -5px;
+}
+
+.resize-ne,
+.resize-nw,
+.resize-se,
+.resize-sw {
+  width: 20px;
+  height: 20px;
+}
+
+.resize-ne {
+  top: -6px;
+  right: -6px;
+  cursor: nesw-resize;
+}
+
+.resize-nw {
+  top: -6px;
+  left: -6px;
+  cursor: nwse-resize;
+}
+
+.resize-se {
+  right: -6px;
+  bottom: -6px;
+  cursor: nwse-resize;
+}
+
+.resize-sw {
+  bottom: -6px;
+  left: -6px;
+  cursor: nesw-resize;
+}
+
+.resize-se::after {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid rgba(255, 255, 255, 0.34);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.34);
+  content: "";
 }
 
 .overlayToolbar button,
