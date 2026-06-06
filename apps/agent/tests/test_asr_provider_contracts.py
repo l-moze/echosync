@@ -32,6 +32,14 @@ def test_asr_factory_builds_funasr_transcriber() -> None:
     assert transcriber.config.chunk_ms == 600
 
 
+def test_settings_default_disables_funasr_vad(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FUNASR_VAD_ENABLED", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.funasr_vad_enabled is False
+
+
 def test_asr_factory_injects_funasr_vad_detector_when_enabled() -> None:
     detector = StubVadDetector()
 

@@ -224,7 +224,7 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
    `services/asr/semantic_chunker.py` 已提供第一版 `SemanticAudioChunker`：支持 soft endpoint、hard cut 和 hard cut 后保留 overlap。这个完整 chunker 适合未来 batch ASR 或非流式模型。
 
-   FunASR 是流式 ASR，不应该为了等待完整语义块牺牲现有 320/600/900ms 推理窗口。因此 FunASR 接的是同文件里的 `SemanticEndpointTracker`：它不缓存音频，只在上游 `is_final=true`、`LiveKitSileroFrameVadDetector` 判定连续静音达到阈值，或连续语音超过 hard timeout 时，把当前 frame 标记为 final，触发 FunASR flush 和 cache reset。每次推理都会打印：
+   FunASR 是流式 ASR，不应该为了等待完整语义块牺牲现有 320/600/900ms 推理窗口。因此 FunASR 接的是同文件里的 `SemanticEndpointTracker`：它不缓存音频，只在上游 `is_final=true`、可选 `LiveKitSileroFrameVadDetector` 判定连续静音达到阈值，或连续语音超过 hard timeout 时，把当前 frame 标记为 final，触发 FunASR flush 和 cache reset。每次推理都会打印：
 
    ```text
    funasr_inference_chunk session_id=... start_ms=... end_ms=...
@@ -235,7 +235,16 @@ current='Feels funny to say that at normal speed,' incoming='but'
      boundary=soft|hard|stream_end active_audio_ms=... overlap_ms=...
    ```
 
-   算法收益：80ms 传输帧仍保持实时上行，但 FunASR 推理窗口继续按 320/600/900ms 聚合。以 balanced 的 600ms 窗口估算，模型调用频率从每秒 12.5 次传输帧降到约 1.67 次推理，理论调用压力降低约 86.7%；真实运行时直接看 `transport_frames` 和 `input_audio_ms` 验证是否达到预期。soft endpoint 的证据是 `funasr_semantic_boundary boundary=soft`，hard endpoint 的证据是 `funasr_semantic_boundary boundary=hard`。`livekit.plugins.silero` 已通过 adapter 接入，后续优化必须用真实视频链路日志比较 soft endpoint 命中率、ASR RTF 和字幕端到端延迟。
+   算法收益：80ms 传输帧仍保持实时上行，但 FunASR 推理窗口继续按 320/600/900ms 聚合。以 balanced 的 600ms 窗口估算，模型调用频率从每秒 12.5 次传输帧降到约 1.67 次推理，理论调用压力降低约 86.7%；真实运行时直接看 `transport_frames` 和 `input_audio_ms` 验证是否达到预期。soft endpoint 的证据是 `funasr_semantic_boundary boundary=soft`，hard endpoint 的证据是 `funasr_semantic_boundary boundary=hard`。`livekit.plugins.silero` 已通过 adapter 接入，但默认关闭，后续优化必须用真实视频链路日志比较 soft endpoint 命中率、ASR RTF 和字幕端到端延迟。
+
+   2026-06-06 使用 `.tmp/vad-funasr-30s.mp4` 复跑 FunASR：
+
+   | 模式 | 输出行 | committed | 平均 ASR 耗时 | 平均 ASR RTF | 最终 e2e RTF | Silero 慢实时警告 |
+   |------|------:|----------:|--------------:|-------------:|-------------:|------------------:|
+   | `FUNASR_VAD_ENABLED=false` | 38 | 9 | 93.0ms | 0.30 | 0.86 | 0 |
+   | `FUNASR_VAD_ENABLED=true` | 38 | 9 | 111.6ms | 0.36 | 0.79 | 10 |
+
+   这组数据说明：Silero adapter 当前没有让同一视频产生更多 committed 或更早 soft endpoint，且增加了本地推理开销；因此 MVP 默认 no-VAD，保留 hard timeout 做延迟底线。
 
 9. **前端空译文 fallback**
 
@@ -245,7 +254,7 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
 ### 仍需补的真实测量
 
-当前 MP4 已验证媒体解码与分帧。要完整定位“音频识别到字幕显示”的瓶颈，还需要用同一视频继续采集：
+当前 MP4 已验证媒体解码与分帧，也已补过一轮 FunASR no-VAD/VAD 对比。要完整定位“音频识别到字幕显示”的瓶颈，还需要用同一视频继续采集：
 
 | 层级 | 需要记录 | 日志/指标 |
 |------|----------|-----------|
@@ -290,14 +299,17 @@ current='Feels funny to say that at normal speed,' incoming='but'
 # 1. 只测媒体分帧，不进真实模型。
 .venv\Scripts\python.exe -m echosync_agent.asr_demo vido\videoplayback.mp4 --provider mock --chunk-ms 80 --source-lang en
 
-# 2. 测本地 FunASR：当前 .venv 缺 torch，需要先补 torch/torchaudio 后再跑。
-.venv\Scripts\python.exe -m echosync_agent.asr_demo vido\videoplayback.mp4 --provider funasr --chunk-ms 320 --source-lang en --device auto
+# 2. 测本地 FunASR，建议先截取 30-60 秒，分别比较 VAD 开关。
+$env:FUNASR_VAD_ENABLED='false'
+.venv\Scripts\python.exe -m echosync_agent.asr_demo .tmp\vad-funasr-30s.mp4 --provider funasr --chunk-ms 320 --source-lang en --device auto
+$env:FUNASR_VAD_ENABLED='true'
+.venv\Scripts\python.exe -m echosync_agent.asr_demo .tmp\vad-funasr-30s.mp4 --provider funasr --chunk-ms 320 --source-lang en --device auto
 
 # 3. 测 Voxtral 云端：建议先截取前 30-60 秒，避免整段 8 分钟样本消耗过高。
 .venv\Scripts\python.exe -m echosync_agent.asr_demo vido\videoplayback.mp4 --provider voxtral --chunk-ms 80 --source-lang en --voxtral-delay-ms 480
 ```
 
-注意：当前 `.venv` 中 `funasr` / `modelscope` 已存在，但 `torch` 未安装；全局 Python 有 `torch`，但不建议混用全局环境测延迟，否则数据会混入环境差异。
+注意：FunASR 结果必须标明模型、设备、VAD 开关和样本长度；当前 `.env` 默认模型是 `paraformer-zh-streaming`，用于英语样本时准确率不代表英文 ASR 上限，只能用于链路延迟和分段行为评估。
 
 ## 当前性能瓶颈排序
 

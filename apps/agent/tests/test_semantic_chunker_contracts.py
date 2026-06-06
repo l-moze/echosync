@@ -111,12 +111,47 @@ def test_semantic_endpoint_tracker_marks_soft_boundary_from_vad_silence() -> Non
     assert marks[-1].active_audio_ms == 400
 
 
+def test_semantic_endpoint_tracker_keeps_hard_timeout_when_vad_starts_silent() -> None:
+    tracker = SemanticEndpointTracker(
+        SemanticChunkingConfig(
+            min_chunk_ms=200,
+            max_chunk_ms=600,
+            overlap_ms=200,
+            vad_silence_ms=200,
+        ),
+        vad_detector=AlwaysSilentVadDetector(),
+    )
+
+    marks = [
+        tracker.mark(frame)
+        for frame in asyncio.run(
+            _collect(
+                _frames(
+                    [
+                        (0, 300, False),
+                        (300, 600, False),
+                    ]
+                )
+            )
+        )
+    ]
+
+    assert [mark.boundary for mark in marks] == ["none", "hard"]
+    assert marks[-1].frame.is_final is True
+    assert marks[-1].active_audio_ms == 600
+
+
 class StartMsVadDetector(FrameVadDetector):
     def __init__(self, *, silence_from_ms: int) -> None:
         self.silence_from_ms = silence_from_ms
 
     def is_speech(self, frame: AudioFrame) -> bool:
         return frame.start_ms < self.silence_from_ms
+
+
+class AlwaysSilentVadDetector(FrameVadDetector):
+    def is_speech(self, frame: AudioFrame) -> bool:
+        return False
 
 
 async def _frames(items: list[tuple[int, int, bool]]) -> AsyncIterator[AudioFrame]:

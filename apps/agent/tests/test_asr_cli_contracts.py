@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from echosync_agent.asr_demo import build_arg_parser, build_transcriber
+from echosync_agent.services.asr.funasr_transcriber import FunAsrTranscriber
 from echosync_agent.services.asr.voxtral_transcriber import VoxtralRealtimeTranscriber
 
 
@@ -80,3 +81,28 @@ def test_asr_demo_uses_voxtral_default_model_when_model_is_not_supplied() -> Non
 
     assert isinstance(transcriber, VoxtralRealtimeTranscriber)
     assert transcriber.config.model == "voxtral-mini-transcribe-realtime-2602"
+
+
+def test_asr_demo_preserves_funasr_vad_env_options(monkeypatch) -> None:
+    monkeypatch.setenv("FUNASR_VAD_ENABLED", "false")
+    monkeypatch.setenv("FUNASR_VAD_SILENCE_MS", "240")
+    monkeypatch.setenv("FUNASR_VAD_ACTIVATION_THRESHOLD", "0.42")
+
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        [
+            "lecture.mp4",
+            "--provider",
+            "funasr",
+            "--chunk-ms",
+            "600",
+            "--device",
+            "cpu",
+        ]
+    )
+
+    transcriber = build_transcriber(args)
+
+    assert isinstance(transcriber, FunAsrTranscriber)
+    assert transcriber.vad_detector is None
+    assert transcriber.config.vad_silence_ms == 240

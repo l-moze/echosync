@@ -33,7 +33,7 @@ def test_livekit_silero_detector_updates_cached_speech_state_from_events() -> No
     asyncio.run(run())
 
 
-def test_livekit_silero_detector_uses_probability_for_inference_events() -> None:
+def test_livekit_silero_detector_keeps_livekit_speaking_state_for_inference_events() -> None:
     async def run() -> None:
         stream = FakeVadStream()
         detector = LiveKitSileroFrameVadDetector(
@@ -45,7 +45,7 @@ def test_livekit_silero_detector_uses_probability_for_inference_events() -> None
         await stream.emit(FakeVadEvent(type="inference_done", probability=0.8, speaking=False))
         assert detector.is_speech(_audio_frame(seq=2)) is True
         await stream.emit(FakeVadEvent(type="inference_done", probability=0.2, speaking=True))
-        assert detector.is_speech(_audio_frame(seq=3)) is False
+        assert detector.is_speech(_audio_frame(seq=3)) is True
 
         await detector.aclose()
 

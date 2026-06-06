@@ -27,7 +27,7 @@ class Settings:
     voxtral_model: str
     voxtral_target_delay_ms: int
     asr_latency_mode: str = "balanced"
-    funasr_vad_enabled: bool = True
+    funasr_vad_enabled: bool = False
     funasr_vad_silence_ms: int = 300
     funasr_vad_activation_threshold: float = 0.5
     glossary_enabled: bool = True
@@ -53,7 +53,7 @@ class Settings:
             voxtral_model=getenv("VOXTRAL_MODEL", "voxtral-mini-transcribe-realtime-2602"),
             voxtral_target_delay_ms=int(getenv("VOXTRAL_TARGET_DELAY_MS", "1000")),
             asr_latency_mode=getenv("ECHOSYNC_ASR_LATENCY_MODE", "balanced"),
-            funasr_vad_enabled=getenv("FUNASR_VAD_ENABLED", "true").lower()
+            funasr_vad_enabled=getenv("FUNASR_VAD_ENABLED", "false").lower()
             in ("true", "1", "yes"),
             funasr_vad_silence_ms=int(getenv("FUNASR_VAD_SILENCE_MS", "300")),
             funasr_vad_activation_threshold=float(

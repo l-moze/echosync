@@ -80,7 +80,9 @@ class LiveKitSileroFrameVadDetector(FrameVadDetector):
             elif event_type == "inference_done":
                 probability = getattr(event, "probability", None)
                 if probability is not None:
-                    self._is_speech = float(probability) >= self._activation_threshold
+                    self._is_speech = bool(getattr(event, "speaking", False)) or (
+                        float(probability) >= self._activation_threshold
+                    )
                 else:
                     self._is_speech = bool(getattr(event, "speaking", self._is_speech))
 

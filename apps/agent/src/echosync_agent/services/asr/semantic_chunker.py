@@ -92,14 +92,13 @@ class SemanticEndpointTracker:
         self.vad_detector = vad_detector
         self._active_start_ms: int | None = None
         self._silence_start_ms: int | None = None
+        self._speech_seen = False
 
     def mark(self, frame: AudioFrame) -> SemanticFrame:
         is_speech = self._is_speech(frame)
-        if self._active_start_ms is None and is_speech is False and not frame.is_final:
-            return SemanticFrame(frame=frame, boundary="none", active_audio_ms=0)
-
         if self._active_start_ms is None:
             self._active_start_ms = frame.start_ms
+            self._speech_seen = self.vad_detector is None
 
         active_audio_ms = max(frame.end_ms - self._active_start_ms, 0)
         if frame.is_final:
@@ -107,20 +106,22 @@ class SemanticEndpointTracker:
             return SemanticFrame(frame=frame, boundary="soft", active_audio_ms=active_audio_ms)
 
         if is_speech is False:
-            if self._silence_start_ms is None:
-                self._silence_start_ms = frame.start_ms
-            silence_ms = max(frame.end_ms - self._silence_start_ms, 0)
-            if (
-                active_audio_ms >= self.config.min_chunk_ms
-                and silence_ms >= self.config.vad_silence_ms
-            ):
-                self._reset()
-                return SemanticFrame(
-                    frame=replace(frame, is_final=True),
-                    boundary="soft",
-                    active_audio_ms=active_audio_ms,
-                )
+            if self._speech_seen:
+                if self._silence_start_ms is None:
+                    self._silence_start_ms = frame.start_ms
+                silence_ms = max(frame.end_ms - self._silence_start_ms, 0)
+                if (
+                    active_audio_ms >= self.config.min_chunk_ms
+                    and silence_ms >= self.config.vad_silence_ms
+                ):
+                    self._reset()
+                    return SemanticFrame(
+                        frame=replace(frame, is_final=True),
+                        boundary="soft",
+                        active_audio_ms=active_audio_ms,
+                    )
         elif is_speech is True:
+            self._speech_seen = True
             self._silence_start_ms = None
 
         if active_audio_ms >= self.config.max_chunk_ms:
@@ -142,6 +143,7 @@ class SemanticEndpointTracker:
     def _reset(self) -> None:
         self._active_start_ms = None
         self._silence_start_ms = None
+        self._speech_seen = False
 
 
 def _build_chunk(
