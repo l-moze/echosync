@@ -147,6 +147,29 @@ def test_realtime_session_accepts_binary_pcm_audio_frames() -> None:
     asyncio.run(_run_realtime_session_binary_pcm_frame_test())
 
 
+def test_realtime_session_accepts_audio_final_control_message(monkeypatch: Any) -> None:
+    captured_frames: list[Any] = []
+
+    def fake_build_demo_pipeline(**_kwargs: Any) -> tuple[object, object]:
+        return _CaptureFramesPipeline(captured_frames), object()
+
+    monkeypatch.setattr(
+        "echosync_agent.transport.realtime_ws.build_demo_pipeline",
+        fake_build_demo_pipeline,
+    )
+
+    asyncio.run(_run_realtime_session_audio_final_control_test())
+
+    assert len(captured_frames) == 2
+    assert captured_frames[0].pcm == b"speech"
+    assert captured_frames[0].is_final is False
+    assert captured_frames[1].pcm == b""
+    assert captured_frames[1].is_final is True
+    assert captured_frames[1].seq == 7
+    assert captured_frames[1].start_ms == 160
+    assert captured_frames[1].end_ms == 160
+
+
 def test_realtime_transport_metrics_aggregates_and_resets_audio_frames() -> None:
     metrics = _RealtimeTransportMetrics(log_interval_sec=999)
     metrics.record_audio_frame(
@@ -371,6 +394,48 @@ async def _run_realtime_session_binary_pcm_frame_test() -> None:
         payload for event_type, payload in hub.events if event_type == "translation.partial"
     ]
     assert translation_events[0]["source_text"] == "Hello binary realtime"
+
+
+async def _run_realtime_session_audio_final_control_test() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="mock",
+        translator_provider="mock",
+        glossary_enabled=False,
+    )
+    websocket = _MemoryWebSocket(
+        [
+            {
+                "type": "audio.start",
+                "source_lang": "en",
+                "sample_rate": 16_000,
+                "channels": 1,
+                "source_kind": "network_stream",
+            },
+            _binary_audio_frame(
+                pcm=b"speech",
+                seq=7,
+                start_ms=80,
+                end_ms=160,
+                sent_at_ms=12345,
+            ),
+            {
+                "type": "audio.final",
+                "seq": 7,
+                "start_ms": 160,
+                "end_ms": 160,
+            },
+            {"type": "audio.end"},
+        ]
+    )
+    session = _RealtimeWebSocketSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        session_id="sess_audio_final",
+        settings=settings,
+        caption_event_bus=CaptionEventHub(),
+    )
+
+    await session.run()
 
 
 async def _run_realtime_session_user_stop_cancels_pipeline_test() -> None:
@@ -636,6 +701,15 @@ class _NoopPipeline:
     async def run(self, frames: Any) -> None:
         async for _frame in frames:
             pass
+
+
+class _CaptureFramesPipeline:
+    def __init__(self, captured_frames: list[Any]) -> None:
+        self.captured_frames = captured_frames
+
+    async def run(self, frames: Any) -> None:
+        async for frame in frames:
+            self.captured_frames.append(frame)
 
 
 def _b64(text: str) -> str:

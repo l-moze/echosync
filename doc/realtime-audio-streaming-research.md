@@ -158,12 +158,13 @@ Electron getDisplayMedia(loopback) / getUserMedia(microphone)
   -> downmix/resample
   -> audio-gate 80ms chunk
   -> pcm16.binary.v1 WebSocket binary frame
+  -> audio.final JSON control frame on silence boundary
   -> Python receive_bytes
   -> AudioFrame
   -> Voxtral/FunASR stream
 ```
 
-仍然存在的问题是 `ScriptProcessorNode` 还在 renderer 主线程运行、静音期间尚未持续发送 silence frame/keepalive、混音和文件回放源还不是完整生产能力。
+`audio-gate` 已把音频正文发送和 final/turn 边界拆开：活跃音频 chunk 立即发送，连续静音后用 `audio.final` 控制消息触发 Agent 侧 ASR flush。仍然存在的问题是 `ScriptProcessorNode` 还在 renderer 主线程运行、云端 ASR 的 silence frame/keepalive 策略尚未按 provider 拆分、混音和文件回放源还不是完整生产能力。
 
 ## 推荐演进路线
 
@@ -176,7 +177,7 @@ Electron getDisplayMedia(loopback) / getUserMedia(microphone)
 - PCM：16kHz、mono、signed int16 little-endian。
 - frame duration：先用 80ms；如果 FunASR/Voxtral 表现不稳，再试 100ms 或 120ms。
 - WebSocket：控制消息 JSON text frame，音频 binary frame。
-- silence：不要直接停发；根据 AWS/Deepgram经验，静音期间仍应维持流，或者用明确 KeepAlive，不要让 ASR 误以为流断了。
+- silence：本地 FunASR 路径可以静音停发并用 `audio.final` 表达 endpoint；云端 streaming provider 需要按供应商要求发送 silence frame 或 KeepAlive，不要让 ASR 误以为流断了。
 - telemetry：前端记录 capture time、encode time、send time、`bufferedAmount`；后端记录 receive time、queue depth、frame duration、p50/p95 transport latency。
 
 协议草案：
@@ -198,6 +199,18 @@ header + pcm payload
 text frame:
 { "type": "audio.end" }
 ```
+
+2026-06-06 更新：当前协议已增加 `audio.final` JSON 控制帧，用于把 endpoint/final 从 binary PCM payload 中拆出来：
+
+```text
+binary frame:
+header + speech pcm payload
+
+text frame:
+{ "type": "audio.final", "seq": 42, "start_ms": 1840, "end_ms": 1840 }
+```
+
+Agent 将 `audio.final` 转为空 PCM 的 `AudioFrame(is_final=True)`，这样 FunASR 可以 flush pending buffer，但不会把静音正文继续送入 ASR。
 
 header 可以先用 24 bytes 固定小头：
 
@@ -242,13 +255,14 @@ u32 sent_at_ms_low
 
 - Desktop realtime client 在 `audio.start` 声明 `protocol="pcm16.binary.v1"` 和 `frame_duration_ms=80`。
 - 音频正文改为 WebSocket binary frame，固定 24 bytes header 后接 PCM16 payload。
+- 连续静音后的 final/turn 边界改为 `audio.final` JSON 控制帧，活跃音频不再为了 final 标记额外等待一帧。
 - Agent `/v1/realtime/sessions/{session_id}` 同时兼容旧 JSON `audio.chunk` 和新 binary frame。
 - Agent 每秒聚合打印 `audio_stream_metrics`，包含 frames、audio_ms、bytes、avg/p95 transport latency 和 queue depth。
 
 仍未落地：
 
 - AudioWorklet 采集/重采样。
-- 静音期间持续 silence frame 或 keepalive。
+- 云端 provider 的 silence frame / KeepAlive 策略。
 - Windows 原生 WASAPI sidecar。
 
 ## 建议的下一步实现顺序

@@ -236,6 +236,16 @@ class _RealtimeWebSocketSession:
                 await self.queue.put(frame)
                 self._record_audio_frame(frame)
             return False
+        if message_type == "audio.final":
+            frame = self._build_audio_final_frame(message)
+            await self.queue.put(frame)
+            logger.info(
+                "audio_stream_final_marker session_id=%s seq=%d end_ms=%d",
+                self.session_id,
+                frame.seq,
+                frame.end_ms,
+            )
+            return False
         if message_type in {"audio.end", "asr.end"}:
             self._stop_reason = None if message.get("reason") is None else str(message["reason"])
             logger.info(
@@ -309,6 +319,27 @@ class _RealtimeWebSocketSession:
                 else str(message["device_id"])
             ),
             is_final=bool(message.get("is_final", False)),
+        )
+
+    def _build_audio_final_frame(self, message: dict[str, Any]) -> AudioFrame:
+        end_ms = int(message.get("end_ms", message.get("start_ms", self._queued_audio_ms)))
+        start_ms = int(message.get("start_ms", end_ms))
+        return AudioFrame(
+            session_id=self.session_id,
+            seq=int(message.get("seq", self._chunk_count)),
+            pcm=b"",
+            sample_rate=int(message.get("sample_rate", self.sample_rate)),
+            channels=int(message.get("channels", self.channels)),
+            start_ms=start_ms,
+            end_ms=end_ms,
+            source_lang=str(message.get("source_lang", self.source_lang)),
+            source_kind=AudioSourceKind(str(message.get("source_kind", self.source_kind))),
+            device_id=(
+                self.device_id
+                if message.get("device_id") is None
+                else str(message["device_id"])
+            ),
+            is_final=True,
         )
 
     async def _build_binary_audio_frame(self, packet: bytes) -> AudioFrame | None:

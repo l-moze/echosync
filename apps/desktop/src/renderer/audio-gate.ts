@@ -5,12 +5,22 @@ export type AudioLevel = {
 
 type AudioSamples = Float32Array<ArrayBufferLike>;
 
-export type AudioGateChunk = {
+export type AudioGateAudioChunk = {
+  type: "audio";
   samples: AudioSamples;
   startSample: number;
   endSample: number;
-  isFinal: boolean;
+  isFinal: false;
 };
+
+export type AudioGateFinalMarker = {
+  type: "final";
+  startSample: number;
+  endSample: number;
+  isFinal: true;
+};
+
+export type AudioGateChunk = AudioGateAudioChunk | AudioGateFinalMarker;
 
 export type AudioGateOptions = {
   sampleRate: number;
@@ -65,7 +75,7 @@ export function createAudioGate({
   let nextSample = 0;
   let active = false;
   let quietSamples = 0;
-  let pending: AudioGateChunk | null = null;
+  let lastSpeechEndSample: number | null = null;
 
   function push(samples: AudioSamples) {
     buffer.push(samples);
@@ -83,12 +93,17 @@ export function createAudioGate({
     if (buffer.length() > 0) {
       processChunk(buffer.take(buffer.length()), output);
     }
-    if (pending) {
-      output.push({ ...pending, isFinal: true });
-      pending = null;
+    if (active && lastSpeechEndSample !== null) {
+      output.push({
+        endSample: lastSpeechEndSample,
+        isFinal: true,
+        startSample: lastSpeechEndSample,
+        type: "final"
+      });
     }
     active = false;
     quietSamples = 0;
+    lastSpeechEndSample = null;
     return output;
   }
 
@@ -108,28 +123,33 @@ export function createAudioGate({
     if (active && !loudEnoughToContinue) {
       quietSamples += samples.length;
       if (quietSamples >= silenceSamples) {
-        if (pending) {
-          output.push({ ...pending, isFinal: true });
-          pending = null;
+        if (lastSpeechEndSample !== null) {
+          output.push({
+            endSample: lastSpeechEndSample,
+            isFinal: true,
+            startSample: lastSpeechEndSample,
+            type: "final"
+          });
         }
         active = false;
         quietSamples = 0;
+        lastSpeechEndSample = null;
         return;
       }
+      return;
     } else {
       active = true;
       quietSamples = 0;
     }
 
-    if (pending) {
-      output.push({ ...pending, isFinal: false });
-    }
-    pending = {
+    lastSpeechEndSample = endSample;
+    output.push({
       endSample,
       isFinal: false,
       samples,
-      startSample
-    };
+      startSample,
+      type: "audio"
+    });
   }
 
   return { flush, push };

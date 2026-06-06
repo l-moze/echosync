@@ -8,6 +8,7 @@
 │                                                                  │
 │  /v1/realtime/sessions/{session_id}                              │
 │    Desktop 发送 audio.start + pcm16.binary.v1 binary frame       │
+│    静音边界用 audio.final JSON 控制帧表达                         │
 │    → AudioFrame                                                  │
 │    → MockTranscriber / FunASR / Voxtral → TranscriptSegment      │
 │    → MockTranslator / DeepSeek → TranslationSegment              │
@@ -40,7 +41,7 @@
 
 ## 当前状态
 
-当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传前通过主进程读取 Agent `/v1/realtime/capabilities`，确认默认 provider、密钥和 SDK 状态；通过预检后才采集音频，发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider` 或 `translation_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`，Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
+当前 Desktop 已经不只是被动接收 `/v1/caption/events`。renderer 会在开始同传前通过主进程读取 Agent `/v1/realtime/capabilities`，确认默认 provider、密钥和 SDK 状态；通过预检后才采集音频，发送 JSON 控制帧 `audio.start`，声明 `asr_latency_mode`、采样率和源信息；只有用户显式选择 provider 时才声明 `asr_provider` 或 `translation_provider`。随后音频正文会转成 `pcm16.binary.v1` 二进制 WebSocket frame 发送到 `/v1/realtime/sessions/{session_id}`；连续静音达到门控阈值后，renderer 发送 `audio.final` JSON 控制帧，Agent 将其转成空 PCM 的 `is_final=True` frame，触发 ASR flush/cache reset。Agent 再通过同一个 `CaptionEventHub` 推字幕事件。
 
 后端仍兼容旧 JSON `audio.chunk` / `pcm_base64`，主要用于旧测试、纯 ASR 调试和过渡期兼容；当前 Desktop 真实链路默认不走 base64 JSON。
 
@@ -403,15 +404,23 @@ translation_delta_count
 
 同时 `CaptionEventHub.publish()` 已给字幕事件写入 `published_at_ms`，Desktop renderer 侧可计算 `agentToRendererMs`。下一步的 telemetry 重点应转向采集/编码/发送、ASR 首 delta、overlay rendered 等剩余边界，而不是继续把“翻译首 token 缺指标”当成当前 P0。
 
-### P1：`audio-gate` 一帧 lookahead 固定增加约 80ms
+### P1：`audio-gate` 一帧 lookahead 固定增加约 80ms（已完成第一轮修复）
 
-Desktop 真实链路 `AUDIO_FRAME_DURATION_MS=80`。`audio-gate` 为了判断上一块是否要标 `isFinal`，当前会把一块活跃音频保存在 `pending`，等下一块到来时才发送上一块。现有测试也验证了这个行为。
+Desktop 真实链路 `AUDIO_FRAME_DURATION_MS=80`。此前 `audio-gate` 为了判断上一块是否要标 `isFinal`，会把一块活跃音频保存在 `pending`，等下一块到来时才发送上一块。
 
-收益：可以准确把最后一块活跃音频标成 final。
+已完成第一轮修复：活跃音频 chunk 立即发送，不再等待下一块；连续静音后输出 `type="final"` marker，`realtime-audio-client` 将它发送为 `audio.final` JSON 控制消息。Agent 收到后生成空 PCM 的 `is_final=True` frame，复用现有 ASR flush/cache reset 逻辑。
 
-代价：所有活跃音频 chunk 固定增加一帧等待，约 `80ms`。
+收益：活跃音频正文不再承担一帧 lookahead，按目标 80ms frame 立即进入 WebSocket；final/turn 边界仍能在静音后表达。
 
-建议优化方向：把“实时音频发送”和“final/turn 边界”拆开。音频 chunk 立即发送，final 通过单独控制事件或低成本 silence/keepalive 策略表达；否则为了 final 语义牺牲了每一帧延迟。
+验证证据：
+
+```text
+npm test -- audio-gate.test.ts realtime-audio-client.test.ts
+# 2 个测试文件，17 个测试通过
+
+python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realtime_session_accepts_audio_final_control_message -q
+# 1 passed
+```
 
 ### P1：`ScriptProcessorNode(2048)` 是采集线程抖动来源
 
@@ -476,12 +485,12 @@ overlay_rendered_at
 | 文件 | 变更 |
 |------|------|
 | `transport/caption_ws.py` | `run_caption_server()` 传 producer；WS handler 每次连接重新运行 producer |
-| `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；`realtime.error` 与 `realtime.done` 保持互斥 |
+| `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；支持 `audio.final` 控制帧；`realtime.error` 与 `realtime.done` 保持互斥 |
 | `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数并订阅 |
 | `services/media/ffmpeg_audio_source.py` | MP4/音频文件通过 ffmpeg stdout 流式读取并在线分帧，避免整文件解码阻塞首帧 |
 | `services/asr/factory.py` | FunASR 与 Voxtral 都按 `asr_latency_mode` 映射实际推理窗口/目标延迟 |
 | `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；应用退出时清理重连计时器并关闭 WS |
-| `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame；默认不覆盖后端 ASR provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
+| `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame + `audio.final` 控制帧；默认不覆盖后端 ASR provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
 | `desktop/src/renderer/main.tsx` | 移除 demoEvents，新增 `hasRealEvents` 状态；收到当前会话 `realtime.error` 时停止本地音频并回收采集状态 |
 | `desktop/src/shared/subtitle-style-state.ts` | 字幕显示模式迁移为双语、主字幕、翻译字幕三态，兼容旧 `line/split` 配置 |
 

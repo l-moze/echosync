@@ -108,7 +108,7 @@ export function createRealtimeAudioClient({
         const mono = downmixToMono(channels);
         const resampled = resampleLinear(mono, audioContext.sampleRate, TARGET_SAMPLE_RATE);
         for (const chunk of audioGate.push(resampled)) {
-          sendAudioChunk(chunk);
+          sendAudioGateOutput(chunk);
         }
       };
 
@@ -130,7 +130,7 @@ export function createRealtimeAudioClient({
 
     if (socket?.readyState === WebSocket.OPEN) {
       for (const chunk of audioGate.flush()) {
-        sendAudioChunk(chunk);
+        sendAudioGateOutput(chunk);
       }
       socket.send(JSON.stringify({ type: "audio.end", reason: "user_stop" }));
     }
@@ -160,8 +160,24 @@ export function createRealtimeAudioClient({
     stop
   };
 
-  function sendAudioChunk(chunk: AudioGateChunk) {
+  function sendAudioGateOutput(chunk: AudioGateChunk) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    if (chunk.type === "final") {
+      if (seq <= 0) {
+        return;
+      }
+      const endMs = samplesToMs(chunk.endSample);
+      socket.send(
+        JSON.stringify({
+          type: "audio.final",
+          seq,
+          start_ms: endMs,
+          end_ms: endMs
+        })
+      );
       return;
     }
 

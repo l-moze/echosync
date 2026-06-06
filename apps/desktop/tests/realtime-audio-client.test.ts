@@ -384,6 +384,62 @@ describe("renderer realtime audio client", () => {
     expect(view.getUint32(20, true)).toBe(123456);
     await client.stop();
   });
+
+  it("sends audio final as a control message after gate silence", async () => {
+    const audioContext = new FakeAudioContext();
+    FakeAudioContext.nextInstance = audioContext;
+    const stream = createFakeMediaStream();
+    const sockets: FakeWebSocket[] = [];
+    vi.stubGlobal("WebSocket", class extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    });
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getDisplayMedia: vi.fn().mockResolvedValue(stream)
+      }
+    });
+    vi.stubGlobal("window", {
+      AudioContext: FakeAudioContext,
+      webkitAudioContext: undefined
+    });
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+
+    const client = createRealtimeAudioClient({
+      endpointBaseUrl: "ws://agent/realtime",
+      sessionId: "sess_audio_final",
+      sourceId: "windows-system"
+    });
+
+    await client.start();
+    audioContext.emitAudioProcess(new Float32Array(11_520).fill(0.25));
+
+    const binaryFramesBeforeSilence = sockets[0]?.sentMessages.filter(
+      (message) => message instanceof ArrayBuffer
+    );
+    expect(binaryFramesBeforeSilence).toHaveLength(3);
+    expect(
+      binaryFramesBeforeSilence?.every(
+        (message) => new DataView(message as ArrayBuffer).getUint16(6, true) === 0
+      )
+    ).toBe(true);
+
+    audioContext.emitAudioProcess(new Float32Array(30_720));
+
+    const finalMessage = sockets[0]?.sentMessages
+      .filter((message): message is string => typeof message === "string")
+      .map((message) => JSON.parse(message))
+      .find((message) => message.type === "audio.final");
+    expect(finalMessage).toMatchObject({
+      end_ms: 240,
+      seq: 3,
+      start_ms: 240,
+      type: "audio.final"
+    });
+    await client.stop();
+  });
 });
 
 class FakeWebSocket {
