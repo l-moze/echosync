@@ -75,6 +75,29 @@ def test_caption_update_from_translated_segment_includes_target_regions() -> Non
     }
 
 
+def test_caption_update_from_committed_translation_stays_stable_until_commit_event() -> None:
+    event = caption_update_from_translation(
+        TranslationSegment(
+            session_id="sess_update",
+            segment_id="seg_live",
+            rev=5,
+            source_rev=5,
+            start_ms=100,
+            end_ms=1_400,
+            source_lang="en",
+            target_lang="zh-CN",
+            source_text="I think this module should work",
+            target_text="我觉得这个模块应该能用",
+            status=SegmentStatus.COMMITTED,
+            stability=1.0,
+            source_stable_text="I think this module should work",
+            target_stable_text="我觉得这个模块应该能用",
+        )
+    )
+
+    assert event["state"] == "stable"
+
+
 def test_caption_update_from_commit_is_final() -> None:
     event = caption_update_from_commit(
         SegmentCommit(

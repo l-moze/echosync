@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
 from echosync_agent.domain import AudioFrame
 from echosync_agent.runtime import build_demo_pipeline
@@ -25,6 +26,10 @@ def test_pipeline_emits_translation_and_commit_events() -> None:
     asyncio.run(_assert_pipeline_emits_translation_and_commit_events())
 
 
+def test_pipeline_forwards_caption_update_events_to_caption_event_bus() -> None:
+    asyncio.run(_assert_pipeline_forwards_caption_update_events_to_caption_event_bus())
+
+
 async def _assert_pipeline_emits_translation_and_commit_events() -> None:
     pipeline, event_bus = build_demo_pipeline(_mock_settings())
 
@@ -33,16 +38,49 @@ async def _assert_pipeline_emits_translation_and_commit_events() -> None:
     event_types = [event_type for event_type, _ in event_bus.events]
     assert event_types == [
         "transcript.partial",
+        "caption_update",
         "translation.partial",
+        "caption_update",
         "translation.partial",
+        "caption_update",
         "segment.commit",
+        "caption_update",
     ]
     assert event_bus.events[0][1]["source_text"] == "Vector database latency matters."
     assert event_bus.events[0][1]["target_text"] == ""
-    assert event_bus.events[1][1]["source_text"] == "Vector database latency matters."
-    assert event_bus.events[1][1]["target_text"] == "[zh]"
-    assert event_bus.events[2][1]["target_text"].startswith("[zh] Vector")
-    assert event_bus.events[3][1]["final"] is True
+    first_update = event_bus.events[1][1]
+    assert first_update["type"] == "caption_update"
+    assert first_update["state"] == "stable"
+    assert first_update["source"]["full_text"] == "Vector database latency matters."
+    assert "target" not in first_update
+    assert event_bus.events[2][1]["source_text"] == "Vector database latency matters."
+    assert event_bus.events[2][1]["target_text"] == "[zh]"
+    assert event_bus.events[4][1]["target_text"].startswith("[zh] Vector")
+    assert event_bus.events[6][1]["final"] is True
+    final_update = event_bus.events[7][1]
+    assert final_update["type"] == "caption_update"
+    assert final_update["state"] == "final"
+    assert final_update["target"]["full_text"].startswith("[zh] Vector")
+
+
+async def _assert_pipeline_forwards_caption_update_events_to_caption_event_bus() -> None:
+    hub = _MemoryCaptionHub()
+    pipeline, _event_bus = build_demo_pipeline(_mock_settings(), caption_event_bus=hub)
+
+    await pipeline.run(_frames())
+
+    event_types = [event_type for event_type, _payload in hub.events]
+    assert event_types == [
+        "transcript.partial",
+        "caption_update",
+        "translation.partial",
+        "caption_update",
+        "translation.partial",
+        "caption_update",
+        "segment.commit",
+        "caption_update",
+    ]
+    assert hub.events[1][1]["source"]["full_text"] == "Vector database latency matters."
 
 
 def _mock_settings() -> Settings:
@@ -66,3 +104,11 @@ def _mock_settings() -> Settings:
         glossary_domain="",
         glossary_terms_dir="",
     )
+
+
+class _MemoryCaptionHub:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    async def publish(self, event_type: str, payload: dict[str, Any]) -> None:
+        self.events.append((event_type, payload))

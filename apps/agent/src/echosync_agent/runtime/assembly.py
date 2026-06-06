@@ -55,6 +55,7 @@ def _subscribe_caption_pusher(event_bus: InMemoryEventBus, caption_event_bus: ob
     for event_type in (
         "transcript.partial",
         "translation.partial",
+        "caption_update",
         "translation.patch",
         "segment.commit",
     ):

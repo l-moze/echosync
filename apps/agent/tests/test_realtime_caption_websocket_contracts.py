@@ -59,7 +59,14 @@ def test_realtime_websocket_publishes_translated_captions_to_caption_clients() -
         realtime.send_json({"type": "audio.end"})
 
         done: dict[str, Any] = realtime.receive_json()
-        received = [captions.receive_json() for _ in range(4)]
+        received: list[dict[str, Any]] = []
+        for _ in range(20):
+            event = captions.receive_json()
+            received.append(event)
+            if event["type"] == "caption_update" and event.get("state") == "final":
+                break
+        else:
+            raise AssertionError("expected final caption_update before websocket test timeout")
 
     assert done == {"type": "realtime.done", "session_id": "sess_realtime"}
     first_caption = received[0]
@@ -67,10 +74,23 @@ def test_realtime_websocket_publishes_translated_captions_to_caption_clients() -
     assert first_caption["session_id"] == "sess_realtime"
     assert first_caption["source_text"] == "Hello realtime captions"
     assert first_caption["target_text"] == ""
+    first_update = received[1]
+    assert first_update["type"] == "caption_update"
+    assert first_update["segment_id"] == first_caption["segment_id"]
+    assert first_update["source"]["full_text"] == "Hello realtime captions"
     final_caption = next(
         event for event in received if event.get("target_text") == "[zh] Hello realtime captions"
     )
     assert final_caption["type"] == "translation.partial"
+    commit_index = next(
+        index for index, event in enumerate(received) if event["type"] == "segment.commit"
+    )
+    assert received[commit_index]["target_text"] == "[zh] Hello realtime captions"
+    final_update = received[-1]
+    assert final_update["type"] == "caption_update"
+    assert final_update["state"] == "final"
+    assert final_update["segment_id"] == received[commit_index]["segment_id"]
+    assert final_update["target"]["full_text"] == "[zh] Hello realtime captions"
 
 
 def test_realtime_websocket_rejects_mock_asr_for_real_audio_sources() -> None:

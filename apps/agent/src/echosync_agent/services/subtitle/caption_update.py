@@ -56,6 +56,4 @@ def caption_update_from_commit(commit: SegmentCommit) -> dict[str, Any]:
 def _state_from_status(status: SegmentStatus) -> str:
     if status == SegmentStatus.PARTIAL:
         return "interim"
-    if status == SegmentStatus.STABLE:
-        return "stable"
-    return "final"
+    return "stable"

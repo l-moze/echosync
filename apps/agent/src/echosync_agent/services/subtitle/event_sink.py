@@ -6,6 +6,10 @@ from typing import Any
 
 from echosync_agent.domain import SegmentCommit, SubtitlePatch, TranslationSegment
 from echosync_agent.interfaces import EventBus, SubtitleSink
+from echosync_agent.services.subtitle.caption_update import (
+    caption_update_from_commit,
+    caption_update_from_translation,
+)
 
 
 class EventSubtitleSink(SubtitleSink):
@@ -24,17 +28,20 @@ class EventSubtitleSink(SubtitleSink):
                 "transcript.partial",
                 _payload("transcript.partial", segment),
             )
+            await self.event_bus.publish("caption_update", caption_update_from_translation(segment))
             return
         await self.event_bus.publish(
             "translation.partial",
             _payload("translation.partial", segment),
         )
+        await self.event_bus.publish("caption_update", caption_update_from_translation(segment))
 
     async def publish_patch(self, patch: SubtitlePatch) -> None:
         await self.event_bus.publish("translation.patch", _payload("translation.patch", patch))
 
     async def publish_commit(self, commit: SegmentCommit) -> None:
         await self.event_bus.publish("segment.commit", _payload("segment.commit", commit))
+        await self.event_bus.publish("caption_update", caption_update_from_commit(commit))
 
 
 def _payload(event_type: str, value: object) -> dict[str, Any]:
