@@ -24,7 +24,7 @@ EchoSync 当前字幕链路已经有 `transcript.partial`、`translation.partial
 - 同一个 `segment_id` 在 final 前持续更新同一块字幕，不因 partial 创建多行。
 - 修订只影响不稳定尾部或 patch 范围，不整句清空重打。
 - 原文和译文共享同一个 segment 生命周期，逐句对照模式下不互相错位。
-- 分段、滚动和打字机解耦，commit 后有短暂驻留，不立即上滚。
+- 分段、滚动和打字机解耦，commit 后有内容感知的可读驻留，不立即上滚。
 - 字幕窗口高度稳定，文字更新不改变 BrowserWindow 或 captionWindow 几何。
 - 语义合帧、弱边界 checkpoint、句末 commit 由 Agent 控制。
 - 修订和提交仍以 `segment_id + rev` 为准，导出和历史记录使用真实字幕状态，不使用动画状态。
@@ -35,6 +35,60 @@ EchoSync 当前字幕链路已经有 `transcript.partial`、`translation.partial
 - 不在本阶段实现词级置信度 UI。
 - 不用 CSS 动画掩盖数据协议问题；动画只服务已经明确的 segment 状态。
 - 不让后端控制前端显示速度；后端发状态，前端管渲染节奏。
+
+## 当前实现审计
+
+这部分是后续代码落地的硬约束，用来避免继续沿着旧实现补丁化。
+
+### UI 暴露了内部状态
+
+当前 `CaptionLineState` 仍包含 `interim | stable | revised | locked`，这对 store、导出和 patch 校验是合理的；问题在于 overlay history 直接渲染 `captionStateDisplayLabel(line.state)`，于是用户会看到“已锁定”等工程状态。字幕弹窗不应该像调试控制台。后续实现必须做到：
+
+- store 保留内部状态。
+- dashboard / 日志可以使用状态做诊断。
+- overlay 不渲染状态 badge，也不把 `locked`、`stable` 作为视觉主文案。
+
+### 显示模式模型不对
+
+当前 `SubtitleDisplayMode = "bilingual" | "source" | "translation"` 更像调试选项，不是同传 overlay 的主体验模型。用户现在要的是两种双语形态：逐句对照和分区对照。后续迁移时要保留旧配置兼容，但 overlay 主控应映射到：
+
+```text
+legacy bilingual     -> sentencePair
+legacy source        -> sentencePair with target hidden only in debug/settings
+legacy translation   -> sentencePair with source minimized only in debug/settings
+legacy line / split  -> sentencePair
+```
+
+第一阶段可以在类型上继续兼容旧值，但 UI 文案和主按钮必须先切到“逐句对照 / 分区对照”。
+
+### 固定 2.2 秒驻留仍然太粗
+
+当前 `LOCKED_SETTLING_DWELL_MS = 2200` 比 500-1200ms 好，但仍然会在短句、译文晚到、用户刚聚焦、字幕较长时显得过急。正确做法不是再调一个魔法数字，而是让每个 segment 维护自己的 `dwellUntilMs`：
+
+- commit 到达时根据 source / target 可见长度计算初始 dwell。
+- target 后到或 patch 到达时延长 dwell。
+- hover / pinned / 用户滚轮回看时暂停自动上滚。
+- 新 active segment 不能直接把 readable block 挤走；只有视口压力和 dwell 同时满足才上滚。
+
+### commit 触发 flush 会制造“突然完整 / 突然上滚”
+
+当前 locked 行会把 source / target 直接 flush 到最终文本。数据层需要最终文本，但 overlay 实时态不应该因此瞬移。后续实现应区分：
+
+- desired text：commit 后立即保存最终文本。
+- visible text：按追赶预算加速补齐，不能整句瞬移。
+- readable dwell：visible text 补齐后仍继续驻留。
+
+### 滚动容器不是字幕轨道
+
+当前 history 区域是 `overflow-y: auto`，并在行 ID 变化时 `scrollTranscriptToBottom()`。这适合转写列表，不适合悬浮字幕。overlay 实时字幕应使用固定窗口 + caption track：
+
+- 字符生成不触发滚动。
+- segment 上滚只改变 track transform。
+- past / readable / active 是同一轨道上的块，不是三个互相挤压的普通 DOM 流。
+
+### 文本渲染没有 lane 级修订范围
+
+当前 `CaptionText` 只渲染整段 source / target 文本，`revised` 通过整行 class 表达。这会让一次小修订看起来像整句变化。后续要把 lane 拆成至少三类 span：stable prefix、changing tail、new tail；MVP 可先用 LCP 计算尾部，后续再接后端 stable/unstable region。
 
 ## 架构
 
@@ -58,7 +112,7 @@ Agent events
        维护 visible CaptionLineVisual[]
        对同一 segment 做 LCP / patch diff
        用 typewriter queue 从左到右追赶
-       管理 segment settling / history 滚动
+       管理 segment readable dwell / past track 滚动
   -> OverlayWindow
        渲染 fixed caption track，不由文本内容撑高窗口
 
@@ -84,11 +138,12 @@ type CaptionLine = {
 type CaptionLineVisual = {
   id: string;
   desiredRev: number;
-  phase: "active" | "settling" | "history";
+  phase: "active" | "readable" | "past";
   source: VisualTextLane;
   target: VisualTextLane;
   createdAtMs: number;
-  settledAtMs: number | null;
+  readableSinceMs: number | null;
+  dwellUntilMs: number | null;
 };
 
 type VisualTextLane = {
@@ -104,11 +159,13 @@ type VisualTextLane = {
 
 ### 字幕模式
 
-- `bilingual`：默认模式，源文在上、译文在下，双行纵向堆叠，不做左右分区。英语课程/演讲场景下，英文源文稳定锚定在上方，中文译文允许慢半拍出现。
-- `source`：只显示原文主字幕，用于用户想核对 ASR 识别内容时。
-- `translation`：只显示中文翻译字幕，用于沉浸式观看课程、演讲或会议时。
-- 双语模式允许“翻译字幕优先”配置，但默认关闭，避免译文流式更新时把源文位置挤来挤去。
-- 译文尚未返回时不显示“正在翻译...”占位；前端只显示已经收到的源文或译文 snapshot。
+Overlay 主入口只保留两种双语对照模式，不再把 `interim` / `stable` / `revised` / `locked` 这类工程状态作为可见标签呈现。`locked` 仍是数据层和导出层概念，但字幕弹窗里不能出现“已锁定”“稳定”“已修订”等状态徽标；修订只用轻微视觉变化和短暂衰减表达。
+
+- `sentencePair` / 逐句对照：默认模式。每个 segment 是一个双语块，英文源文在上，中文译文在下；当前块在底部稳定生长，上一块在用户可读驻留后再自然上滚。
+- `zonedPair` / 分区对照：长段或演示模式。上区稳定显示当前源文 lane，下区稳定显示当前译文 lane，历史区只保留最近 1-2 个压缩双语块。
+- Overlay 不再把“只看原文”“只看译文”放在主显示模式里；这类调试/辅助视图可以以后放到开发设置或复盘页，不能打断双语同传主路径。
+- 源文永远在上，译文永远在下。`translationFirst` 不再作为 overlay 主模式行为，避免翻译流式更新时把英文锚点挤走。
+- 译文尚未返回时不显示“正在翻译...”占位；保留译文行槽位，显示为空，让中文 lane 在真实译文到达后从左到右生成。
 
 ### Segment 生命周期
 
@@ -122,8 +179,9 @@ loading -> interim -> interim -> stable -> revised -> locked
 
 - 同一句话没有 locked 前，永远更新同一个 `segment_id`。
 - `transcript.partial` 和 `translation.partial` 都是“当前 segment 的最新假设”，不是新增字幕行。
-- `segment.commit` 才把 segment 送入 `settling`，随后延迟进入 history。
+- `segment.commit` 只表示数据层终稿到达；显示层先进入可读驻留，不立刻进入 history。
 - 视觉换行不等于 final；软换行只解决可读性，不改变 segment 生命周期。
+- UI 使用 `active` / `readable` / `past` 这类呈现阶段，不暴露 `locked` 字样。
 
 ### 稳定区与可变区
 
@@ -205,8 +263,10 @@ type RenderToken = {
 
 - 英文：20-35ms / grapheme，按词边界可轻微加速。
 - 中文：30-50ms / grapheme。
-- 如果 backlog 很大，允许批量每帧吐 2-4 个 grapheme 追赶，但不要整段瞬移。
-- final 或用户切到历史区时可以快速 flush 当前队列。
+- 如果 backlog 很大，允许每帧吐 2-4 个 grapheme 追赶，但不要整段瞬移。
+- source lane 和 target lane 独立追赶；中文可以比英文慢半拍，但不能因为中文未到而阻塞英文生成。
+- final 到达时不能让当前块消失；可以把尚未显示完的尾部以更高预算追赶，随后进入可读驻留。
+- 用户切到复盘/历史页时可以 flush 当前队列；overlay 实时态不因 final 直接整段替换。
 
 ### 局部修订
 
@@ -241,11 +301,28 @@ MVP 规则：
 
 滚动触发条件：
 
-- `segment.commit` 后进入 `settling`，驻留 500-1200ms。
-- 新 active segment 创建且可视区不足。
-- active segment 因换行超过可视区域。
+- `segment.commit` 后进入 `readable dwell`，驻留时长按内容和译文到达状态计算，不使用固定 500-1200ms。
+- 新 active segment 创建时，上一 segment 先作为 readable block 留在可视轨道内；只有 readable dwell 满足且可视区不足时才上滚。
+- active segment 因软换行超过可视区域时，只滚动 caption track，不改窗口尺寸，不重排 chrome。
+- 译文晚到、译文 patch 或源文大修订会延长当前 readable dwell，避免用户刚看到中文就被推走。
 
 禁止每个 token 调 `scrollToBottom()`。应使用固定高度轨道和 `transform: translateY(...)`。
+
+推荐 dwell 公式：
+
+```text
+base = 1800ms
+source_read = min(1800ms, source_graphemes * 28ms)
+target_read = min(2400ms, target_graphemes * 42ms)
+dwell = clamp(base + max(source_read, target_read), 2400ms, 6200ms)
+```
+
+补充规则：
+
+- 短句也至少驻留 2400ms，避免 “Yes.” / “是的。” 这类短句一闪而过。
+- 中文译文在 commit 后才到达时，从 `targetReceivedAtMs` 重新保证至少 1600ms 可读时间。
+- 用户 hover、pinned 或手动滚轮回看时进入 auto-scroll lock，不自动推走正在读的块。
+- caption track 上滚使用 240-320ms 的 transform transition，曲线建议 `cubic-bezier(0.22, 1, 0.36, 1)`。
 
 ### 时间戳与顺序
 
@@ -344,10 +421,10 @@ type CaptionUpdateEvent = {
 
 - 字幕窗口固定高度。
 - segment track 用 transform 上移。
-- commit 后进入 settling，延迟 500-1200ms 进入 history。
+- commit 后进入 readable dwell，按内容长度、译文晚到和用户交互计算驻留时长。
 - 禁止每字 scroll。
 
-验收：字幕持续生成时窗口高度不变，上滚自然，不一跳一跳。
+验收：字幕持续生成时窗口高度不变；短句不会一闪而过；上一句在用户可读驻留后才自然上滚。
 
 ### 第五阶段：翻译修订
 
@@ -376,8 +453,11 @@ type CaptionUpdateEvent = {
 - display buffer 不丢短 token，但 visible text 可按 typewriter 节奏追赶。
 - 后端一次返回 `"测试字幕"` 时，visible 可按 `"测" -> "测试" -> "测试字" -> "测试字幕"` 追赶。
 - 同一 segment 从 `"我正在册"` 修订为 `"我正在测试"` 时，公共前缀保留，尾部进入修订队列。
-- `segment.commit` 后 line 先进入 settling，不立即滚入 history。
-- source lane 和 target lane 共享 segment 生命周期，逐句对照不乱序。
+- `segment.commit` 后 line 先进入 readable dwell，不立即滚入 past track。
+- short sentence commit 后至少驻留 2400ms；译文晚到时至少再保留 1600ms。
+- source lane 和 target lane 共享 segment 生命周期，逐句对照不乱序；源文固定在上，译文固定在下。
+- Overlay 不渲染 `captionStateDisplayLabel`，不出现“已锁定”“稳定”“已修订”等工程状态徽标。
+- 显示模式主控只出现“逐句对照”和“分区对照”，不把 source-only / translation-only 作为同传 overlay 主模式。
 - 窗口高度不因每次 token 更新而改变。
 - stable checkpoint 与 committed checkpoint 在后端翻译调度中分轨，前者不能被后者覆盖。
-- committed 行必须最终 flush 到可见文本，并在短暂驻留后进入历史。
+- committed 行必须最终 flush 到可见文本，并在 readable dwell 后进入 past track。
