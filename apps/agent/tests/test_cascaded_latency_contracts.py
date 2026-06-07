@@ -65,6 +65,10 @@ def test_cascaded_engine_drops_pending_stable_when_committed_arrives() -> None:
     asyncio.run(_assert_cascaded_engine_drops_pending_stable_when_committed_arrives())
 
 
+def test_cascaded_engine_preempts_active_stable_when_committed_arrives() -> None:
+    asyncio.run(_assert_cascaded_engine_preempts_active_stable_when_committed_arrives())
+
+
 def test_cascaded_engine_drops_backlogged_drafts_before_committed_checkpoint() -> None:
     asyncio.run(_assert_cascaded_engine_drops_backlogged_drafts_before_committed_checkpoint())
 
@@ -394,6 +398,29 @@ async def _assert_cascaded_engine_drops_pending_stable_when_committed_arrives() 
     ]
     latest = next(event for event in translations if event.target_text == "[zh] latest committed.")
     assert latest.metrics["translation_queue_wait_ms"] >= 0
+
+
+async def _assert_cascaded_engine_preempts_active_stable_when_committed_arrives() -> None:
+    translator = BlockingTranslator()
+    engine = CascadedInterpretationEngine(
+        transcriber=ActiveStableThenCommittedTranscriber(translator.started),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    events = await asyncio.wait_for(_collect_events(engine.stream(_frames())), timeout=1)
+    translated = [
+        event
+        for event in events
+        if isinstance(event, TranslationSegment) and event.target_text
+    ]
+
+    assert [segment.text for segment in translator.seen_segments] == [
+        "draft that will be superseded",
+        "final text.",
+    ]
+    assert [event.target_text for event in translated] == ["[zh] final text."]
 
 
 async def _assert_cascaded_engine_drops_backlogged_drafts_before_committed_checkpoint() -> None:
@@ -781,6 +808,37 @@ class BackloggedStableCommittedTranscriber(Transcriber):
                     status=status,
                     stability=0.9 if status == SegmentStatus.STABLE else 1.0,
                 )
+
+
+class ActiveStableThenCommittedTranscriber(Transcriber):
+    def __init__(self, stable_translation_started: asyncio.Event) -> None:
+        self.stable_translation_started = stable_translation_started
+
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for frame in frames:
+            yield TranscriptSegment(
+                session_id=frame.session_id,
+                segment_id="seg_preempt",
+                rev=1,
+                start_ms=0,
+                end_ms=1_200,
+                source_lang="en",
+                text="draft that will be superseded",
+                status=SegmentStatus.STABLE,
+                stability=0.9,
+            )
+            await self.stable_translation_started.wait()
+            yield TranscriptSegment(
+                session_id=frame.session_id,
+                segment_id="seg_preempt",
+                rev=2,
+                start_ms=0,
+                end_ms=1_600,
+                source_lang="en",
+                text="final text.",
+                status=SegmentStatus.COMMITTED,
+                stability=1.0,
+            )
 
 
 class BackloggedDraftsThenCommittedTranscriber(Transcriber):

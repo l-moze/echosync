@@ -84,7 +84,7 @@ class CaptionEventHub:
             "semantic_revision_latency_ms=%.1f "
             "semantic_revision_changed_chars=%.1f "
             "semantic_revision_trigger_count=%.1f "
-            "tts_first_audio_ms=%.1f tts_total_ms=%.1f "
+            "tts_first_audio_ms=%.1f tts_queue_wait_ms=%.1f tts_total_ms=%.1f "
             "tts_audio_chunks=%.1f tts_audio_bytes=%.1f "
             "simul_policy_action=%.1f simul_policy_request_action=%.1f "
             "simul_policy_confidence=%.2f source=%s target=%s",
@@ -119,6 +119,7 @@ class CaptionEventHub:
             _metric(metrics, "semantic_revision_changed_chars"),
             _metric(metrics, "semantic_revision_trigger_count"),
             _metric(metrics, "tts_first_audio_ms"),
+            _metric(metrics, "tts_queue_wait_ms"),
             _metric(metrics, "tts_total_ms"),
             _metric(metrics, "tts_audio_chunks"),
             _metric(metrics, "tts_audio_bytes"),

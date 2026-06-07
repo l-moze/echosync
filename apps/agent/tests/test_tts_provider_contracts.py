@@ -27,10 +27,16 @@ def test_tts_factory_builds_disabled_edge_and_elevenlabs_providers() -> None:
             elevenlabs_api_key="test-key",
             elevenlabs_voice_id="voice-1",
             elevenlabs_speed=1.18,
+            elevenlabs_stability=0.9,
+            elevenlabs_style=0.0,
+            elevenlabs_use_speaker_boost=False,
         )
     )
     assert isinstance(elevenlabs, ElevenLabsTtsSynthesizer)
     assert elevenlabs.speed == 1.18
+    assert elevenlabs.stability == 0.9
+    assert elevenlabs.style == 0.0
+    assert elevenlabs.use_speaker_boost is False
 
 
 def test_tts_factory_rejects_elevenlabs_without_key_or_voice() -> None:
@@ -82,8 +88,12 @@ def test_elevenlabs_synthesizer_streams_audio_with_configured_request() -> None:
             "model": "eleven_multilingual_v2",
             "output_format": "mp3_44100_128",
             "optimize_streaming_latency": 2,
+            "similarity_boost": 0.75,
             "speed": 1.15,
+            "stability": 0.85,
+            "style": 0.0,
             "text": "你好，欢迎。",
+            "use_speaker_boost": False,
         }
     ]
 
@@ -108,6 +118,22 @@ def test_tts_utterance_splitter_splits_long_translation_into_small_independent_s
     ]
     assert utterances[0].metrics["tts_utterance_index"] == 1.0
     assert utterances[-1].metrics["tts_utterance_count"] == 4.0
+
+
+def test_tts_utterance_splitter_prefers_comma_boundaries_even_for_short_text() -> None:
+    segment = _segment("这里先快速播报，下一段马上接上。")
+
+    utterances = TtsUtteranceSplitter(max_chars=42, min_chars=6).split(segment)
+
+    assert [item.target_text for item in utterances] == [
+        "这里先快速播报，",
+        "下一段马上接上。",
+    ]
+    assert [item.segment_id for item in utterances] == [
+        "seg_tts_tts01",
+        "seg_tts_tts02",
+    ]
+    assert utterances[0].metrics["tts_utterance_count"] == 2.0
 
 
 def test_event_audio_sink_publishes_tts_audio_as_base64_event() -> None:
@@ -216,8 +242,12 @@ class _FakeElevenLabsClient:
         model: str,
         output_format: str,
         optimize_streaming_latency: int | None,
+        similarity_boost: float,
         speed: float,
+        stability: float,
+        style: float,
         text: str,
+        use_speaker_boost: bool,
     ) -> AsyncIterator[bytes]:
         self.requests.append(
             {
@@ -226,8 +256,12 @@ class _FakeElevenLabsClient:
                 "model": model,
                 "output_format": output_format,
                 "optimize_streaming_latency": optimize_streaming_latency,
+                "similarity_boost": similarity_boost,
                 "speed": speed,
+                "stability": stability,
+                "style": style,
                 "text": text,
+                "use_speaker_boost": use_speaker_boost,
             }
         )
         for chunk in self.chunks:

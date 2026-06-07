@@ -60,12 +60,12 @@ def build_realtime_capabilities(
             _voxtral_capability(settings, has_dependency),
             _deepgram_capability(settings, has_dependency),
             _qwen_asr_capability(settings, has_dependency),
-            _qwen_livetranslate_capability(settings, has_dependency),
         ],
         "translation_providers": [
             _mock_translation_capability(default=settings.translator_provider == "mock"),
             _deepseek_capability(settings, has_dependency),
             _deepl_capability(settings),
+            _qwen_livetranslate_capability(settings, has_dependency),
         ],
         "tts_providers": [
             _disabled_tts_capability(default=settings.tts_provider == "disabled"),
@@ -215,11 +215,10 @@ def _qwen_livetranslate_capability(
     return {
         "id": "qwen-livetranslate",
         "label": "Qwen LiveTranslate",
-        "kind": "asr",
+        "kind": "translation",
         "status": status,
         "available": status == "ready",
-        "default": settings.asr_provider == "qwen-livetranslate",
-        "real_audio_supported": True,
+        "default": settings.translator_provider == "qwen-livetranslate",
         "reason": reason,
         "model": settings.qwen_livetranslate_model,
     }
@@ -360,7 +359,11 @@ def _validate_elevenlabs_voice(settings: Settings) -> ElevenLabsVoiceValidation:
         settings.elevenlabs_voice_id,
         settings.elevenlabs_model,
         settings.elevenlabs_output_format,
+        settings.elevenlabs_similarity_boost,
         settings.elevenlabs_speed,
+        settings.elevenlabs_stability,
+        settings.elevenlabs_style,
+        settings.elevenlabs_use_speaker_boost,
     )
 
 
@@ -370,7 +373,11 @@ def _validate_elevenlabs_voice_cached(
     voice_id: str,
     model: str,
     output_format: str,
+    similarity_boost: float,
     speed: float,
+    stability: float,
+    style: float,
+    use_speaker_boost: bool,
 ) -> ElevenLabsVoiceValidation:
     try:
         status, payload = _get_elevenlabs_voice(api_key=api_key, voice_id=voice_id)
@@ -395,7 +402,11 @@ def _validate_elevenlabs_voice_cached(
             voice_id=voice_id,
             model=model,
             output_format=output_format,
+            similarity_boost=similarity_boost,
             speed=speed,
+            stability=stability,
+            style=style,
+            use_speaker_boost=use_speaker_boost,
         )
         if tts_status < 400:
             return ElevenLabsVoiceValidation(
@@ -468,7 +479,11 @@ def _probe_elevenlabs_tts(
     voice_id: str,
     model: str,
     output_format: str,
+    similarity_boost: float,
     speed: float,
+    stability: float,
+    style: float,
+    use_speaker_boost: bool,
 ) -> tuple[int, dict[str, Any]]:
     connection = http.client.HTTPSConnection(
         ELEVENLABS_API_HOST,
@@ -480,7 +495,11 @@ def _probe_elevenlabs_tts(
                 "text": ".",
                 "model_id": model,
                 "voice_settings": {
+                    "similarity_boost": _clamp_unit(similarity_boost),
                     "speed": min(max(float(speed), 0.7), 1.2),
+                    "stability": _clamp_unit(stability),
+                    "style": _clamp_unit(style),
+                    "use_speaker_boost": use_speaker_boost,
                 },
             }
         ).encode("utf-8")
@@ -557,6 +576,10 @@ def _elevenlabs_error_code(payload: dict[str, Any]) -> str:
         code = detail.get("code") or detail.get("status") or detail.get("type")
         return str(code or "")
     return ""
+
+
+def _clamp_unit(value: float) -> float:
+    return min(max(float(value), 0.0), 1.0)
 
 
 def _mask_secret(value: str) -> str:

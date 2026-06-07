@@ -110,6 +110,45 @@ describe("字幕显示视觉合成器", () => {
     expect(final.lines[0].targetText).toBe("我正在测试");
   });
 
+  it("长段中前部修订时不把已显示的大段文本回退成公共前缀", () => {
+    const visibleText =
+      "You know, push the pink book towards the left. And then finally do the insertion of the new green book.";
+    const revisedText =
+      "You know, push the pink book to the left. And then finally do the insertion of the new green book. Okay, so what we stress here is generalization.";
+    const buffer: CaptionDisplayBuffer = {
+      entries: {
+        seg_long: {
+          phase: "active",
+          source: {
+            desiredText: visibleText,
+            visibleText,
+            lastTypedAtMs: 1000,
+            revisedUntilMs: null
+          },
+          target: {
+            desiredText: "你知道吗，把粉色书往左边推。",
+            visibleText: "你知道吗，把粉色书往左边推。",
+            lastTypedAtMs: 1000,
+            revisedUntilMs: null
+          },
+          firstSeenAtMs: 1000,
+          lastVisibleAtMs: 1000,
+          settledAtMs: null
+        }
+      }
+    };
+
+    const patched = selectDisplayCaptionLines(
+      buffer,
+      [line({ id: "seg_long", sourceText: revisedText, targetText: "你知道吗，把粉色书往左边推。", rev: 2, state: "revised" })],
+      1040
+    );
+
+    expect(patched.lines[0].sourceText).toBe(visibleText);
+    expect(patched.buffer.entries.seg_long.source.desiredText).toBe(revisedText);
+    expect(patched.pendingLineIds).toEqual(["seg_long"]);
+  });
+
   it("locked 行先进入 readable dwell，不直接瞬移成最终文本", () => {
     const partial = selectDisplayCaptionLines(
       createInitialCaptionDisplayBuffer(),

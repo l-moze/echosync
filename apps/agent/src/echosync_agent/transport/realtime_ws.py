@@ -234,8 +234,8 @@ class _RealtimeWebSocketSession:
             if self._is_mock_asr_receiving_real_audio():
                 await self._send_error(
                     "当前是 mock ASR，不能处理 Windows/麦克风/文件这类真实音频 PCM。"
-                    "请设置 ECHOSYNC_ASR_PROVIDER=voxtral、funasr、deepgram、qwen-asr "
-                    "或 qwen-livetranslate 后重启 Agent。"
+                    "请设置 ECHOSYNC_ASR_PROVIDER=voxtral、funasr、deepgram 或 "
+                    "qwen-asr 后重启 Agent。"
                 )
                 self._stop_reason = "start_error"
                 return True
@@ -306,8 +306,10 @@ class _RealtimeWebSocketSession:
     def _capture_excludes_echosync_audio(self) -> bool:
         if self.device_id is None:
             return False
-        return self.device_id.startswith("wasapi:exclude-process-tree:") or self.device_id.startswith(
-            "wasapi:include-process-tree:"
+        return self.device_id.startswith(
+            "wasapi:exclude-process-tree:"
+        ) or self.device_id.startswith(
+            "wasapi:include-process-tree:",
         )
 
     def _apply_start_message(self, message: dict[str, Any]) -> None:
@@ -319,6 +321,7 @@ class _RealtimeWebSocketSession:
         self.settings = with_session_translation_overrides(
             self.settings,
             translation_provider=message.get("translation_provider"),
+            end_to_end_source_backfill=message.get("end_to_end_source_backfill"),
         )
         self.settings = with_session_tts_overrides(
             self.settings,
@@ -489,7 +492,7 @@ class _RealtimeWebSocketSession:
         await self.queue.put(None)
 
     def _should_cancel_pipeline(self) -> bool:
-        return self._stop_reason in {"user_stop", "client_disconnect"}
+        return self._stop_reason == "client_disconnect"
 
     async def _cancel_or_report_pipeline(self, pipeline_task: asyncio.Task[None]) -> None:
         await asyncio.sleep(0)
@@ -499,17 +502,6 @@ class _RealtimeWebSocketSession:
             except Exception as exc:
                 logger.exception("realtime_pipeline_failed session_id=%s", self.session_id)
                 await self._send_error(str(exc))
-            return
-
-        if self._stop_reason == "user_stop" and pipeline_task.done():
-            try:
-                await pipeline_task
-            except Exception as exc:
-                logger.info(
-                    "realtime_pipeline_exception_suppressed_after_user_stop session_id=%s error=%s",
-                    self.session_id,
-                    exc,
-                )
             return
 
         pipeline_task.cancel()

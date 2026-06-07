@@ -22,6 +22,7 @@ import {
   selectedTranslationProviderId,
   TRANSLATION_PROVIDER_OPTIONS,
   translationProviderLabel,
+  type TranslationProviderId,
   type TranslationProviderSelection
 } from "../shared/translation-provider-catalog";
 import {
@@ -124,7 +125,7 @@ import {
 } from "../shared/home-launcher-copy";
 import { createInitialCaptionLines } from "./initial-captions";
 import { createRealtimeAudioClient, type RealtimeAudioClient } from "./realtime-audio-client";
-import { ensureSeekableSessionRecording } from "./session-recorder";
+import { ensureSeekableSessionRecording, type SessionRecording } from "./session-recorder";
 import { createTtsAudioPlaybackQueue, type TtsAudioPlaybackQueue } from "./tts-audio-playback";
 import { resolveDesktopWindowRole } from "./window-role";
 
@@ -188,6 +189,27 @@ function createNativeWasapiRealtimeClient(): RealtimeAudioClient {
     start: () => Promise.resolve(),
     stop: () => Promise.resolve(null)
   };
+}
+
+async function getPendingNativeCaptureRecording(sessionId: string | null | undefined): Promise<SessionRecording | null> {
+  if (!sessionId) {
+    return null;
+  }
+  try {
+    const recording = await window.echosyncDesktop?.getPendingCaptureRecording(sessionId);
+    if (!recording?.data) {
+      return null;
+    }
+    const mimeType = recording.mimeType || "audio/wav";
+    return {
+      activityRanges: recording.activityRanges,
+      blob: new Blob([recording.data], { type: mimeType }),
+      mimeType
+    };
+  } catch (error) {
+    log.warn("[realtime] 读取 Windows 系统声录音失败:", error);
+    return null;
+  }
 }
 
 function createNativeRealtimeSessionId() {
@@ -391,6 +413,7 @@ function App() {
   const [asrLatencyMode, setAsrLatencyMode] = useState<AsrLatencyMode>("balanced");
   const [translationProvider, setTranslationProvider] =
     useState<TranslationProviderSelection>("server-default");
+  const [endToEndSourceBackfill, setEndToEndSourceBackfill] = useState(true);
   const [ttsProvider, setTtsProvider] = useState<TtsProviderSelection>("server-default");
   const [languageDirectionId, setLanguageDirectionId] = useState<LanguageDirectionId>(readStoredLanguageDirectionId);
   const [agentCapabilities, setAgentCapabilities] = useState<AgentCapabilities | null>(null);
@@ -447,6 +470,11 @@ function App() {
   function selectTranslationProvider(nextProvider: TranslationProviderSelection) {
     setTranslationProvider(nextProvider);
     updateSessionPreferences({ translationProvider: nextProvider });
+  }
+
+  function selectEndToEndSourceBackfill(enabled: boolean) {
+    setEndToEndSourceBackfill(enabled);
+    updateSessionPreferences({ endToEndSourceBackfill: enabled });
   }
 
   function selectTtsProvider(nextProvider: TtsProviderSelection) {
@@ -531,6 +559,7 @@ function App() {
     const applyPreferences = (preferences: SessionPreferencesState) => {
       setAsrLatencyMode(preferences.asrLatencyMode);
       setAsrProvider(preferences.asrProvider);
+      setEndToEndSourceBackfill(preferences.endToEndSourceBackfill);
       setSourceId(preferences.sourceId);
       setTranslationProvider(preferences.translationProvider);
       setTtsProvider(preferences.ttsProvider);
@@ -829,6 +858,7 @@ function App() {
     log.info("[realtime] 准备启动会话", {
       asrLatencyMode,
       asrProvider: selectedAsrProvider ?? "server-default",
+      endToEndSourceBackfill,
       languageDirection: languageDirection.id,
       sessionSourceId: nextSourceId,
       translationProvider: selectedTranslationProvider ?? "server-default",
@@ -839,6 +869,7 @@ function App() {
       : createRealtimeAudioClient({
           asrLatencyMode,
           asrProvider: selectedAsrProvider,
+          endToEndSourceBackfill,
           sourceId: nextSourceId,
           sourceLang: languageDirection.sourceLang,
           telemetryLogger: log,
@@ -850,6 +881,7 @@ function App() {
     const nextSnapshot = await window.echosyncDesktop?.startCapture({
       asrLatencyMode,
       asrProvider: selectedAsrProvider,
+      endToEndSourceBackfill,
       sessionId: client.sessionId,
       sourceId: nextSourceId,
       sourceLang: languageDirection.sourceLang,
@@ -938,7 +970,8 @@ function App() {
 
   async function stopCapture() {
     const currentClient = realtimeClientRef.current;
-    markSessionStopping(currentClient?.sessionId ?? activeSessionIdRef.current);
+    const stoppedSessionId = currentClient?.sessionId ?? activeSessionIdRef.current;
+    markSessionStopping(stoppedSessionId);
     realtimeClientRef.current = null;
     activeSessionIdRef.current = null;
     ttsPlayback.clear();
@@ -963,7 +996,8 @@ function App() {
     const elapsedDurationMs = startedAtMs === null ? 0 : Math.max(0, endedAt.getTime() - startedAtMs);
     const durationMs = Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0);
     const averageCaptionLagMs = selectAverageCaptionLatencyMs(lines, startedAtMs) ?? undefined;
-    const seekableRecording = await ensureSeekableSessionRecording(recording, durationMs);
+    const nativeRecording = recording ? null : await getPendingNativeCaptureRecording(stoppedSessionId);
+    const seekableRecording = await ensureSeekableSessionRecording(recording ?? nativeRecording, durationMs);
     const timeline = buildSessionRecordTimeline({
       activityRanges: seekableRecording?.activityRanges,
       lines,
@@ -978,7 +1012,7 @@ function App() {
         audioObjectUrl: seekableRecording ? URL.createObjectURL(seekableRecording.blob) : undefined,
         createdAt: endedAtIso,
         durationMs,
-        id: currentClient?.sessionId ?? nextSnapshot?.sessionId ?? `sess_${endedAt.getTime()}`,
+        id: stoppedSessionId ?? nextSnapshot?.sessionId ?? `sess_${endedAt.getTime()}`,
         lines,
         timeline,
         title: sessionArchiveTitleFromDate(endedAt)
@@ -1115,7 +1149,9 @@ function App() {
           agentCapabilitiesError={agentCapabilitiesError}
           asrLatencyMode={asrLatencyMode}
           asrProvider={asrProvider}
+          endToEndSourceBackfill={endToEndSourceBackfill}
           sourceId={sourceId}
+          onEndToEndSourceBackfillSelect={selectEndToEndSourceBackfill}
           toggleOverlayLocked={() => void toggleOverlayLocked()}
           translationProvider={translationProvider}
           ttsProvider={ttsProvider}
@@ -1314,10 +1350,12 @@ function ControlCenter({
   asrLatencyMode,
   asrProvider,
   currentSource,
+  endToEndSourceBackfill,
   languageDirection,
   lines,
   onAsrLatencyModeSelect,
   onAsrProviderSelect,
+  onEndToEndSourceBackfillSelect,
   onLanguageDirectionSelect,
   onSourceSelect,
   onTranslationProviderSelect,
@@ -1344,10 +1382,12 @@ function ControlCenter({
   asrLatencyMode: AsrLatencyMode;
   asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
+  endToEndSourceBackfill: boolean;
   languageDirection: LanguageDirectionOption;
   lines: CaptionLine[];
   onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
+  onEndToEndSourceBackfillSelect: (enabled: boolean) => void;
   onLanguageDirectionSelect: (directionId: LanguageDirectionId) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
@@ -1377,9 +1417,11 @@ function ControlCenter({
           asrLatencyMode={asrLatencyMode}
           asrProvider={asrProvider}
           currentSource={currentSource}
+          endToEndSourceBackfill={endToEndSourceBackfill}
           languageDirection={languageDirection}
           onAsrLatencyModeSelect={onAsrLatencyModeSelect}
           onAsrProviderSelect={onAsrProviderSelect}
+          onEndToEndSourceBackfillSelect={onEndToEndSourceBackfillSelect}
           onLanguageDirectionSelect={onLanguageDirectionSelect}
           onSourceSelect={onSourceSelect}
           onTranslationProviderSelect={onTranslationProviderSelect}
@@ -1430,9 +1472,11 @@ function IdleDashboard({
   asrLatencyMode,
   asrProvider,
   currentSource,
+  endToEndSourceBackfill,
   languageDirection,
   onAsrLatencyModeSelect,
   onAsrProviderSelect,
+  onEndToEndSourceBackfillSelect,
   onLanguageDirectionSelect,
   onSourceSelect,
   onTranslationProviderSelect,
@@ -1450,9 +1494,11 @@ function IdleDashboard({
   asrLatencyMode: AsrLatencyMode;
   asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
+  endToEndSourceBackfill: boolean;
   languageDirection: LanguageDirectionOption;
   onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
+  onEndToEndSourceBackfillSelect: (enabled: boolean) => void;
   onLanguageDirectionSelect: (directionId: LanguageDirectionId) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
@@ -1549,11 +1595,13 @@ function IdleDashboard({
         asrLatencyMode={asrLatencyMode}
         asrProvider={asrProvider}
         currentSource={currentSource}
+        endToEndSourceBackfill={endToEndSourceBackfill}
         isOpen={preferencesOpen}
         languageDirection={languageDirection}
         onAsrLatencyModeSelect={onAsrLatencyModeSelect}
         onAsrProviderSelect={onAsrProviderSelect}
         onClose={() => setPreferencesOpen(false)}
+        onEndToEndSourceBackfillSelect={onEndToEndSourceBackfillSelect}
         onTranslationProviderSelect={onTranslationProviderSelect}
         onTtsProviderSelect={onTtsProviderSelect}
         translationProvider={translationProvider}
@@ -1592,11 +1640,13 @@ function PreferenceSettingsPanel({
   asrLatencyMode,
   asrProvider,
   currentSource,
+  endToEndSourceBackfill,
   isOpen,
   languageDirection,
   onAsrLatencyModeSelect,
   onAsrProviderSelect,
   onClose,
+  onEndToEndSourceBackfillSelect,
   onTranslationProviderSelect,
   onTtsProviderSelect,
   translationProvider,
@@ -1606,11 +1656,13 @@ function PreferenceSettingsPanel({
   asrLatencyMode: AsrLatencyMode;
   asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
+  endToEndSourceBackfill: boolean;
   isOpen: boolean;
   languageDirection: LanguageDirectionOption;
   onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
   onClose: () => void;
+  onEndToEndSourceBackfillSelect: (enabled: boolean) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onTtsProviderSelect: (provider: TtsProviderSelection) => void;
   translationProvider: TranslationProviderSelection;
@@ -1762,6 +1814,28 @@ function PreferenceSettingsPanel({
               };
             })}
             status={translationStatus}
+          />
+          <EngineChoiceRow
+            label="端到端补原文"
+            options={[
+              {
+                id: "on",
+                description: "Qwen 端到端同传输出译文，同时用当前识别模型补原文，支持双语显示。",
+                disabled: !isEndToEndTranslationSelected(translationProvider, agentCapabilities?.defaults.translation_provider),
+                label: "开",
+                selected: endToEndSourceBackfill,
+                onSelect: () => onEndToEndSourceBackfillSelect(true)
+              },
+              {
+                id: "off",
+                description: "只运行端到端同传译文链路，降低成本；原文/双语可能为空。",
+                disabled: !isEndToEndTranslationSelected(translationProvider, agentCapabilities?.defaults.translation_provider),
+                label: "关",
+                selected: !endToEndSourceBackfill,
+                onSelect: () => onEndToEndSourceBackfillSelect(false)
+              }
+            ]}
+            status={endToEndSourceBackfill ? "开启" : "关闭"}
           />
           <EngineChoiceRow
             label="语音播报"
@@ -1922,6 +1996,13 @@ function EngineChoiceRow({
       </div>
     </div>
   );
+}
+
+function isEndToEndTranslationSelected(
+  selection: TranslationProviderSelection,
+  defaultProvider?: TranslationProviderId
+): boolean {
+  return (selection === "server-default" ? defaultProvider : selection) === "qwen-livetranslate";
 }
 
 function engineOptionLabel(label: string, id: string) {
@@ -2183,7 +2264,7 @@ function FinishedDashboard({
               onPlay={() => setArchiveAudioPlaying(true)}
               onTimeUpdate={(event) => updateArchivePlayback(Math.round(event.currentTarget.currentTime * 1000))}
             />
-            <div className="recordAudioControls">
+            <div className="archiveAudioControls">
               <button onClick={toggleArchiveAudioPlayback} type="button">
                 {archiveAudioPlaying ? "暂停" : "播放"}
               </button>
@@ -2196,12 +2277,12 @@ function FinishedDashboard({
                 type="range"
                 value={Math.min(archiveReviewPlaybackMs, archiveReviewDurationMs)}
               />
+              <span className="archiveAudioTime">{formatTime(archiveReviewPlaybackMs)} / {formatTime(archiveReviewDurationMs)}</span>
             </div>
-            <span>{formatTime(archiveReviewPlaybackMs)} / {formatTime(archiveReviewDurationMs)}</span>
-            {archiveAudioStatus === "loading" ? <span className="recordAudioStatus" role="status">音频加载中...</span> : null}
-            {archiveAudioError ? <span className="recordAudioError" role="status">{archiveAudioError}</span> : null}
+            {archiveAudioStatus === "loading" ? <span className="archiveAudioStatus" role="status">音频加载中...</span> : null}
+            {archiveAudioError ? <span className="archiveAudioError" role="status">{archiveAudioError}</span> : null}
             {archiveSkippedSilenceMarker ? (
-              <span className="recordAudioStatus" role="status">
+              <span className="archiveAudioStatus" role="status">
                 已压缩 {formatDurationForRecord(archiveSkippedSilenceMarker.skippedMs)} 静音
               </span>
             ) : null}
@@ -2320,7 +2401,7 @@ function selectTranscriptReviewColumnTemplate(lines: CaptionLine[]) {
   const totalWeight = Math.max(sourceWeight + targetWeight, 1);
   const sourceRatio = Math.min(0.62, Math.max(0.38, sourceWeight / totalWeight));
   const targetRatio = 1 - sourceRatio;
-  return `92px minmax(280px, ${sourceRatio.toFixed(2)}fr) minmax(260px, ${targetRatio.toFixed(2)}fr)`;
+  return `84px minmax(0, ${sourceRatio.toFixed(2)}fr) minmax(0, ${targetRatio.toFixed(2)}fr)`;
 }
 
 function selectReviewTextWeight(texts: string[]) {
@@ -3657,9 +3738,6 @@ function OverlayWindow({
                 onPinToggle={() => {
                   const nextPinned = !isPinned;
                   dispatchOverlay(nextPinned ? { type: "pin.enabled" } : { type: "pin.disabled" });
-                  if (nextPinned && overlayInteractionLocked) {
-                    setOverlayInteractionLocked(false);
-                  }
                   void window.echosyncDesktop?.setOverlayPinned(nextPinned);
                 }}
                 onMinimize={() => void minimizeOverlay()}
@@ -3944,16 +4022,21 @@ function ZonedCaptionLane({
   subtitleStyle: SubtitleStyleState;
 }) {
   const laneRef = useRef<HTMLDivElement | null>(null);
+  const streamRef = useRef<HTMLElement | null>(null);
   const isSource = kind === "source";
   const zonedStyle: SubtitleStyleState = { ...subtitleStyle, displayMode: "zonedPair" };
   const fallbackBlock = selectCaptionTextBlocks(undefined, zonedStyle)[0];
   const fallbackText = isSource ? fallbackBlock.sourceText : fallbackBlock.targetText;
-  const lineRenderKey = lines.map((line) => `${line.id}:${line.rev}:${line.state}:${line.sourceText.length}:${line.targetText.length}`).join("|");
-  const hiddenItemKeys = useCompleteCaptionItemVisibility(laneRef, ".zonedCaptionLine", lineRenderKey);
-
-  useLayoutEffect(() => {
-    scrollCaptionRailToStableEdge(laneRef.current, ".zonedCaptionLine", "smooth");
-  }, [lineRenderKey]);
+  const selectedChunks = lines.length > 0
+    ? selectZonedCaptionLaneChunks(kind, lines, zonedStyle)
+    : [];
+  const chunks = selectedChunks.length > 0
+    ? selectedChunks
+    : [createZonedCaptionFallbackChunk(fallbackText)];
+  const streamState = chunks.at(-1)?.state ?? "interim";
+  const isPlaceholder = chunks.every((chunk) => chunk.isPlaceholder);
+  const layoutKey = chunks.map((chunk) => `${chunk.key}:${chunk.text.length}`).join("|");
+  useZonedCaptionLaneViewport(laneRef, streamRef, `${kind}:${layoutKey}`);
 
   return (
     <div
@@ -3961,48 +4044,192 @@ function ZonedCaptionLane({
       className={`zonedCaptionLane ${kind}Lane`}
       ref={laneRef}
     >
-      {lines.length > 0 ? (
-        lines.map((line, index) => {
-          const block = selectCaptionTextBlocks(line, zonedStyle)[0];
-          const text = isSource ? block.sourceText : block.targetText;
-          const isPlaceholder = isSource ? block.isSourcePlaceholder : block.isTargetPlaceholder || !text;
-          return (
-            <article
-              className={`zonedCaptionLine ${line.state} ${index === lines.length - 1 ? "current" : ""}${hiddenItemKeys.has(line.id) ? " clipped" : ""}`}
-              data-caption-item-key={line.id}
-              key={`${kind}:${line.id}`}
-            >
-              <p
-                aria-hidden={isPlaceholder ? true : undefined}
-                className={`zonedCaptionText ${kind}Text ${line.state}${isPlaceholder ? " placeholderText" : ""}`}
-                style={{
-                  fontFamily: fontFamilyValue(isSource ? subtitleStyle.sourceFont : subtitleStyle.targetFont),
-                  fontWeight: selectSubtitleFontWeight(isSource ? "source" : "target", isSource ? subtitleStyle.sourceBold : subtitleStyle.targetBold)
-                }}
-              >
-                {text}
-              </p>
-            </article>
-          );
-        })
-      ) : (
-        <article
-          className={`zonedCaptionLine interim current${hiddenItemKeys.has("placeholder") ? " clipped" : ""}`}
-          data-caption-item-key="placeholder"
+      <article
+        className={`zonedCaptionStream ${streamState} current${isPlaceholder ? " placeholderText" : ""}`}
+        data-caption-item-key={layoutKey || "placeholder"}
+        ref={streamRef}
+      >
+        <p
+          aria-hidden={isPlaceholder ? true : undefined}
+          className={`zonedCaptionText ${kind}Text ${streamState}${isPlaceholder ? " placeholderText" : ""}`}
+          style={{
+            fontFamily: fontFamilyValue(isSource ? subtitleStyle.sourceFont : subtitleStyle.targetFont),
+            fontWeight: selectSubtitleFontWeight(isSource ? "source" : "target", isSource ? subtitleStyle.sourceBold : subtitleStyle.targetBold)
+          }}
         >
-          <p
-            className={`zonedCaptionText ${kind}Text interim`}
-            style={{
-              fontFamily: fontFamilyValue(isSource ? subtitleStyle.sourceFont : subtitleStyle.targetFont),
-              fontWeight: selectSubtitleFontWeight(isSource ? "source" : "target", isSource ? subtitleStyle.sourceBold : subtitleStyle.targetBold)
-            }}
-          >
-            {fallbackText}
-          </p>
-        </article>
-      )}
+          {chunks.map((chunk, index) => (
+            <span
+              aria-hidden={chunk.isPlaceholder ? true : undefined}
+              className={`zonedCaptionChunk ${chunk.state}${chunk.isPlaceholder ? " placeholderText" : ""}`}
+              data-caption-item-key={chunk.key}
+              key={chunk.key}
+            >
+              {chunk.text}{index < chunks.length - 1 ? " " : ""}
+            </span>
+          ))}
+        </p>
+      </article>
     </div>
   );
+}
+
+function useZonedCaptionLaneViewport(
+  laneRef: { current: HTMLDivElement | null },
+  streamRef: { current: HTMLElement | null },
+  layoutKey: string
+) {
+  const scheduleUpdateRef = useRef<() => void>(() => {});
+
+  useLayoutEffect(() => {
+    const lane = laneRef.current;
+    const stream = streamRef.current;
+    if (!lane || !stream) {
+      return;
+    }
+
+    let frame: number | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    const updateViewport = () => {
+      frame = null;
+      const laneStyle = window.getComputedStyle(lane);
+      const textElement = stream.querySelector<HTMLElement>(".zonedCaptionText") ?? stream;
+      const textStyle = window.getComputedStyle(textElement);
+      const lineHeight = resolveZonedCaptionLineHeight(textStyle);
+      const verticalPadding = cssPixelValue(laneStyle.paddingTop) + cssPixelValue(laneStyle.paddingBottom);
+      const availableHeight = Math.max(0, lane.clientHeight - verticalPadding);
+      const visibleLines = Math.max(1, Math.floor(availableHeight / lineHeight));
+      const visibleHeight = visibleLines * lineHeight;
+      lane.style.setProperty("--zoned-visible-lines", String(visibleLines));
+      lane.style.setProperty("--zoned-visible-height", `${visibleHeight}px`);
+      const scrollTop = selectZonedCaptionAlignedScrollTop(stream, textElement, visibleLines, lineHeight);
+      if (Math.abs(stream.scrollTop - scrollTop) > 1) {
+        stream.scrollTop = scrollTop;
+      }
+    };
+
+    const scheduleUpdate = () => {
+      if (frame !== null) {
+        return;
+      }
+      frame = window.requestAnimationFrame(updateViewport);
+    };
+
+    scheduleUpdateRef.current = scheduleUpdate;
+    scheduleUpdate();
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(scheduleUpdate);
+      resizeObserver.observe(lane);
+      resizeObserver.observe(stream);
+    }
+
+    return () => {
+      scheduleUpdateRef.current = () => {};
+      resizeObserver?.disconnect();
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [laneRef, streamRef]);
+
+  useLayoutEffect(() => {
+    scheduleUpdateRef.current();
+  }, [layoutKey]);
+}
+
+function selectZonedCaptionAlignedScrollTop(
+  stream: HTMLElement,
+  textElement: HTMLElement,
+  visibleLines: number,
+  lineHeight: number
+) {
+  const maxScrollTop = Math.max(0, stream.scrollHeight - stream.clientHeight);
+  const lineOffsets = measureZonedCaptionLineOffsets(textElement);
+  if (lineOffsets.length > visibleLines) {
+    const firstVisibleLineTop = lineOffsets[Math.max(0, lineOffsets.length - visibleLines)] ?? 0;
+    return Math.max(0, Math.min(maxScrollTop, Math.round(firstVisibleLineTop)));
+  }
+
+  const rawScrollTop = Math.max(0, stream.scrollHeight - stream.clientHeight);
+  return Math.max(0, Math.min(rawScrollTop, Math.floor(rawScrollTop / Math.max(lineHeight, 1)) * lineHeight));
+}
+
+function measureZonedCaptionLineOffsets(textElement: HTMLElement) {
+  const range = document.createRange();
+  range.selectNodeContents(textElement);
+  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+  range.detach();
+  if (rects.length === 0) {
+    return [];
+  }
+
+  const tops: number[] = [];
+  for (const rect of rects.sort((a, b) => a.top - b.top)) {
+    const previousTop = tops.at(-1);
+    if (previousTop === undefined || Math.abs(rect.top - previousTop) > 2) {
+      tops.push(rect.top);
+    }
+  }
+
+  const firstTop = tops[0] ?? 0;
+  return tops.map((top) => top - firstTop);
+}
+
+function resolveZonedCaptionLineHeight(style: CSSStyleDeclaration) {
+  const parsedLineHeight = cssPixelValue(style.lineHeight);
+  if (parsedLineHeight > 0) {
+    return parsedLineHeight;
+  }
+  const fontSize = cssPixelValue(style.fontSize);
+  return Math.max(1, fontSize * 1.25);
+}
+
+function cssPixelValue(value: string) {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+type ZonedCaptionLaneChunk = {
+  key: string;
+  text: string;
+  state: CaptionLine["state"];
+  isPlaceholder: boolean;
+};
+
+function createZonedCaptionFallbackChunk(text: string): ZonedCaptionLaneChunk {
+  return {
+    key: "placeholder",
+    text,
+    state: "interim",
+    isPlaceholder: true
+  };
+}
+
+function selectZonedCaptionLaneChunks(
+  kind: "source" | "target",
+  lines: CaptionLine[],
+  subtitleStyle: SubtitleStyleState
+): ZonedCaptionLaneChunk[] {
+  const isSource = kind === "source";
+  const chunks: ZonedCaptionLaneChunk[] = [];
+
+  for (const line of lines) {
+    const block = selectCaptionTextBlocks(line, subtitleStyle)[0];
+    const rawText = isSource ? block.sourceText : block.targetText;
+    const text = rawText.replace(/\s+/g, " ").trim();
+    const blockIsPlaceholder = isSource ? block.isSourcePlaceholder : block.isTargetPlaceholder;
+    if (!text || blockIsPlaceholder) {
+      continue;
+    }
+    chunks.push({
+      key: `${kind}:${line.id}`,
+      text,
+      state: line.state,
+      isPlaceholder: false
+    });
+  }
+
+  return chunks;
 }
 
 function OverlayCaptionHistory({
@@ -4118,15 +4345,18 @@ function OverlayToolbar({
         ) : null}
       </div>
       <div className="overlayIconGroup">
-        <button
-          className={isInteractionLocked ? "selected unlockButton" : ""}
-          title={isInteractionLocked ? "解锁字幕交互" : "锁定字幕并鼠标穿透"}
-          onClick={onInteractionLockToggle}
-          type="button"
-        >
-          <ToolbarIcon name={isInteractionLocked ? "unlock" : "lock"} />
-          {isInteractionLocked ? <span>解锁</span> : null}
-        </button>
+        <div className={isInteractionLocked ? "lockToggleWrap locked" : "lockToggleWrap"}>
+          <button
+            aria-label={isInteractionLocked ? "解锁字幕" : "锁定字幕"}
+            className={isInteractionLocked ? "lockToggleButton selected" : "lockToggleButton"}
+            title={isInteractionLocked ? "解锁字幕" : "锁定字幕"}
+            onClick={onInteractionLockToggle}
+            type="button"
+          >
+            <ToolbarIcon name={isInteractionLocked ? "unlock" : "lock"} />
+          </button>
+          <span className="lockToggleHint">{isInteractionLocked ? "解锁字幕" : "锁定字幕"}</span>
+        </div>
         <button className={isPinned ? "selected" : ""} title={isPinned ? "取消置顶" : "置于顶层"} onClick={onPinToggle} type="button">
           <ToolbarIcon name="pin" />
         </button>

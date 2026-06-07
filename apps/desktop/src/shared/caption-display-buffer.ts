@@ -234,6 +234,15 @@ function updateLane(
     };
   }
 
+  if (shouldHoldVisibleTextDuringMajorRewrite(previous.visibleText, desiredTextForDisplay, flush)) {
+    return {
+      desiredText: desiredTextForDisplay,
+      visibleText: previous.visibleText,
+      lastTypedAtMs: previous.lastTypedAtMs,
+      revisedUntilMs
+    };
+  }
+
   const commonPrefix = longestCommonPrefix(previous.visibleText, desiredTextForDisplay);
   const stablePrefix = previous.visibleText.slice(0, commonPrefix);
   const visibleText = advanceVisibleText(stablePrefix, desiredTextForDisplay, previous.lastTypedAtMs, nowMs, lane, !flush);
@@ -281,6 +290,25 @@ function advanceVisibleText(
     return currentVisibleText;
   }
   return takeGraphemeSegments(desiredChars, Math.min(nextLength, desiredChars.length));
+}
+
+function shouldHoldVisibleTextDuringMajorRewrite(
+  previousVisibleText: string,
+  desiredText: string,
+  flush: boolean
+): boolean {
+  if (flush || !previousVisibleText.trim() || desiredText.startsWith(previousVisibleText)) {
+    return false;
+  }
+  const previousChars = graphemes(previousVisibleText);
+  if (previousChars.length < 24) {
+    return false;
+  }
+  const desiredChars = graphemes(desiredText);
+  const commonPrefix = longestCommonGraphemePrefix(previousChars, desiredChars);
+  const changedVisibleChars = previousChars.length - commonPrefix;
+  const commonRatio = commonPrefix / Math.max(previousChars.length, 1);
+  return commonRatio < 0.82 && changedVisibleChars >= 8;
 }
 
 function calculateLiveCatchUpLength(

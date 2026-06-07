@@ -61,6 +61,7 @@ class _LiveSegmentState:
     rev: int = 0
     source_text: str = ""
     target_text: str = ""
+    source_seen: bool = False
     source_done: bool = False
     target_done: bool = False
 
@@ -73,6 +74,7 @@ class _LiveSegmentState:
         self.rev = 0
         self.source_text = ""
         self.target_text = ""
+        self.source_seen = False
         self.source_done = False
         self.target_done = False
 
@@ -182,6 +184,7 @@ class QwenLiveTranslateEngine(InterpretationEngine):
 
                 source_text = _source_text_from_payload(payload)
                 if source_text:
+                    state.source_seen = True
                     state.source_text = source_text
                     source_done_event = (
                         message_type == "conversation.item.input_audio_transcription.completed"
@@ -203,7 +206,7 @@ class QwenLiveTranslateEngine(InterpretationEngine):
                             metrics={"qwen_livetranslate_source_update": 1.0},
                         )
                     )
-                    if state.source_done and state.target_done and state.target_text:
+                    if _ready_to_commit(state):
                         await queue.put(self._commit_event(state=state, window=window))
                         state.reset()
                         continue
@@ -228,7 +231,7 @@ class QwenLiveTranslateEngine(InterpretationEngine):
                             metrics={"qwen_livetranslate_done": 1.0 if done_event else 0.0},
                         )
                     )
-                    if state.source_done and state.target_done:
+                    if _ready_to_commit(state):
                         await queue.put(self._commit_event(state=state, window=window))
                         state.reset()
                         continue
@@ -361,6 +364,12 @@ class QwenLiveTranslateEngine(InterpretationEngine):
             "language": None if self.config.source_lang == "auto" else self.config.source_lang,
         }
         return {"event_id": _event_id(), "type": "session.update", "session": session}
+
+
+def _ready_to_commit(state: _LiveSegmentState) -> bool:
+    if not state.target_done or not state.target_text:
+        return False
+    return state.source_done if state.source_seen else True
 
 
 def _event_id() -> str:

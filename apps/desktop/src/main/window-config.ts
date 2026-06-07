@@ -39,7 +39,7 @@ export const OVERLAY_WINDOW_PRESET: DesktopWindowPreset = {
   show: false,
   frame: false,
   transparent: true,
-  alwaysOnTop: true,
+  alwaysOnTop: false,
   skipTaskbar: true,
   resizable: false,
   hasShadow: false,

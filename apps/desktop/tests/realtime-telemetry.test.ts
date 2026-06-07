@@ -125,6 +125,7 @@ describe("实时事件遥测", () => {
         final: true,
         metrics: {
           tts_first_audio_ms: 180,
+          tts_queue_wait_ms: 35,
           tts_total_ms: 420,
           tts_audio_chunks: 3,
           tts_audio_bytes: 12288
@@ -145,6 +146,7 @@ describe("实时事件遥测", () => {
       translationFirstTokenMs: undefined,
       translationLatencyMs: undefined,
       ttsFirstAudioMs: 180,
+      ttsQueueWaitMs: 35,
       ttsTotalMs: 420,
       ttsAudioChunks: 3,
       ttsAudioBytes: 12288

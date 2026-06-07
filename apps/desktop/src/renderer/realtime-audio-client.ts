@@ -66,6 +66,7 @@ export type RealtimeAudioClientOptions = {
   sourceId: DesktopAudioSourceId;
   sourceLang?: string;
   endpointBaseUrl?: string;
+  endToEndSourceBackfill?: boolean;
   recorder?: SessionRecorder;
   sessionId?: string;
   telemetryWindowMs?: number;
@@ -77,6 +78,7 @@ export type RealtimeAudioClientOptions = {
 export function createRealtimeAudioClient({
   asrLatencyMode = "balanced",
   asrProvider,
+  endToEndSourceBackfill = true,
   endpointBaseUrl = DEFAULT_REALTIME_WS_URL,
   recorder = createSessionRecorder(),
   sessionId = createSessionId(),
@@ -134,7 +136,8 @@ export function createRealtimeAudioClient({
         source_kind: sourceKindForSource(sourceId),
         device_id: sourceId,
         trace_id: sessionId,
-        asr_latency_mode: asrLatencyMode
+        asr_latency_mode: asrLatencyMode,
+        end_to_end_source_backfill: endToEndSourceBackfill
       };
       if (asrProvider) {
         startMessage.asr_provider = asrProvider;

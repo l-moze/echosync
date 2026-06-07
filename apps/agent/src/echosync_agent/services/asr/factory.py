@@ -97,8 +97,6 @@ def build_transcriber_from_settings(
                 ),
             )
         )
-    if settings.asr_provider == "qwen-livetranslate":
-        raise ValueError("Qwen LiveTranslate 是端到端听译引擎，不应通过 ASR 工厂创建。")
     raise ValueError(f"不支持的 ASR 供应商：{settings.asr_provider}")
 
 

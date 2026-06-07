@@ -65,6 +65,39 @@ def test_qwen_livetranslate_engine_emits_source_translation_and_commit() -> None
     assert any(_is_control_payload(payload, "session.finish") for payload in sent)
 
 
+def test_qwen_livetranslate_engine_commits_target_only_output() -> None:
+    async def scenario() -> list[object]:
+        socket = FakeQwenSocket(
+            [
+                {
+                    "type": "response.audio_transcript.text",
+                    "target_text": "所以",
+                },
+                {
+                    "type": "response.text.done",
+                    "target_text": "所以这是其中一个局限性。",
+                },
+                {"type": "session.finished"},
+            ]
+        )
+        engine = QwenLiveTranslateEngine(
+            QwenLiveTranslateConfig(api_key="test-key", target_lang="zh-CN"),
+            connect_factory=lambda _url, _headers: socket,
+        )
+
+        return [event async for event in engine.stream(_frames())]
+
+    events = asyncio.run(scenario())
+
+    translations = [event for event in events if isinstance(event, TranslationSegment)]
+    commits = [event for event in events if isinstance(event, SegmentCommit)]
+    assert [event.source_text for event in translations] == ["", ""]
+    assert translations[-1].status == SegmentStatus.COMMITTED
+    assert len(commits) == 1
+    assert commits[0].source_text == ""
+    assert commits[0].target_text == "所以这是其中一个局限性。"
+
+
 async def _frames() -> AsyncIterator[AudioFrame]:
     yield AudioFrame(
         session_id="sess_qwen_live",

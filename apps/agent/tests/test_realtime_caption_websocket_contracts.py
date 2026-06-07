@@ -31,6 +31,7 @@ def test_realtime_websocket_publishes_translated_captions_to_caption_clients() -
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
@@ -106,6 +107,7 @@ def test_realtime_websocket_rejects_mock_asr_for_real_audio_sources() -> None:
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
@@ -134,6 +136,7 @@ def test_caption_app_exposes_realtime_capabilities() -> None:
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
@@ -301,17 +304,17 @@ def test_transport_latency_uses_low_32_bit_timestamp() -> None:
     assert _transport_latency_ms_from_low32(sent_at_ms_low, now_ms=now_ms + 37) == 37.0
 
 
-def test_realtime_session_cancels_pipeline_on_user_stop() -> None:
-    asyncio.run(_run_realtime_session_user_stop_cancels_pipeline_test())
+def test_realtime_session_drains_pipeline_on_user_stop() -> None:
+    asyncio.run(_run_realtime_session_user_stop_drains_pipeline_test())
 
 
-def test_realtime_session_user_stop_suppresses_prefailed_pipeline(monkeypatch: Any) -> None:
+def test_realtime_session_user_stop_reports_prefailed_pipeline(monkeypatch: Any) -> None:
     monkeypatch.setattr(
         "echosync_agent.transport.realtime_ws.build_demo_pipeline",
         lambda **_kwargs: (_FailingPipeline(), object()),
     )
 
-    asyncio.run(_run_realtime_session_user_stop_suppresses_prefailed_pipeline_test())
+    asyncio.run(_run_realtime_session_user_stop_reports_prefailed_pipeline_test())
 
 
 def test_realtime_session_publishes_active_pipeline_failure(monkeypatch: Any) -> None:
@@ -642,7 +645,7 @@ async def _run_realtime_session_audio_final_control_test() -> None:
     await session.run()
 
 
-async def _run_realtime_session_user_stop_cancels_pipeline_test() -> None:
+async def _run_realtime_session_user_stop_drains_pipeline_test() -> None:
     settings = replace(
         Settings.from_env(),
         asr_provider="mock",
@@ -678,8 +681,14 @@ async def _run_realtime_session_user_stop_cancels_pipeline_test() -> None:
 
     await session.run()
 
-    assert websocket.sent_messages == []
-    assert not [event for event in hub.events if event[0] == "realtime.done"]
+    assert websocket.sent_messages == [
+        {
+            "type": "realtime.done",
+            "session_id": "sess_user_stop",
+            "trace_id": "sess_user_stop",
+        }
+    ]
+    assert [event for event in hub.events if event[0] == "realtime.done"]
 
 
 async def _run_realtime_session_start_error_does_not_send_done_test() -> None:
@@ -687,6 +696,7 @@ async def _run_realtime_session_start_error_does_not_send_done_test() -> None:
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     websocket = _MemoryWebSocket(
@@ -716,7 +726,7 @@ async def _run_realtime_session_start_error_does_not_send_done_test() -> None:
     assert not [event for event in hub.events if event[0] == "realtime.done"]
 
 
-async def _run_realtime_session_user_stop_suppresses_prefailed_pipeline_test() -> None:
+async def _run_realtime_session_user_stop_reports_prefailed_pipeline_test() -> None:
     settings = replace(
         Settings.from_env(),
         asr_provider="mock",
@@ -745,12 +755,12 @@ async def _run_realtime_session_user_stop_suppresses_prefailed_pipeline_test() -
 
     await session.run()
 
-    assert websocket.sent_messages == []
-    assert not [event for event in hub.events if event[0] == "realtime.error"]
-    done_messages = [
+    assert websocket.sent_messages[0]["type"] == "realtime.error"
+    assert "provider connect failed" in websocket.sent_messages[0]["message"]
+    assert [event for event in hub.events if event[0] == "realtime.error"]
+    assert not [
         message for message in websocket.sent_messages if message["type"] == "realtime.done"
     ]
-    assert not done_messages
 
 
 async def _run_realtime_session_active_pipeline_failure_test() -> None:

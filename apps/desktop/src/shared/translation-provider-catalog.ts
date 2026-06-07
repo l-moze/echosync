@@ -1,4 +1,4 @@
-export type TranslationProviderId = "mock" | "deepseek" | "deepl";
+export type TranslationProviderId = "mock" | "deepseek" | "deepl" | "qwen-livetranslate";
 export type TranslationProviderSelection = "server-default" | TranslationProviderId;
 
 export type TranslationProviderOption = {
@@ -25,6 +25,12 @@ export const TRANSLATION_PROVIDER_OPTIONS: TranslationProviderOption[] = [
     label: "DeepL",
     description: "批量请求专用翻译",
     providerId: "deepl"
+  },
+  {
+    id: "qwen-livetranslate",
+    label: "Qwen 端到端同传",
+    description: "阿里云音频直译，默认用识别模型补原文",
+    providerId: "qwen-livetranslate"
   },
   {
     id: "mock",

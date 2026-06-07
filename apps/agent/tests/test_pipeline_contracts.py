@@ -93,14 +93,22 @@ def test_pipeline_emits_nonfatal_tts_error_when_synthesis_fails(
             model: str,
             output_format: str,
             optimize_streaming_latency: int | None,
+            similarity_boost: float,
             speed: float,
+            stability: float,
+            style: float,
+            use_speaker_boost: bool,
         ) -> None:
             self.api_key = api_key
             self.voice_id = voice_id
             self.model = model
             self.output_format = output_format
             self.optimize_streaming_latency = optimize_streaming_latency
+            self.similarity_boost = similarity_boost
             self.speed = speed
+            self.stability = stability
+            self.style = style
+            self.use_speaker_boost = use_speaker_boost
 
         async def synthesize(self, _segment: object) -> AsyncIterator[bytes]:
             if False:
