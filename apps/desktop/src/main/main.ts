@@ -1,5 +1,6 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, screen, session } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, screen, session } from "electron";
 import log from "electron-log/main";
+import fs from "node:fs/promises";
 import path from "node:path";
 import WebSocket from "ws";
 
@@ -12,7 +13,12 @@ import {
   fetchAgentCapabilities
 } from "./agent-capabilities-client";
 import { buildRealtimeEventTelemetry } from "../shared/realtime-telemetry";
-import type { SessionRecordDraftInput, SessionRecordExportFormat, SessionRecordSummary } from "../shared/session-records";
+import type {
+  SessionRecordDraftInput,
+  SessionRecordExportFormat,
+  SessionRecordSegmentUpdateInput,
+  SessionRecordSummary
+} from "../shared/session-records";
 import { createCaptionEventBuffer } from "./caption-event-buffer";
 import { resolveAppIconPath } from "./desktop-resources";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
@@ -29,6 +35,10 @@ import {
   type OverlayWindowSizeState,
   type OverlayWindowState
 } from "./overlay-window-state";
+import {
+  buildSessionRecordExportPayload,
+  exportDialogFilters
+} from "./session-record-exporter";
 import { createSessionRecordStore } from "./session-record-store";
 import { createSessionSummaryGeneratorFromEnv } from "./session-summary-generator";
 import { runSessionSummaryGeneration } from "./session-summary-runner";
@@ -245,6 +255,16 @@ function registerIpc() {
     notifySessionRecordChanged(id);
     return record;
   });
+  ipcMain.handle("session-records:update-segment", async (_event, id: string, segmentId: string, input: SessionRecordSegmentUpdateInput) => {
+    const record = await sessionRecordStore.updateSegment(id, segmentId, input);
+    notifySessionRecordChanged(id);
+    return record;
+  });
+  ipcMain.handle("session-records:delete-segment", async (_event, id: string, segmentId: string) => {
+    const record = await sessionRecordStore.deleteSegment(id, segmentId);
+    notifySessionRecordChanged(id);
+    return record;
+  });
   ipcMain.handle("session-records:generate-summary", (_event, id: string) => generateSessionSummary(id));
   ipcMain.handle("session-records:rename", (_event, id: string, title: string) =>
     sessionRecordStore.rename(id, title)
@@ -253,6 +273,34 @@ function registerIpc() {
   ipcMain.handle("session-records:export", (_event, id: string, format: SessionRecordExportFormat) =>
     sessionRecordStore.exportRecord(id, format)
   );
+  ipcMain.handle("session-records:save-export", async (event, id: string, format: SessionRecordExportFormat) => {
+    const record = await sessionRecordStore.get(id);
+    if (!record) {
+      throw new Error(`未找到会议记录：${id}`);
+    }
+    const payload = await buildSessionRecordExportPayload(record, format);
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+    const options: Electron.SaveDialogOptions = {
+      defaultPath: payload.fileName,
+      filters: exportDialogFilters(format),
+      properties: ["createDirectory", "showOverwriteConfirmation"]
+    };
+    const result = owner
+      ? await dialog.showSaveDialog(owner, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) {
+      return {
+        canceled: true,
+        format
+      };
+    }
+    await fs.writeFile(result.filePath, payload.data);
+    return {
+      canceled: false,
+      format,
+      path: result.filePath
+    };
+  });
   ipcMain.handle("session-records:get-audio-data", (_event, id: string) =>
     sessionRecordStore.getAudioData(id)
   );

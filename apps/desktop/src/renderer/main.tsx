@@ -81,12 +81,12 @@ import {
 } from "../shared/subtitle-style-state";
 import { cleanTranscriptLines, serializeTranscriptMarkdown, serializeTranscriptSrt } from "../shared/session-export";
 import {
+  SESSION_RECORD_EXPORT_FORMATS,
   filterSessionRecordsByTitle,
   formatDateTimeForRecord,
   formatDurationForRecord,
   normalizeSessionRecordSegmentsTiming,
   selectSessionRecordPlaybackSegmentId,
-  serializeSessionRecordMarkdown,
   type SessionRecord,
   type SessionRecordDraftInput,
   type SessionRecordExportFormat,
@@ -130,6 +130,9 @@ import { resolveDesktopWindowRole } from "./window-role";
 import "./styles.css";
 
 const fontOptions = ["System", "Inter", "Segoe UI", "Microsoft YaHei"];
+const RECORD_DETAIL_EXPORT_FORMATS = SESSION_RECORD_EXPORT_FORMATS.filter((format) =>
+  ["docx", "markdown", "txt", "csv"].includes(format.id)
+);
 type NavigationConfirmReason = "active_session" | "startup_cancel" | "dirty_export" | null;
 type SessionArchiveSaveStatus = {
   message: string;
@@ -2275,6 +2278,11 @@ function SessionRecordsWindow({
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [exportStatus, setExportStatus] = useState("");
+  const [segmentActionStatus, setSegmentActionStatus] = useState("");
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
+  const [segmentEditSourceText, setSegmentEditSourceText] = useState("");
+  const [segmentEditTargetText, setSegmentEditTargetText] = useState("");
+  const [selectedExportFormat, setSelectedExportFormat] = useState<SessionRecordExportFormat>("docx");
   const [renameStatus, setRenameStatus] = useState("");
   const [reviewScale, setReviewScale] = useState(1);
   const [recordAudioUrl, setRecordAudioUrl] = useState<string | null>(null);
@@ -2312,6 +2320,10 @@ function SessionRecordsWindow({
       setPlaybackMs(0);
       setActiveRecordSegmentId(null);
       setTitleDraft("");
+      setSegmentActionStatus("");
+      setEditingSegmentId(null);
+      setSegmentEditSourceText("");
+      setSegmentEditTargetText("");
       pendingRecordSeekMsRef.current = null;
       pendingRecordPlayRef.current = false;
       return;
@@ -2322,6 +2334,10 @@ function SessionRecordsWindow({
     async function loadRecord() {
       setSelectedRecordLoading(true);
       setExportStatus("");
+      setSegmentActionStatus("");
+      setEditingSegmentId(null);
+      setSegmentEditSourceText("");
+      setSegmentEditTargetText("");
       setRenameStatus("");
       setSelectedRecord(null);
       setRecordAudioPlaybackUrl(null);
@@ -2451,18 +2467,94 @@ function SessionRecordsWindow({
     }
   }
 
-  async function exportSelectedRecord(format: SessionRecordExportFormat = "markdown") {
+  async function exportSelectedRecord(format: SessionRecordExportFormat = "docx") {
     if (!selectedRecord) {
       return;
     }
     try {
-      const result = await window.echosyncDesktop?.sessionRecords.export(selectedRecord.id, format);
-      const fallbackText = format === "markdown" ? serializeSessionRecordMarkdown(selectedRecord) : "";
-      await window.echosyncDesktop?.copyText(result?.text ?? fallbackText);
-      setExportStatus(format === "markdown" ? "Markdown 已复制" : `${sessionRecordExportFormatLabel(format)} 已复制`);
+      const result = await window.echosyncDesktop?.sessionRecords.saveExport(selectedRecord.id, format);
+      if (!result) {
+        throw new Error("桌面端没有返回导出结果。");
+      }
+      if (result?.canceled) {
+        setExportStatus("已取消导出");
+        return;
+      }
+      setExportStatus(`${sessionRecordExportFormatLabel(format)} 已导出到本地`);
     } catch (error) {
       log.warn("[session-records] 导出会议记录失败:", error);
       setExportStatus("导出失败");
+    }
+  }
+
+  async function copyRecordSegment(segment: SessionRecordSegment) {
+    try {
+      await window.echosyncDesktop?.copyText(recordSegmentClipboardText(segment));
+      setSegmentActionStatus("片段已复制");
+    } catch (error) {
+      log.warn("[session-records] 复制会议记录片段失败:", error);
+      setSegmentActionStatus("片段复制失败");
+    }
+  }
+
+  function startEditingRecordSegment(segment: SessionRecordSegment) {
+    setEditingSegmentId(segment.id);
+    setSegmentEditSourceText(selectedRecordSegmentSourceText(segment));
+    setSegmentEditTargetText(selectedRecordSegmentTargetText(segment));
+    setSegmentActionStatus("");
+  }
+
+  function cancelEditingRecordSegment() {
+    setEditingSegmentId(null);
+    setSegmentEditSourceText("");
+    setSegmentEditTargetText("");
+  }
+
+  async function saveEditedRecordSegment(segment: SessionRecordSegment) {
+    if (!selectedRecord) {
+      return;
+    }
+    try {
+      const updated = await window.echosyncDesktop?.sessionRecords.updateSegment(selectedRecord.id, segment.id, {
+        sourceText: segmentEditSourceText,
+        targetText: segmentEditTargetText
+      });
+      if (updated) {
+        setSelectedRecord(normalizeSessionRecordForReview(updated));
+      }
+      await onRecordsChanged();
+      cancelEditingRecordSegment();
+      setSegmentActionStatus("片段已更新");
+    } catch (error) {
+      log.warn("[session-records] 修改会议记录片段失败:", error);
+      setSegmentActionStatus("片段更新失败");
+    }
+  }
+
+  async function deleteRecordSegment(segment: SessionRecordSegment) {
+    if (!selectedRecord) {
+      return;
+    }
+    if (!window.confirm("删除这个片段？")) {
+      return;
+    }
+    try {
+      const updated = await window.echosyncDesktop?.sessionRecords.deleteSegment(selectedRecord.id, segment.id);
+      if (updated) {
+        const normalizedRecord = normalizeSessionRecordForReview(updated);
+        setSelectedRecord(normalizedRecord);
+        if (activeRecordSegmentId === segment.id) {
+          setActiveRecordSegmentId(normalizedRecord.segments[0]?.id ?? null);
+        }
+      }
+      if (editingSegmentId === segment.id) {
+        cancelEditingRecordSegment();
+      }
+      await onRecordsChanged();
+      setSegmentActionStatus("片段已删除");
+    } catch (error) {
+      log.warn("[session-records] 删除会议记录片段失败:", error);
+      setSegmentActionStatus("片段删除失败");
     }
   }
 
@@ -2734,9 +2826,21 @@ function SessionRecordsWindow({
             <div className="recordDetailActions">
               <button onClick={() => setReviewScale((value) => Math.max(0.9, Number((value - 0.05).toFixed(2))))}>字号 -</button>
               <button onClick={() => setReviewScale((value) => Math.min(1.25, Number((value + 0.05).toFixed(2))))}>字号 +</button>
-              <button onClick={() => void exportSelectedRecord("txt")}>TXT</button>
-              <button onClick={() => void exportSelectedRecord("srt")}>SRT</button>
-              <button className="primaryAction" onClick={() => void exportSelectedRecord()}>导出</button>
+              <div className="recordExportRow">
+                <select
+                  aria-label="导出格式"
+                  className="recordExportFormatSelect"
+                  onChange={(event) => setSelectedExportFormat(event.target.value as SessionRecordExportFormat)}
+                  value={selectedExportFormat}
+                >
+                  {RECORD_DETAIL_EXPORT_FORMATS.map((format) => (
+                    <option key={format.id} value={format.id}>
+                      {format.label}
+                    </option>
+                  ))}
+                </select>
+                <button className="primaryAction" onClick={() => void exportSelectedRecord(selectedExportFormat)}>导出</button>
+              </div>
               {exportStatus ? <span className="recordExportStatus" role="status">{exportStatus}</span> : null}
             </div>
           </header>
@@ -2804,26 +2908,77 @@ function SessionRecordsWindow({
           <div className="recordDetailLayout">
             <div className="recordTranscriptList" style={{ fontSize: `${reviewScale}em` }} aria-label="双语片段">
               {selectedRecord.segments.length > 0 ? (
-                selectedRecord.segments.map((segment) => (
-                  <article
-                    className={segment.id === activeRecordSegmentId ? "recordSegmentPair active" : "recordSegmentPair"}
-                    key={segment.id}
-                    onClick={() => seekToRecordSegment(segment)}
-                    onKeyDown={(event) => handleRecordSegmentKeyDown(segment, event)}
-                    ref={(node) => {
-                      recordSegmentRefs.current[segment.id] = node;
-                    }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <time>{formatTime(segment.startMs)}-{formatTime(segment.endMs)}</time>
-                    <p className="recordSegmentSource">{selectedRecordSegmentSourceText(segment) || "原文为空"}</p>
-                    <p className="recordSegmentTarget">{selectedRecordSegmentTargetText(segment) || "译文待补全"}</p>
-                  </article>
-                ))
+                selectedRecord.segments.map((segment) => {
+                  const isEditingSegment = editingSegmentId === segment.id;
+                  return (
+                    <article
+                      className={segment.id === activeRecordSegmentId ? "recordSegmentPair active" : "recordSegmentPair"}
+                      key={segment.id}
+                      onClick={() => seekToRecordSegment(segment)}
+                      onKeyDown={(event) => handleRecordSegmentKeyDown(segment, event)}
+                      ref={(node) => {
+                        recordSegmentRefs.current[segment.id] = node;
+                      }}
+                      role="button"
+                      tabIndex={0}
+                    >
+                      <div className="recordSegmentHeader">
+                        <time>{formatTime(segment.startMs)}-{formatTime(segment.endMs)}</time>
+                        <div
+                          className="recordSegmentActions"
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <button type="button" onClick={(event) => { event.stopPropagation(); void copyRecordSegment(segment); }}>复制</button>
+                          {isEditingSegment ? (
+                            <>
+                              <button type="button" onClick={(event) => { event.stopPropagation(); void saveEditedRecordSegment(segment); }}>保存</button>
+                              <button type="button" onClick={(event) => { event.stopPropagation(); cancelEditingRecordSegment(); }}>取消</button>
+                            </>
+                          ) : (
+                            <button type="button" onClick={(event) => { event.stopPropagation(); startEditingRecordSegment(segment); }}>修改</button>
+                          )}
+                          <button className="dangerSegmentAction" type="button" onClick={(event) => { event.stopPropagation(); void deleteRecordSegment(segment); }}>删除</button>
+                        </div>
+                      </div>
+                      {isEditingSegment ? (
+                        <div
+                          className="recordSegmentEditForm"
+                          onClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => event.stopPropagation()}
+                        >
+                          <label className="recordSegmentEditField">
+                            <span>字幕</span>
+                            <textarea
+                              aria-label="编辑字幕"
+                              onChange={(event) => setSegmentEditSourceText(event.target.value)}
+                              placeholder="修改字幕"
+                              value={segmentEditSourceText}
+                            />
+                          </label>
+                          <label className="recordSegmentEditField">
+                            <span>翻译内容</span>
+                            <textarea
+                              aria-label="编辑翻译内容"
+                              onChange={(event) => setSegmentEditTargetText(event.target.value)}
+                              placeholder="修改翻译内容"
+                              value={segmentEditTargetText}
+                            />
+                          </label>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="recordSegmentSource">{selectedRecordSegmentSourceText(segment) || "原文为空"}</p>
+                          <p className="recordSegmentTarget">{selectedRecordSegmentTargetText(segment) || "译文待补全"}</p>
+                        </>
+                      )}
+                    </article>
+                  );
+                })
               ) : (
                 <p className="archiveMissing">这条记录没有可复盘文本。</p>
               )}
+              {segmentActionStatus ? <span className="recordSegmentActionStatus" role="status">{segmentActionStatus}</span> : null}
             </div>
             <aside className="recordSummaryAside" aria-label="摘要与元数据">
               <section>
@@ -2921,8 +3076,17 @@ function selectedRecordSegmentTargetText(segment: SessionRecordSegment) {
   return segment.targetEditedText ?? segment.targetText;
 }
 
+function recordSegmentClipboardText(segment: SessionRecordSegment) {
+  return [selectedRecordSegmentSourceText(segment), selectedRecordSegmentTargetText(segment)]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function sessionRecordExportFormatLabel(format: SessionRecordExportFormat) {
   const labels: Record<SessionRecordExportFormat, string> = {
+    csv: "CSV",
+    docx: "DOCX",
+    json: "JSON",
     markdown: "Markdown",
     srt: "SRT",
     txt: "TXT"

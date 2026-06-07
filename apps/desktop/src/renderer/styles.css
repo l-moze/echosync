@@ -1054,6 +1054,7 @@ button:focus-visible {
 
 .recordActions button,
 .recordDetailActions button,
+.recordExportFormatSelect,
 .recordDeleteConfirm button {
   min-height: 30px;
   padding: 0 10px;
@@ -1063,6 +1064,10 @@ button:focus-visible {
   color: #526070;
   font-size: 12px;
   font-weight: 740;
+}
+
+.recordExportFormatSelect {
+  min-width: 104px;
 }
 
 .recordActions button:hover,
@@ -1089,6 +1094,16 @@ button:focus-visible {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.recordExportRow {
+  display: grid;
+  grid-template-columns: minmax(104px, 120px) minmax(96px, auto);
+  gap: 8px;
+  flex-basis: 100%;
+  justify-content: end;
+  justify-items: stretch;
+  max-width: 224px;
 }
 
 .recordDetailActions .primaryAction {
@@ -1198,6 +1213,46 @@ button:focus-visible {
   transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
+.recordSegmentHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.recordSegmentActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.recordSegmentActions button,
+.recordSegmentEditActions button {
+  min-height: 24px;
+  padding: 0 7px;
+  border: 1px solid rgba(213, 221, 234, 0.96);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #526070;
+  font-size: 11px;
+  font-weight: 740;
+}
+
+.recordSegmentActions button:hover,
+.recordSegmentActions button:focus-visible,
+.recordSegmentEditActions button:hover,
+.recordSegmentEditActions button:focus-visible {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.recordSegmentActions .dangerSegmentAction {
+  border-color: rgba(184, 75, 75, 0.22);
+  color: #9a3737;
+}
+
 .recordSegmentPair:hover,
 .recordSegmentPair:focus-visible {
   border-color: rgba(37, 105, 232, 0.28);
@@ -1215,6 +1270,52 @@ button:focus-visible {
   color: var(--muted);
   font-size: 11px;
   font-weight: 760;
+}
+
+.recordSegmentEditForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+  cursor: text;
+}
+
+.recordSegmentEditField {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.recordSegmentEditField span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.recordSegmentEditField textarea {
+  width: 100%;
+  min-height: 62px;
+  min-width: 0;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid rgba(206, 214, 225, 0.9);
+  border-radius: 7px;
+  background: #ffffff;
+  color: #26303d;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.recordSegmentEditField textarea:focus {
+  border-color: rgba(37, 105, 232, 0.36);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(37, 105, 232, 0.08);
+}
+
+.recordSegmentEditActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .recordSegmentPair p {
@@ -1236,6 +1337,19 @@ button:focus-visible {
   color: #445060;
   font-size: 0.95em;
   line-height: 1.65;
+}
+
+.recordSegmentActionStatus {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+@media (max-width: 720px) {
+  .recordSegmentEditForm {
+    grid-template-columns: 1fr;
+  }
 }
 
 .recordSummaryAside {

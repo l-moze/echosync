@@ -8,6 +8,8 @@ import type {
   SessionRecordExportFormat,
   SessionRecordExportResult,
   SessionRecordListItem,
+  SessionRecordSaveExportResult,
+  SessionRecordSegmentUpdateInput,
   SessionRecordSummary
 } from "./session-records";
 
@@ -35,10 +37,13 @@ export type DesktopApi = {
     get: (id: string) => Promise<SessionRecord | null>;
     saveDraft: (input: SessionRecordDraftInput) => Promise<SessionRecord>;
     updateSummary: (id: string, summary: Partial<SessionRecordSummary>) => Promise<SessionRecord>;
+    updateSegment: (id: string, segmentId: string, input: SessionRecordSegmentUpdateInput) => Promise<SessionRecord>;
+    deleteSegment: (id: string, segmentId: string) => Promise<SessionRecord>;
     generateSummary: (id: string) => Promise<void>;
     rename: (id: string, title: string) => Promise<SessionRecord>;
     delete: (id: string) => Promise<void>;
     export: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
+    saveExport: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordSaveExportResult>;
     getAudioData: (id: string) => Promise<{ data: ArrayBuffer; mimeType: string } | null>;
     getAudioUrl: (id: string) => Promise<string | null>;
   };

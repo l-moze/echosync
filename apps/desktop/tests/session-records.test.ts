@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SESSION_RECORD_EXPORT_FORMATS,
   filterSessionRecordsByTitle,
+  serializeSessionRecordCsv,
+  serializeSessionRecordJson,
   serializeSessionRecordSrt,
   serializeSessionRecordMarkdown,
   toSessionRecordListItem,
@@ -102,6 +105,57 @@ describe("会议记录共享逻辑", () => {
     });
 
     expect(serializeSessionRecordSrt(record)).toContain("00:00:05,000 --> 00:00:06,800");
+  });
+
+  it("暴露本地文件导出的常见文本和 Word 格式", () => {
+    expect(SESSION_RECORD_EXPORT_FORMATS.map((format) => format.id)).toEqual([
+      "docx",
+      "markdown",
+      "txt",
+      "srt",
+      "json",
+      "csv"
+    ]);
+    expect(SESSION_RECORD_EXPORT_FORMATS.map((format) => format.extension)).toEqual([
+      "docx",
+      "md",
+      "txt",
+      "srt",
+      "json",
+      "csv"
+    ]);
+  });
+
+  it("将完整记录导出为稳定 JSON 文本", () => {
+    const json = serializeSessionRecordJson(createRecord());
+    const parsed = JSON.parse(json) as SessionRecord;
+
+    expect(json).toContain('"title": "网课复盘"');
+    expect(parsed.segments[0]).toMatchObject({
+      sourceText: "Key concept",
+      targetText: "核心概念"
+    });
+  });
+
+  it("将完整记录导出为带表头并正确转义的 CSV", () => {
+    const csv = serializeSessionRecordCsv(
+      createRecord({
+        segments: [
+          {
+            id: "segment_csv",
+            startMs: 5_000,
+            endMs: 6_800,
+            sourceText: "Key, \"concept\"\nnext line",
+            targetText: "核心概念",
+            revisionState: "edited",
+            patchCount: 2
+          }
+        ]
+      })
+    );
+
+    expect(csv).toContain("index,start_ms,end_ms,source_text,target_text,revision_state,patch_count");
+    expect(csv).toContain('1,5000,6800,"Key, ""concept""\nnext line",核心概念,edited,2');
   });
 
   it("草稿输入允许携带时间线元数据", () => {

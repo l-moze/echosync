@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
+const rendererStyles = readFileSync(resolve(__dirname, "../src/renderer/styles.css"), "utf8");
 
 function sourceAround(marker: string, before = 700, after = 700) {
   const index = rendererSource.indexOf(marker);
@@ -55,7 +56,9 @@ describe("会议记录窗口契约", () => {
   it("停止会话保存记录不依赖采集状态快照成功返回", () => {
     const stopSource = sourceAround("async function stopCapture", 0, 5200);
 
-    expect(stopSource).toContain("if (nextSnapshot) {\n      setSnapshot(nextSnapshot);\n    }\n    const endedAt");
+    expect(stopSource).toContain("if (nextSnapshot)");
+    expect(stopSource).toContain("setSnapshot(nextSnapshot);");
+    expect(stopSource).toContain("const endedAt");
     expect(stopSource).toContain("const elapsedDurationMs");
     expect(stopSource).toContain("Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0)");
   });
@@ -79,22 +82,42 @@ describe("会议记录窗口契约", () => {
     expect(finishedSource).not.toContain("<audio\n              controls");
   });
 
-  it("详情页导出按钮会通过主进程导出并复制当前记录", () => {
-    const exportSource = sourceAround("async function exportSelectedRecord", 0, 1200);
-    const actionsSource = sourceAround("<button onClick={() => void exportSelectedRecord(\"txt\")}>TXT</button>", 500, 900);
+  it("详情页导出按钮会通过主进程保存本地文件，并移除 Markdown 复制入口", () => {
+    const exportSource = sourceAround("async function exportSelectedRecord", 0, 1500);
+    const actionsSource = sourceAround("className=\"recordDetailActions\"", 0, 2200);
 
-    expect(exportSource).toContain("window.echosyncDesktop?.sessionRecords.export(selectedRecord.id, format)");
-    expect(exportSource).toContain("serializeSessionRecordMarkdown(selectedRecord)");
-    expect(exportSource).toContain("await window.echosyncDesktop?.copyText");
-    expect(exportSource).toContain("format === \"markdown\" ? \"Markdown 已复制\"");
-    expect(actionsSource).toContain("<button className=\"primaryAction\" onClick={() => void exportSelectedRecord()}>导出</button>");
-    expect(actionsSource).toContain("<button onClick={() => void exportSelectedRecord(\"txt\")}>TXT</button>");
-    expect(actionsSource).toContain("<button onClick={() => void exportSelectedRecord(\"srt\")}>SRT</button>");
+    expect(rendererSource).toContain("const [selectedExportFormat, setSelectedExportFormat] = useState<SessionRecordExportFormat>(\"docx\");");
+    expect(exportSource).toContain("window.echosyncDesktop?.sessionRecords.saveExport(selectedRecord.id, format)");
+    expect(exportSource).toContain("result?.canceled");
+    expect(exportSource).toContain("已取消导出");
+    expect(exportSource).toContain("已导出到本地");
+    expect(rendererSource).not.toContain("async function copySelectedRecordMarkdown");
+    expect(actionsSource).not.toContain("Markdown 复制");
+    expect(actionsSource).toContain("className=\"recordExportRow\"");
+    expect(actionsSource).toContain("aria-label=\"导出格式\"");
+    expect(actionsSource).toContain("value={selectedExportFormat}");
+    expect(actionsSource).toContain("onChange={(event) => setSelectedExportFormat(event.target.value as SessionRecordExportFormat)}");
+    expect(rendererSource).toContain("const RECORD_DETAIL_EXPORT_FORMATS = SESSION_RECORD_EXPORT_FORMATS.filter((format) =>");
+    expect(rendererSource).toContain("[\"docx\", \"markdown\", \"txt\", \"csv\"].includes(format.id)");
+    expect(actionsSource).toContain("RECORD_DETAIL_EXPORT_FORMATS.map");
+    expect(actionsSource).not.toContain("SESSION_RECORD_EXPORT_FORMATS.map");
+    expect(actionsSource).toContain("void exportSelectedRecord(selectedExportFormat)");
+    expect(actionsSource).toContain(">导出</button>");
+    expect(actionsSource).not.toContain("void exportSelectedRecord(\"txt\")");
+    expect(actionsSource).not.toContain("void exportSelectedRecord(\"srt\")");
+    expect(actionsSource).not.toContain("void exportSelectedRecord(\"json\")");
+    expect(actionsSource).not.toContain("void exportSelectedRecord(\"csv\")");
     expect(actionsSource).toContain("{exportStatus ? <span className=\"recordExportStatus\"");
   });
 
+  it("export controls keep compact width", () => {
+    expect(rendererStyles).toContain(".recordExportFormatSelect {\n  min-width: 104px;\n}");
+    expect(rendererStyles).toContain("grid-template-columns: minmax(104px, 120px) minmax(96px, auto);");
+    expect(rendererStyles).toContain("max-width: 224px;");
+  });
+
   it("详情页读取完整记录，支持重命名、音频 URL、片段跳转和播放高亮", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 22000);
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 38000);
 
     expect(windowSource).toContain("const [selectedRecord, setSelectedRecord] = useState<SessionRecord | null>(null);");
     expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.get(recordId)");
@@ -112,11 +135,47 @@ describe("会议记录窗口契约", () => {
     expect(windowSource).toContain("selectSessionRecordPlaybackSegmentId(selectedRecord.segments, boundedMs)");
     expect(windowSource).toContain("node?.scrollIntoView({ block: \"center\", behavior: \"smooth\" });");
     expect(windowSource).toContain("className=\"recordTitleInput\"");
-    expect(windowSource).toContain("className={segment.id === activeRecordSegmentId ? \"recordSegmentPair active\" : \"recordSegmentPair\"}");
+    expect(rendererSource).toContain("className={segment.id === activeRecordSegmentId ? \"recordSegmentPair active\" : \"recordSegmentPair\"}");
+  });
+
+  it("详情页每个片段右上角提供复制、修改和删除操作", () => {
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 32000);
+    const segmentSource = sourceAround("selectedRecord.segments.map((segment) =>", 0, 4200);
+
+    expect(windowSource).toContain("const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);");
+    expect(windowSource).toContain("async function copyRecordSegment(segment: SessionRecordSegment)");
+    expect(windowSource).toContain("await window.echosyncDesktop?.copyText(recordSegmentClipboardText(segment));");
+    expect(windowSource).toContain("function startEditingRecordSegment(segment: SessionRecordSegment)");
+    expect(windowSource).toContain("async function saveEditedRecordSegment(segment: SessionRecordSegment)");
+    expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.updateSegment(selectedRecord.id, segment.id");
+    expect(windowSource).toContain("async function deleteRecordSegment(segment: SessionRecordSegment)");
+    expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.deleteSegment(selectedRecord.id, segment.id)");
+    expect(segmentSource).toContain("className=\"recordSegmentHeader\"");
+    expect(segmentSource).toContain("className=\"recordSegmentActions\"");
+    expect(segmentSource).toContain("event.stopPropagation();");
+    expect(segmentSource).toContain(">复制</button>");
+    expect(segmentSource).toContain(">修改</button>");
+    expect(segmentSource).toContain(">删除</button>");
+    expect(segmentSource).toContain("{isEditingSegment ? (\n                            <>");
+    expect(segmentSource).toContain("void saveEditedRecordSegment(segment);");
+    expect(segmentSource).toContain("cancelEditingRecordSegment();");
+    expect(segmentSource).toContain("className=\"recordSegmentEditForm\"");
+    expect(segmentSource).toContain("className=\"recordSegmentEditField\"");
+    expect(segmentSource).toContain("<span>字幕</span>");
+    expect(segmentSource).toContain("<span>翻译内容</span>");
+    expect(segmentSource).toContain("aria-label=\"编辑字幕\"");
+    expect(segmentSource).toContain("aria-label=\"编辑翻译内容\"");
+    expect(rendererStyles).toContain(".recordSegmentHeader");
+    expect(rendererStyles).toContain(".recordSegmentActions");
+    expect(rendererStyles).toContain(".recordSegmentEditForm");
+    expect(rendererStyles).toContain("grid-template-columns: repeat(2, minmax(0, 1fr));");
+    expect(rendererStyles).toContain(".recordSegmentEditField");
+    expect(rendererStyles).toContain("@media (max-width: 720px)");
+    expect(rendererStyles).toContain("grid-template-columns: 1fr;");
   });
 
   it("详情页音频回放使用记录时长自绘进度，避免 WebM 原生时长误导", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 19000);
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 38000);
     const progressSource = sourceAround("aria-label=\"音频回放进度\"", 700, 700);
 
     expect(windowSource).toContain("const [recordAudioPlaying, setRecordAudioPlaying] = useState(false);");
@@ -165,7 +224,7 @@ describe("会议记录窗口契约", () => {
   });
 
   it("详情页片段使用非 button 卡片，避免原生按钮布局把双语文本压扁", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 23000);
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 38000);
 
     expect(windowSource).toContain("function handleRecordSegmentKeyDown");
     expect(windowSource).toContain("<article");
@@ -210,7 +269,7 @@ describe("采集资源生命周期契约", () => {
   });
 
   it("字幕弹窗只对窗口化字幕行做显示合成，并记录渲染热路径耗时", () => {
-    const overlaySource = sourceAround("function OverlayWindow", 0, 5200);
+    const overlaySource = sourceAround("function OverlayWindow", 0, 6800);
     const eventListenerSource = sourceAround("caption_event_renderer_processed", 900, 900);
 
     expect(overlaySource).toContain("selectOverlayDisplayWindow(lines, activeLine?.id)");

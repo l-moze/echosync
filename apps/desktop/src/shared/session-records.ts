@@ -101,11 +101,68 @@ export type SessionRecordDraftInput = {
   segments: SessionRecordSegment[];
 };
 
-export type SessionRecordExportFormat = "markdown" | "srt" | "txt";
+export type SessionRecordSegmentUpdateInput = {
+  sourceText?: string;
+  targetText?: string;
+};
+
+export type SessionRecordExportFormat = "docx" | "markdown" | "srt" | "txt" | "json" | "csv";
+
+export type SessionRecordExportFormatInfo = {
+  id: SessionRecordExportFormat;
+  label: string;
+  extension: string;
+  mimeType: string;
+};
+
+export const SESSION_RECORD_EXPORT_FORMATS: SessionRecordExportFormatInfo[] = [
+  {
+    id: "docx",
+    label: "DOCX",
+    extension: "docx",
+    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  },
+  {
+    id: "markdown",
+    label: "Markdown",
+    extension: "md",
+    mimeType: "text/markdown;charset=utf-8"
+  },
+  {
+    id: "txt",
+    label: "TXT",
+    extension: "txt",
+    mimeType: "text/plain;charset=utf-8"
+  },
+  {
+    id: "srt",
+    label: "SRT",
+    extension: "srt",
+    mimeType: "application/x-subrip;charset=utf-8"
+  },
+  {
+    id: "json",
+    label: "JSON",
+    extension: "json",
+    mimeType: "application/json;charset=utf-8"
+  },
+  {
+    id: "csv",
+    label: "CSV",
+    extension: "csv",
+    mimeType: "text/csv;charset=utf-8"
+  }
+];
 
 export type SessionRecordExportResult = {
   path?: string;
   text?: string;
+};
+
+export type SessionRecordSaveExportResult = {
+  canceled: boolean;
+  format: SessionRecordExportFormat;
+  path?: string;
 };
 
 export type SessionRecordListItem = {
@@ -217,6 +274,27 @@ export function serializeSessionRecordText(record: SessionRecord) {
     .join("\n\n");
 }
 
+export function serializeSessionRecordJson(record: SessionRecord) {
+  return `${JSON.stringify(record, null, 2)}\n`;
+}
+
+export function serializeSessionRecordCsv(record: SessionRecord) {
+  const rows = [
+    ["index", "start_ms", "end_ms", "source_text", "target_text", "revision_state", "patch_count"],
+    ...record.segments.map((segment, index) => [
+      String(index + 1),
+      String(segment.startMs),
+      String(segment.endMs),
+      selectedSourceText(segment),
+      selectedTargetText(segment),
+      segment.revisionState,
+      String(segment.patchCount)
+    ])
+  ];
+
+  return rows.map((row) => row.map(escapeCsvField).join(",")).join("\n");
+}
+
 export function serializeSessionRecordSrt(record: SessionRecord) {
   return record.segments
     .map((segment, index) => {
@@ -305,6 +383,13 @@ function selectedSourceText(segment: SessionRecordSegment) {
 
 function selectedTargetText(segment: SessionRecordSegment) {
   return segment.targetEditedText ?? segment.targetText;
+}
+
+function escapeCsvField(value: string) {
+  if (!/[",\r\n]/.test(value)) {
+    return value;
+  }
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function finiteNonNegative(value: number) {

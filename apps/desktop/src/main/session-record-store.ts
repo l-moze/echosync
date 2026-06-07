@@ -5,6 +5,8 @@ import path from "node:path";
 import {
   buildSessionRecordMetadata,
   normalizeSessionRecordSegmentsTiming,
+  serializeSessionRecordCsv,
+  serializeSessionRecordJson,
   serializeSessionRecordMarkdown,
   serializeSessionRecordSrt,
   serializeSessionRecordText,
@@ -14,6 +16,8 @@ import {
   type SessionRecordExportFormat,
   type SessionRecordExportResult,
   type SessionRecordListItem,
+  type SessionRecordSegment,
+  type SessionRecordSegmentUpdateInput,
   type SessionRecordSummary
 } from "../shared/session-records";
 
@@ -22,6 +26,8 @@ export type SessionRecordStore = {
   get: (id: string) => Promise<SessionRecord | null>;
   saveDraft: (input: SessionRecordDraftInput) => Promise<SessionRecord>;
   updateSummary: (id: string, summary: Partial<SessionRecordSummary>) => Promise<SessionRecord>;
+  updateSegment: (id: string, segmentId: string, input: SessionRecordSegmentUpdateInput) => Promise<SessionRecord>;
+  deleteSegment: (id: string, segmentId: string) => Promise<SessionRecord>;
   rename: (id: string, title: string) => Promise<SessionRecord>;
   delete: (id: string) => Promise<void>;
   exportRecord: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
@@ -138,6 +144,47 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
       return nextRecord;
     },
 
+    async updateSegment(id, segmentId, input) {
+      const record = await readRecord(id);
+      if (!record) {
+        throw new Error(`未找到会议记录：${id}`);
+      }
+      let updated = false;
+      const segments = record.segments.map((segment) => {
+        if (segment.id !== segmentId) {
+          return segment;
+        }
+        updated = true;
+        return {
+          ...segment,
+          patchCount: segment.patchCount + 1,
+          revisionState: "edited" as const,
+          sourceEditedText: input.sourceText ?? segment.sourceEditedText,
+          targetEditedText: input.targetText ?? segment.targetEditedText
+        };
+      });
+      if (!updated) {
+        throw new Error(`未找到会议记录片段：${segmentId}`);
+      }
+      const nextRecord = buildRecordWithSegments(record, segments);
+      await writeRecord(nextRecord);
+      return nextRecord;
+    },
+
+    async deleteSegment(id, segmentId) {
+      const record = await readRecord(id);
+      if (!record) {
+        throw new Error(`未找到会议记录：${id}`);
+      }
+      const segments = record.segments.filter((segment) => segment.id !== segmentId);
+      if (segments.length === record.segments.length) {
+        throw new Error(`未找到会议记录片段：${segmentId}`);
+      }
+      const nextRecord = buildRecordWithSegments(record, segments);
+      await writeRecord(nextRecord);
+      return nextRecord;
+    },
+
     async rename(id, title) {
       const record = await readRecord(id);
       if (!record) {
@@ -195,6 +242,29 @@ function normalizeStoredRecord(record: SessionRecord): SessionRecord {
   };
 }
 
+function buildRecordWithSegments(record: SessionRecord, segments: SessionRecordSegment[]): SessionRecord {
+  const normalizedTiming = normalizeSessionRecordSegmentsTiming(segments);
+  return {
+    ...record,
+    diagnostics: {
+      hasTimingAnomaly: Boolean(record.diagnostics?.hasTimingAnomaly || normalizedTiming.hasTimingAnomaly),
+      hasTranslationGap: hasTranslationGap(normalizedTiming.segments),
+      logPath: record.diagnostics?.logPath
+    },
+    metadata: buildSessionRecordMetadata(normalizedTiming.segments),
+    segments: normalizedTiming.segments,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function hasTranslationGap(segments: SessionRecordSegment[]) {
+  return segments.some((segment) => {
+    const sourceText = segment.sourceEditedText ?? segment.sourceText;
+    const targetText = segment.targetEditedText ?? segment.targetText;
+    return Boolean(sourceText.trim()) && !targetText.trim();
+  });
+}
+
 function sessionDir(sessionsDir: string, id: string) {
   return path.join(sessionsDir, sanitizePathSegment(id));
 }
@@ -230,11 +300,20 @@ function buildDraftSummary(summary: Partial<SessionRecordSummary> | undefined, n
 }
 
 function serializeRecord(record: SessionRecord, format: SessionRecordExportFormat) {
+  if (format === "docx") {
+    throw new Error("DOCX 导出请使用本地文件保存接口。");
+  }
   if (format === "srt") {
     return serializeSessionRecordSrt(record);
   }
   if (format === "txt") {
     return serializeSessionRecordText(record);
+  }
+  if (format === "json") {
+    return serializeSessionRecordJson(record);
+  }
+  if (format === "csv") {
+    return serializeSessionRecordCsv(record);
   }
   return serializeSessionRecordMarkdown(record);
 }

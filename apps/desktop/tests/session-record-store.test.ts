@@ -135,6 +135,59 @@ describe("主进程会议记录持久化", () => {
     }
   });
 
+  it("修改和删除单个片段时保留原始文本并刷新元数据", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "echosync-record-store-"));
+    try {
+      const store = createSessionRecordStore(rootDir);
+      await store.saveDraft({
+        id: "segment-actions",
+        title: "片段操作",
+        createdAt: "2026-06-06T10:00:00.000Z",
+        endedAt: "2026-06-06T10:01:00.000Z",
+        durationMs: 60_000,
+        segments: [
+          segment({ id: "seg_1", sourceText: "Original source", targetText: "原始译文" }),
+          segment({ id: "seg_2", sourceText: "Remove me", targetText: "删除我" })
+        ]
+      });
+
+      const updated = await store.updateSegment("segment-actions", "seg_1", {
+        sourceText: "Edited source",
+        targetText: "编辑后的译文"
+      });
+
+      expect(updated.segments[0]).toMatchObject({
+        id: "seg_1",
+        sourceText: "Original source",
+        sourceEditedText: "Edited source",
+        targetEditedText: "编辑后的译文",
+        revisionState: "edited",
+        patchCount: 1
+      });
+      expect(updated.metadata).toMatchObject({
+        segmentCount: 2,
+        sourceCharCount: "Edited sourceRemove me".length,
+        targetCharCount: "编辑后的译文删除我".length,
+        patchCount: 1
+      });
+
+      const deleted = await store.deleteSegment("segment-actions", "seg_2");
+
+      expect(deleted.segments.map((item) => item.id)).toEqual(["seg_1"]);
+      expect(deleted.metadata).toMatchObject({
+        segmentCount: 1,
+        sourceCharCount: "Edited source".length,
+        targetCharCount: "编辑后的译文".length,
+        patchCount: 1
+      });
+      expect((await store.get("segment-actions"))?.segments).toHaveLength(1);
+      expect((await store.exportRecord("segment-actions", "txt")).text).toContain("Edited source");
+      expect((await store.list())[0]).toMatchObject({ segmentCount: 1 });
+    } finally {
+      await fs.rm(rootDir, { force: true, recursive: true });
+    }
+  });
+
   it("保存草稿时持久化复盘压缩时间线", async () => {
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "echosync-record-store-"));
     try {
