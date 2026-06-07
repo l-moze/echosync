@@ -96,16 +96,19 @@ describe("字幕文本视图", () => {
 
     expect(first.blocks).toHaveLength(1);
     expect(first.pending).toBe(true);
+    expect(first.blocks[0].isSplitPending).toBe(true);
 
     const stillReading = selectBufferedCaptionTextBlocks(first.buffer, longLine, defaultSubtitleStyle, 1600);
 
     expect(stillReading.blocks).toHaveLength(1);
     expect(stillReading.pending).toBe(true);
+    expect(stillReading.blocks[0].isSplitPending).toBe(true);
 
     const split = selectBufferedCaptionTextBlocks(stillReading.buffer, longLine, defaultSubtitleStyle, 1900);
 
     expect(split.blocks.length).toBeGreaterThanOrEqual(2);
     expect(split.pending).toBe(false);
+    expect(split.blocks.some((block) => block.isSplitPending)).toBe(false);
     expect(split.blocks[0].id).toBe("seg:visual:0");
     expect(split.blocks[1].id).toBe("seg:visual:1");
     expect(split.blocks[0].sourceText).toContain("neural symbolic concepts");
@@ -205,6 +208,41 @@ describe("字幕文本视图", () => {
     expect(secondSplit.blocks[0].sourceText).toContain("neural symbolic concepts");
     expect(secondSplit.blocks[1].sourceText).toContain("generally intelligent systems");
     expect(secondSplit.blocks[2].sourceText).toContain("streaming user interface");
+  });
+
+  it("长段进入待拆分后遇到 ASR 小幅修订，不重置用户反应时间", () => {
+    const firstText =
+      "I've been talking about this framework that I've been building in the past about neural symbolic concepts to enable more data efficient learning and better generalization I would say this is a new bet for generally intelligent systems.";
+    const revisedText =
+      "I've been talking about this framework that I've been building in the past about neural symbolic ideas to enable more data efficient learning and better generalization I would say this is a new bet for generally intelligent systems.";
+    const first = selectBufferedCaptionTextBlocks(
+      createInitialCaptionTextBlockBuffer(),
+      line({ sourceText: firstText, targetText: "" }),
+      defaultSubtitleStyle,
+      1000
+    );
+    const revisedStillPending = selectBufferedCaptionTextBlocks(
+      first.buffer,
+      line({ sourceText: revisedText, targetText: "" }),
+      defaultSubtitleStyle,
+      1600
+    );
+
+    expect(revisedStillPending.blocks).toHaveLength(1);
+    expect(revisedStillPending.pending).toBe(true);
+    expect(revisedStillPending.blocks[0].isSplitPending).toBe(true);
+
+    const split = selectBufferedCaptionTextBlocks(
+      revisedStillPending.buffer,
+      line({ sourceText: revisedText, targetText: "" }),
+      defaultSubtitleStyle,
+      1900
+    );
+
+    expect(split.blocks.length).toBeGreaterThanOrEqual(2);
+    expect(split.pending).toBe(false);
+    expect(split.blocks[0].sourceText).toContain("neural symbolic ideas");
+    expect(split.blocks[1].sourceText).toContain("I would say");
   });
 });
 

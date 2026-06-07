@@ -2684,6 +2684,15 @@ button:focus-visible {
     minmax(calc(var(--target-size, 30px) * 1.2), auto);
 }
 
+.captionText.mode-sentencePair .captionTextBlock.splitPending .overlaySource {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+}
+
+.captionText.mode-sentencePair .captionTextBlock.splitPending h1 {
+  -webkit-line-clamp: 3;
+}
+
 .captionText.mode-zonedPair {
   height: 100%;
   gap: 0;

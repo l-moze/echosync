@@ -232,10 +232,14 @@ describe("renderer visual style contract", () => {
     expect(captionTextSource).toContain("selectCaptionTextBlocks");
     expect(captionTextSource).toContain("selectBufferedCaptionTextBlocks");
     expect(captionTextSource).toContain("useBufferedBlocks");
+    expect(captionTextSource).toContain("splitPending");
     expect(captionTextSource).toContain("captionTextBlock");
     expect(cssRule(".captionText")).toContain("align-content: end");
     expect(cssRule(".captionTextBlock")).toContain("display: grid");
     expect(cssRule(".captionTextBlock")).toContain("transition: transform 220ms");
+    expect(cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending .overlaySource")).toContain("display: -webkit-box");
+    expect(cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending .overlaySource")).toContain("-webkit-line-clamp: 3");
+    expect(cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending h1")).toContain("-webkit-line-clamp: 3");
     expect(cssRule(".captionText.mode-zonedPair")).toContain("height: 100%");
     expect(cssRule(".captionText.mode-zonedPair .captionTextBlock")).toContain("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)");
     expect(cssRule(".captionText.mode-zonedPair .overlaySource")).toContain("-webkit-line-clamp: 3");

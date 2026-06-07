@@ -14,6 +14,7 @@ export type CaptionTextBlock = {
   targetText: string;
   state: CaptionLine["state"];
   isSourcePlaceholder?: boolean;
+  isSplitPending?: boolean;
   isTargetPlaceholder?: boolean;
 };
 
@@ -184,6 +185,9 @@ function buildBlocksFromEntry(line: CaptionLine, entry: CaptionTextBlockEntry): 
   const sourceBlocks = selectBlocksForBreaks(entry.source.text || "等待音频输入...", entry.source.committedBreaks);
   const targetBlocks = entry.target.text ? selectBlocksForBreaks(entry.target.text, entry.target.committedBreaks) : [];
   const blockCount = Math.max(1, sourceBlocks.length, targetBlocks.length);
+  const pendingBlockIndex = entry.source.pendingSinceMs !== null || entry.target.pendingSinceMs !== null
+    ? blockCount - 1
+    : -1;
 
   return Array.from({ length: blockCount }, (_, index) => {
     const sourceBlock = sourceBlocks[index] ?? "";
@@ -194,6 +198,7 @@ function buildBlocksFromEntry(line: CaptionLine, entry: CaptionTextBlockEntry): 
       targetText: targetBlock,
       state: line.state,
       isSourcePlaceholder: !sourceBlock,
+      isSplitPending: index === pendingBlockIndex,
       isTargetPlaceholder: !targetBlock
     };
   });
@@ -210,9 +215,7 @@ function updateBlockLane(
     return createLaneState(normalized);
   }
 
-  const base = previous && normalized.startsWith(previous.text)
-    ? { ...previous, text: normalized }
-    : createLaneState(normalized);
+  const base = reconcileLaneState(previous, normalized);
   const lastCommittedBreak = base.committedBreaks.at(-1) ?? 0;
   const tail = normalized.slice(lastCommittedBreak).trimStart();
   if (!shouldStartPendingSplit(tail, lane)) {
@@ -245,6 +248,67 @@ function createLaneState(text: string): CaptionTextBlockLaneState {
     committedBreaks: [],
     pendingSinceMs: null
   };
+}
+
+function reconcileLaneState(
+  previous: CaptionTextBlockLaneState | undefined,
+  normalized: string
+): CaptionTextBlockLaneState {
+  if (!previous) {
+    return createLaneState(normalized);
+  }
+  if (normalized.startsWith(previous.text)) {
+    return { ...previous, text: normalized };
+  }
+  if (!isLikelyStreamingRevision(previous.text, normalized)) {
+    return createLaneState(normalized);
+  }
+
+  const stablePrefixLength = longestCommonPrefixLength(previous.text, normalized);
+  return {
+    text: normalized,
+    committedBreaks: previous.committedBreaks.filter((breakAt) => breakAt <= stablePrefixLength && breakAt < normalized.length),
+    pendingSinceMs: previous.pendingSinceMs
+  };
+}
+
+function isLikelyStreamingRevision(previousText: string, nextText: string): boolean {
+  const previousLength = visibleLength(previousText);
+  const nextLength = visibleLength(nextText);
+  if (Math.min(previousLength, nextLength) < 24) {
+    return false;
+  }
+
+  const stablePrefixLength = visibleLength(previousText.slice(0, longestCommonPrefixLength(previousText, nextText)));
+  if (stablePrefixLength >= Math.min(previousLength, nextLength) * 0.42) {
+    return true;
+  }
+
+  const previousTokens = tokenizeForSimilarity(previousText);
+  const nextTokens = tokenizeForSimilarity(nextText);
+  if (Math.min(previousTokens.length, nextTokens.length) < 4) {
+    return false;
+  }
+
+  const nextTokenSet = new Set(nextTokens);
+  const overlap = previousTokens.filter((token) => nextTokenSet.has(token)).length;
+  return overlap / Math.min(previousTokens.length, nextTokens.length) >= 0.62;
+}
+
+function longestCommonPrefixLength(a: string, b: string): number {
+  let index = 0;
+  while (index < a.length && index < b.length && a[index] === b[index]) {
+    index += 1;
+  }
+  return index;
+}
+
+function tokenizeForSimilarity(text: string): string[] {
+  const tokens = text.toLowerCase().match(/[\p{L}\p{N}]+/gu);
+  if (tokens && tokens.length > 0) {
+    return tokens;
+  }
+  return Array.from(text).filter((char) => char.trim() !== "");
 }
 
 function selectBlocksForBreaks(text: string, breaks: number[]): string[] {

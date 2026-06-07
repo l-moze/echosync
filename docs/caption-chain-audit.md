@@ -480,6 +480,9 @@ python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realti
 2026-06-07 二次体验修正：此前 `zonedPair` 只是名字和 gap，实际仍是紧凑逐句布局；现在 `CaptionText` 引入 `CaptionTextBlock` 视图层，`zonedPair` 使用真实上下分区，源文区和译文区各占稳定区域。`sentencePair` 则会在单个 segment 过长时做显示层 soft block：优先按英文/中文句末标点拆，其次按英文常见新句起点（如 `I would` / `That is`）或字符阈值在词边界拆。这个拆分只影响视觉呈现，不改变 `segment_id`、`rev` 或 DeepSeek patch 协议，因此后续修订仍按原 segment 的 `base_rev + char index` 生效。
 
 2026-06-07 三次体验修正：主字幕不再使用纯函数即时拆块。`CaptionTextBlockBuffer` 会为主字幕记录已经提交的视觉边界：当逐句对照内容超过约三行的字符预算后，先进入 `pending`，普通长句等待约 `900ms` 让用户反应；只有异常超长尾巴才走 `450ms` 硬兜底。到期后只提交一个冻结边界，剩余尾巴如果仍超过阈值，会进入下一轮 pending，而不是突然把整段一次性切碎。后续 ASR token 追加、译文迟到或 DeepSeek 修订到达时，已冻结的前段视觉边界保持不变，避免“先很长、过很久突然拆成一句一句”的重排感。历史轨道仍使用纯 selector 展示压缩块，避免为旧行维护额外状态。
+2026-06-07 四次体验修正：真实前端仍看不到“延迟拆分”的根因不是 buffer 状态机没有计算，而是状态没有进入视觉层：`pending` 只停留在 selector 返回值，没有标到 DOM；同时普通字幕默认 `-webkit-line-clamp: 2`，且默认悬浮层把 `.overlaySource` 改成 `display: block`，导致三行反应窗口不可见或 line-clamp 失效。现在 pending block 会带 `splitPending` class；逐句对照 pending 态临时允许 source/target 三行，并显式恢复 source 的 `display: -webkit-box`。这样“超过三行附近先让用户看到长句，再约 900ms 后拆块”的视觉状态才真正能被观察到。
+
+2026-06-07 五次体验修正：真实流式 ASR 不是单调追加文本，经常会把同一 `segment_id` 中间的词轻微修订。旧状态机只接受 `nextText.startsWith(previousText)`，一旦出现 “concepts -> ideas” 这类小幅修订，就把 `pendingSinceMs` 清空，导致 900ms 反应窗口在真实前端里不断重计时，用户看到的效果仍然是“长段卡住很久，然后突然拆”。现在 `CaptionTextBlockBuffer` 会识别同段流式小修订，保留待拆分起点和已冻结边界；只有短文本或明显换句/重启才重置状态。对应回归用例先红后绿：1900ms 应该拆分但旧逻辑仍只有 1 个 block，新逻辑稳定拆为 2 个以上 block。
 
 2026-06-06 真实日志回放结论：本机 `main.old.log + main.log` 共解析到 `translation.partial=1234`、`transcript.partial=1354`、`segment.commit=57`、`realtime.error=2`。其中译文长度缩短回退 `129` 次，新的策略全部覆盖：`transcript.partial` 不清空已有译文，`translation.partial` 不缩短已可见译文，真正缩短/替换由 `translation.patch` 或 `segment.commit` 负责。源文侧仍允许小范围 ASR 修订，严重前缀回退由 display buffer 保持可见稳定。
 

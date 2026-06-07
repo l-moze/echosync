@@ -3076,7 +3076,7 @@ function CaptionText({
   return (
     <div className={`captionText mode-${displayMode}`}>
       {blocks.map((block) => (
-        <article className="captionTextBlock" key={block.id}>
+        <article className={`captionTextBlock${block.isSplitPending ? " splitPending" : ""}`} key={block.id}>
           <p
             aria-hidden={block.isSourcePlaceholder ? true : undefined}
             className={`overlaySource ${block.state}${block.isSourcePlaceholder ? " placeholderText" : ""}`}
