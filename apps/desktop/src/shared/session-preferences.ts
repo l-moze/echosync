@@ -27,6 +27,16 @@ export function reduceSessionPreferences(
   current: SessionPreferencesState,
   patch: Partial<SessionPreferencesState>
 ): SessionPreferencesState {
+  let changed = false;
+  for (const key of Object.keys(patch) as Array<keyof SessionPreferencesState>) {
+    if (patch[key] !== current[key]) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) {
+    return current;
+  }
   return {
     ...current,
     ...patch

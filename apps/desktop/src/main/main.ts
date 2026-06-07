@@ -12,7 +12,12 @@ import {
   fetchAgentCapabilities
 } from "./agent-capabilities-client";
 import { buildRealtimeEventTelemetry } from "../shared/realtime-telemetry";
-import type { SessionRecordDraftInput, SessionRecordExportFormat, SessionRecordSummary } from "../shared/session-records";
+import type {
+  SessionRecordDraftInput,
+  SessionRecordExportFormat,
+  SessionRecordSegmentUpdate,
+  SessionRecordSummary
+} from "../shared/session-records";
 import {
   defaultSessionPreferences,
   reduceSessionPreferences,
@@ -331,6 +336,11 @@ function registerIpc() {
     notifySessionRecordChanged(id);
     return record;
   });
+  ipcMain.handle("session-records:update-segment", async (_event, id: string, update: SessionRecordSegmentUpdate) => {
+    const record = await sessionRecordStore.updateSegment(id, update);
+    notifySessionRecordChanged(id);
+    return record;
+  });
   ipcMain.handle("session-records:generate-summary", (_event, id: string) => generateSessionSummary(id));
   ipcMain.handle("session-records:rename", (_event, id: string, title: string) =>
     sessionRecordStore.rename(id, title)
@@ -351,7 +361,11 @@ function registerIpc() {
   ipcMain.handle("audio:list-sources", () => DESKTOP_AUDIO_SOURCES);
   ipcMain.handle("session-preferences:get", () => sessionPreferences);
   ipcMain.handle("session-preferences:update", (_event, patch: Partial<SessionPreferencesState>) => {
-    sessionPreferences = reduceSessionPreferences(sessionPreferences, patch);
+    const updated = reduceSessionPreferences(sessionPreferences, patch);
+    if (updated === sessionPreferences) {
+      return sessionPreferences;
+    }
+    sessionPreferences = updated;
     log.info("[session-preferences] 已更新会话偏好", sessionPreferences);
     sendToWindows([controlWindow, overlayWindow], "session-preferences:state", sessionPreferences);
     return sessionPreferences;

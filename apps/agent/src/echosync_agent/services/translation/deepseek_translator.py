@@ -10,6 +10,9 @@ from typing import Any
 from echosync_agent.domain import CorrectionContext, TranscriptSegment, TranslationSegment
 from echosync_agent.interfaces import Translator
 from echosync_agent.services.realtime.text_emission_policy import DEFAULT_TEXT_EMISSION_POLICY
+from echosync_agent.services.translation.cjk_spacing import (
+    normalize_target_cjk_spacing_metrics as _normalize_target_cjk_spacing_metrics,
+)
 
 ClientFactory = Callable[..., Any]
 DEEPSEEK_BETA_BASE_URL = "https://api.deepseek.com/beta"
@@ -288,14 +291,14 @@ class DeepSeekTranslator(Translator):
         metrics: dict[str, float] | None = None,
         context: CorrectionContext | None = None,
     ) -> TranslationSegment:
+        target_text, glossary_metrics = _repair_required_glossary_copies(
+            target_text,
+            context,
+        )
         target_text, target_cleanup_metrics = _postprocess_target_text(
             target_text,
             source_text=segment.text,
             target_lang=self.target_lang,
-        )
-        target_text, glossary_metrics = _repair_required_glossary_copies(
-            target_text,
-            context,
         )
         return TranslationSegment(
             session_id=segment.session_id,
@@ -311,7 +314,11 @@ class DeepSeekTranslator(Translator):
             status=segment.status,
             stability=segment.stability,
             speaker=segment.speaker,
-            metrics={**(metrics or {}), **target_cleanup_metrics, **glossary_metrics},
+            metrics={
+                **(metrics or {}),
+                **target_cleanup_metrics,
+                **glossary_metrics,
+            },
         )
 
     def _build_user_prompt(self, source_text: str, context: CorrectionContext) -> str:
@@ -463,6 +470,12 @@ def _postprocess_target_text(
     if normalized_chars:
         metrics["target_locale_normalized_chars"] = float(normalized_chars)
 
+    processed, cjk_spacing_metrics = _normalize_target_cjk_spacing_metrics(
+        processed,
+        target_lang=target_lang,
+    )
+    metrics.update(cjk_spacing_metrics)
+
     return processed, metrics
 
 
@@ -560,6 +573,7 @@ _ZH_CN_CHAR_MAP = {
     "愛": "爱",
     "飲": "饮",
 }
+
 _ZH_CN_TRANSLATION_TABLE = str.maketrans(_ZH_CN_CHAR_MAP)
 
 

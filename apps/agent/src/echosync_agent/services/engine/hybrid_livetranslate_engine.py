@@ -165,7 +165,11 @@ class SourceBackfilledLiveTranslateEngine(InterpretationEngine):
                 delayed_commit(state.segment_id, state.rev)
             )
 
-        tasks = [asyncio.create_task(fanout()), asyncio.create_task(run_source()), asyncio.create_task(run_target())]
+        tasks = [
+            asyncio.create_task(fanout()),
+            asyncio.create_task(run_source()),
+            asyncio.create_task(run_target()),
+        ]
         finished_lanes = 0
         try:
             while finished_lanes < 2:
@@ -203,7 +207,9 @@ class SourceBackfilledLiveTranslateEngine(InterpretationEngine):
                     continue
 
                 if lane == "target":
-                    assert isinstance(payload, TranslationSegment | SegmentCommit | TranslatedAudioChunk)
+                    assert isinstance(
+                        payload, TranslationSegment | SegmentCommit | TranslatedAudioChunk
+                    )
                     if isinstance(payload, TranslatedAudioChunk):
                         yield _retarget_audio(payload, state)
                         continue
@@ -219,7 +225,11 @@ class SourceBackfilledLiveTranslateEngine(InterpretationEngine):
 
                 if lane == "source_timeout":
                     segment_id, rev = payload  # type: ignore[misc]
-                    if state.segment_id == segment_id and state.rev == rev and _ready_to_commit_without_source(state):
+                    if (
+                        state.segment_id == segment_id
+                        and state.rev == rev
+                        and _ready_to_commit_without_source(state)
+                    ):
                         yield _commit(state)
                         state.reset()
                     pending_source_commit_task = None
@@ -288,10 +298,16 @@ def _apply_target(
     )
     if payload.source_text.strip() and not state.source_text:
         state.source_text = payload.source_text.strip()
-        state.source_done = payload.status == SegmentStatus.COMMITTED if isinstance(payload, TranslationSegment) else True
+        state.source_done = (
+            payload.status == SegmentStatus.COMMITTED
+            if isinstance(payload, TranslationSegment)
+            else True
+        )
     state.target_text = target_text or state.target_text
     state.target_done = (
-        payload.status == SegmentStatus.COMMITTED if isinstance(payload, TranslationSegment) else True
+        payload.status == SegmentStatus.COMMITTED
+        if isinstance(payload, TranslationSegment)
+        else True
     )
     state.end_ms = max(state.end_ms, payload.end_ms)
     status = payload.status if isinstance(payload, TranslationSegment) else SegmentStatus.COMMITTED
@@ -336,7 +352,12 @@ def _ready_to_commit(state: _HybridSegmentState) -> bool:
 
 
 def _ready_to_commit_without_source(state: _HybridSegmentState) -> bool:
-    return bool(state.segment_id and state.target_done and state.target_text and not state.committed)
+    return bool(
+        state.segment_id
+        and state.target_done
+        and state.target_text
+        and not state.committed
+    )
 
 
 def _should_wait_for_source_timeout(state: _HybridSegmentState) -> bool:
@@ -365,7 +386,9 @@ def _commit(state: _HybridSegmentState) -> SegmentCommit:
     )
 
 
-def _retarget_audio(audio: TranslatedAudioChunk, state: _HybridSegmentState) -> TranslatedAudioChunk:
+def _retarget_audio(
+    audio: TranslatedAudioChunk, state: _HybridSegmentState
+) -> TranslatedAudioChunk:
     if not state.segment_id:
         return audio
     return replace(audio, segment_id=state.segment_id, rev=max(state.rev, 1))

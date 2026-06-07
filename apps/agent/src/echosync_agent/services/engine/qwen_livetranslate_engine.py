@@ -24,6 +24,9 @@ from echosync_agent.domain import (
     new_segment_id,
 )
 from echosync_agent.interfaces import InterpretationEngine
+from echosync_agent.services.translation.cjk_spacing import (
+    normalize_target_cjk_spacing_metrics,
+)
 
 logger = logging.getLogger(__name__)
 ConnectFactory = Callable[[str, Sequence[tuple[str, str]]], Any]
@@ -173,11 +176,6 @@ class QwenLiveTranslateEngine(InterpretationEngine):
                 if payload is None:
                     continue
                 message_type = str(payload.get("type", ""))
-                logger.debug(
-                    "qwen_livetranslate_raw_event type=%s payload=%s",
-                    message_type,
-                    payload,
-                )
                 if message_type.endswith(".error") or message_type == "error":
                     raise RuntimeError(str(payload.get("error") or payload))
                 stream_elapsed_ms = int((time.perf_counter() - started_at) * 1000)
@@ -271,11 +269,16 @@ class QwenLiveTranslateEngine(InterpretationEngine):
         start_ms, end_ms = _timing(window)
         audio_ms = max(end_ms - start_ms, 1)
         audio_lag_ms = max(stream_elapsed_ms - max(window.end_ms - window.start_ms, audio_ms), 0)
+        target_text, cleanup_metrics = normalize_target_cjk_spacing_metrics(
+            target_text,
+            target_lang=self.config.target_lang,
+        )
         merged_metrics = {
             "asr_stream_elapsed_ms": float(stream_elapsed_ms),
             "asr_audio_lag_ms": float(audio_lag_ms),
             "asr_audio_window_ms": float(audio_ms),
             **metrics,
+            **cleanup_metrics,
         }
         return TranslationSegment(
             session_id=window.session_id,
@@ -295,6 +298,10 @@ class QwenLiveTranslateEngine(InterpretationEngine):
 
     def _commit_event(self, *, state: _LiveSegmentState, window: _FrameWindow) -> SegmentCommit:
         start_ms, end_ms = _timing(window)
+        target_text, cleanup_metrics = normalize_target_cjk_spacing_metrics(
+            state.target_text,
+            target_lang=self.config.target_lang,
+        )
         return SegmentCommit(
             session_id=window.session_id,
             segment_id=state.segment_id,
@@ -304,8 +311,8 @@ class QwenLiveTranslateEngine(InterpretationEngine):
             source_lang=_source_lang(window, self.config.source_lang),
             target_lang=self.config.target_lang,
             source_text=state.source_text,
-            target_text=state.target_text,
-            metrics={"qwen_livetranslate_commit": 1.0},
+            target_text=target_text,
+            metrics={"qwen_livetranslate_commit": 1.0, **cleanup_metrics},
         )
 
     def _audio_chunk(
