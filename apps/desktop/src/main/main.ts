@@ -16,6 +16,7 @@ import type { SessionRecordDraftInput, SessionRecordExportFormat, SessionRecordS
 import { createCaptionEventBuffer } from "./caption-event-buffer";
 import { resolveAppIconPath } from "./desktop-resources";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
+import { loadDesktopEnvironment } from "./env";
 import {
   createDefaultOverlayWindowSizeState,
   reduceOverlayWindowSizeState,
@@ -34,6 +35,8 @@ import { runSessionSummaryGeneration } from "./session-summary-runner";
 import { CONTROL_WINDOW_PRESET, OVERLAY_WINDOW_PRESET, type DesktopWindowPreset } from "./window-config";
 import { sendToWindow, sendToWindows } from "./window-ipc";
 import { shouldCreateWindowAtStartup, shouldRevealWindowOnReady } from "./window-lifecycle";
+
+loadDesktopEnvironment();
 
 const CAPTION_WS_URL = process.env.ECHOSYNC_CAPTION_WS_URL || "ws://127.0.0.1:8766/v1/caption/events";
 const AGENT_HTTP_BASE_URL =
@@ -220,17 +223,19 @@ function applyOverlayLayout(layer: OverlayUiLayer) {
 function registerIpc() {
   const sessionRecordStore = createSessionRecordStore(path.join(app.getPath("userData"), "echosync-data"));
   const sessionSummaryGenerator = createSessionSummaryGeneratorFromEnv();
+  const generateSessionSummary = (recordId: string) =>
+    runSessionSummaryGeneration({
+      generator: sessionSummaryGenerator,
+      notifyChanged: notifySessionRecordChanged,
+      recordId,
+      store: sessionRecordStore
+    });
 
   ipcMain.handle("session-records:list", () => sessionRecordStore.list());
   ipcMain.handle("session-records:get", (_event, id: string) => sessionRecordStore.get(id));
   ipcMain.handle("session-records:save-draft", async (_event, input: SessionRecordDraftInput) => {
     const record = await sessionRecordStore.saveDraft(input);
-    void runSessionSummaryGeneration({
-      generator: sessionSummaryGenerator,
-      notifyChanged: notifySessionRecordChanged,
-      recordId: record.id,
-      store: sessionRecordStore
-    }).catch((error) => {
+    void generateSessionSummary(record.id).catch((error) => {
       log.warn("[session-records] 会议摘要后台任务失败:", error);
     });
     return record;
@@ -240,12 +245,16 @@ function registerIpc() {
     notifySessionRecordChanged(id);
     return record;
   });
+  ipcMain.handle("session-records:generate-summary", (_event, id: string) => generateSessionSummary(id));
   ipcMain.handle("session-records:rename", (_event, id: string, title: string) =>
     sessionRecordStore.rename(id, title)
   );
   ipcMain.handle("session-records:delete", (_event, id: string) => sessionRecordStore.delete(id));
   ipcMain.handle("session-records:export", (_event, id: string, format: SessionRecordExportFormat) =>
     sessionRecordStore.exportRecord(id, format)
+  );
+  ipcMain.handle("session-records:get-audio-data", (_event, id: string) =>
+    sessionRecordStore.getAudioData(id)
   );
   ipcMain.handle("session-records:get-audio-url", (_event, id: string) =>
     sessionRecordStore.getAudioUrl(id)

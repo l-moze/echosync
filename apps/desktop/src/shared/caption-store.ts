@@ -116,9 +116,6 @@ export function selectOverlayHistoryLines(
   maxLines = overlayHistoryLimit(layer)
 ): CaptionLine[] {
   const candidates = lines.filter((line) => (line.sourceText || line.targetText) && line.id !== activeLineId);
-  if (layer === "default") {
-    return candidates.filter((line) => line.state === "locked" || line.targetText.trim()).slice(-1);
-  }
   return candidates.slice(-maxLines);
 }
 
@@ -186,13 +183,8 @@ export function selectOverlayDisplayWindow(
 }
 
 function overlayHistoryLimit(layer: OverlayLayer): number {
-  if (layer === "pinned") {
-    return 24;
-  }
-  if (layer === "controls" || layer === "settings") {
-    return 10;
-  }
-  return 1;
+  void layer;
+  return OVERLAY_DISPLAY_WINDOW_LINE_LIMIT;
 }
 
 function selectLatestCaptionLine(

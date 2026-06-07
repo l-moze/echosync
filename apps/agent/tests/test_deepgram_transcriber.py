@@ -129,6 +129,54 @@ def test_deepgram_transcriber_accumulates_final_spans_until_speech_final() -> No
     ]
 
 
+def test_deepgram_transcriber_joins_latin_word_continuation_spans() -> None:
+    async def scenario() -> list[str]:
+        socket = FakeDeepgramSocket(
+            [
+                {
+                    "type": "Results",
+                    "channel": {
+                        "alternatives": [
+                            {"transcript": "the task checks ident", "confidence": 0.90}
+                        ]
+                    },
+                    "is_final": True,
+                    "speech_final": False,
+                    "start": 0.0,
+                    "duration": 1.2,
+                },
+                {
+                    "type": "Results",
+                    "channel": {"alternatives": [{"transcript": "ifi", "confidence": 0.84}]},
+                    "is_final": True,
+                    "speech_final": False,
+                    "start": 1.2,
+                    "duration": 0.16,
+                },
+                {
+                    "type": "Results",
+                    "channel": {
+                        "alternatives": [{"transcript": "ability", "confidence": 0.92}]
+                    },
+                    "is_final": True,
+                    "speech_final": True,
+                    "start": 1.36,
+                    "duration": 0.44,
+                },
+            ]
+        )
+        transcriber = DeepgramStreamingTranscriber(
+            DeepgramStreamingConfig(api_key="test-key", model="nova-3", endpointing_ms=300),
+            connect_factory=lambda _url, _headers: socket,
+        )
+
+        return [segment.text async for segment in transcriber.stream(_frames())]
+
+    texts = asyncio.run(scenario())
+
+    assert texts[-1] == "the task checks identifiability"
+
+
 async def _frames() -> AsyncIterator[AudioFrame]:
     yield AudioFrame(
         session_id="sess_deepgram",

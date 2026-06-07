@@ -106,6 +106,7 @@ import {
 } from "../shared/home-launcher-copy";
 import { createInitialCaptionLines } from "./initial-captions";
 import { createRealtimeAudioClient, type RealtimeAudioClient } from "./realtime-audio-client";
+import { ensureSeekableSessionRecording } from "./session-recorder";
 import { createTtsAudioPlaybackQueue, type TtsAudioPlaybackQueue } from "./tts-audio-playback";
 import { resolveDesktopWindowRole } from "./window-role";
 
@@ -655,12 +656,13 @@ function App() {
     const elapsedDurationMs = startedAtMs === null ? 0 : Math.max(0, endedAt.getTime() - startedAtMs);
     const durationMs = Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0);
     const averageCaptionLagMs = selectAverageCaptionLatencyMs(lines, startedAtMs) ?? undefined;
-    const hasSessionContent = Boolean(recording) || lines.some((line) => line.sourceText.trim() || line.targetText.trim());
+    const seekableRecording = await ensureSeekableSessionRecording(recording, durationMs);
+    const hasSessionContent = Boolean(seekableRecording) || lines.some((line) => line.sourceText.trim() || line.targetText.trim());
     if (hasSessionContent) {
       const archive = buildSessionArchiveDraft({
-        audioBlob: recording?.blob,
-        audioMimeType: recording?.mimeType,
-        audioObjectUrl: recording ? URL.createObjectURL(recording.blob) : undefined,
+        audioBlob: seekableRecording?.blob,
+        audioMimeType: seekableRecording?.mimeType,
+        audioObjectUrl: seekableRecording ? URL.createObjectURL(seekableRecording.blob) : undefined,
         createdAt: endedAtIso,
         durationMs,
         id: currentClient?.sessionId ?? nextSnapshot?.sessionId ?? `sess_${endedAt.getTime()}`,
@@ -1587,6 +1589,8 @@ function FinishedDashboard({
     [cleanedLines, playbackMs]
   );
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const pendingArchiveSeekMsRef = useRef<number | null>(null);
+  const pendingArchivePlayRef = useRef(false);
 
   function cleanUpTranscript() {
     const nextLines = cleanTranscriptLines(cleanedLines);
@@ -1596,13 +1600,38 @@ function FinishedDashboard({
   }
 
   function seekToSegment(line: CaptionLine) {
+    pendingArchiveSeekMsRef.current = line.startMs;
+    pendingArchivePlayRef.current = true;
+    setPlaybackMs(line.startMs);
     const audio = audioRef.current;
     if (!audio) {
       return;
     }
-    audio.currentTime = line.startMs / 1000;
-    setPlaybackMs(line.startMs);
-    void audio.play();
+    if (audio.readyState === 0) {
+      audio.load();
+      return;
+    }
+    applyPendingArchiveSeek(audio);
+  }
+
+  function applyPendingArchiveSeek(audio: HTMLAudioElement) {
+    const pendingSeekMs = pendingArchiveSeekMsRef.current;
+    if (pendingSeekMs === null) {
+      return;
+    }
+    if (!seekAudioElement(audio, pendingSeekMs)) {
+      return;
+    }
+    pendingArchiveSeekMsRef.current = null;
+    setPlaybackMs(pendingSeekMs);
+    if (!pendingArchivePlayRef.current) {
+      return;
+    }
+    pendingArchivePlayRef.current = false;
+    void audio.play().catch(() => {
+      // The explicit click already moved the review playhead; playback may still
+      // be rejected by the platform until the media element is ready.
+    });
   }
 
   async function copyMarkdown() {
@@ -1631,6 +1660,8 @@ function FinishedDashboard({
               controls
               ref={audioRef}
               src={sessionArchive.audio.objectUrl}
+              onCanPlay={(event) => applyPendingArchiveSeek(event.currentTarget)}
+              onLoadedMetadata={(event) => applyPendingArchiveSeek(event.currentTarget)}
               onTimeUpdate={(event) => setPlaybackMs(Math.round(event.currentTarget.currentTime * 1000))}
             />
             <span>{formatTime(playbackMs)} / {formatTime(sessionArchive.durationMs)}</span>
@@ -2012,11 +2043,15 @@ function SessionRecordsWindow({
   const [recordAudioUrl, setRecordAudioUrl] = useState<string | null>(null);
   const [recordAudioPlaying, setRecordAudioPlaying] = useState(false);
   const [recordAudioError, setRecordAudioError] = useState("");
+  const [recordAudioStatus, setRecordAudioStatus] = useState<"idle" | "loading" | "ready" | "missing" | "failed">("idle");
   const [playbackMs, setPlaybackMs] = useState(0);
   const [activeRecordSegmentId, setActiveRecordSegmentId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const recordAudioRef = useRef<HTMLAudioElement | null>(null);
-  const recordSegmentRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const recordAudioObjectUrlRef = useRef<string | null>(null);
+  const pendingRecordSeekMsRef = useRef<number | null>(null);
+  const pendingRecordPlayRef = useRef(false);
+  const recordSegmentRefs = useRef<Record<string, HTMLElement | null>>({});
   const filteredRecords = useMemo(() => filterSessionRecordsByTitle(records, searchQuery), [records, searchQuery]);
   const selectedListRecord = selectedId ? records.find((record) => record.id === selectedId) ?? null : null;
   const isDetailView = Boolean(selectedId);
@@ -2024,12 +2059,15 @@ function SessionRecordsWindow({
   useEffect(() => {
     if (!isOpen || !selectedId) {
       setSelectedRecord(null);
-      setRecordAudioUrl(null);
+      setRecordAudioPlaybackUrl(null);
       setRecordAudioPlaying(false);
       setRecordAudioError("");
+      setRecordAudioStatus("idle");
       setPlaybackMs(0);
       setActiveRecordSegmentId(null);
       setTitleDraft("");
+      pendingRecordSeekMsRef.current = null;
+      pendingRecordPlayRef.current = false;
       return;
     }
 
@@ -2039,6 +2077,11 @@ function SessionRecordsWindow({
       setSelectedRecordLoading(true);
       setExportStatus("");
       setRenameStatus("");
+      setSelectedRecord(null);
+      setRecordAudioPlaybackUrl(null);
+      setRecordAudioPlaying(false);
+      setRecordAudioError("");
+      setRecordAudioStatus("loading");
       try {
         const record = await window.echosyncDesktop?.sessionRecords.get(recordId);
         if (cancelled) {
@@ -2046,9 +2089,10 @@ function SessionRecordsWindow({
         }
         if (!record) {
           setSelectedRecord(null);
-          setRecordAudioUrl(null);
+          setRecordAudioPlaybackUrl(null);
           setRecordAudioPlaying(false);
           setRecordAudioError("");
+          setRecordAudioStatus("missing");
           setExportStatus("记录不存在");
           return;
         }
@@ -2058,19 +2102,37 @@ function SessionRecordsWindow({
         const firstSegmentId = normalizedRecord.segments[0]?.id ?? null;
         setActiveRecordSegmentId(firstSegmentId);
         setPlaybackMs(normalizedRecord.segments[0]?.startMs ?? 0);
-        const audioUrl = await window.echosyncDesktop?.sessionRecords.getAudioUrl(recordId);
+        const audioData = await window.echosyncDesktop?.sessionRecords.getAudioData(recordId);
         if (!cancelled) {
-          setRecordAudioUrl(audioUrl ?? null);
-          setRecordAudioPlaying(false);
-          setRecordAudioError("");
+          if (audioData) {
+            const audioBlob = new Blob([audioData.data], { type: audioData.mimeType || "audio/webm" });
+            const seekableRecording = await ensureSeekableSessionRecording(
+              { blob: audioBlob, mimeType: audioData.mimeType || audioBlob.type },
+              normalizedRecord.durationMs
+            );
+            const objectUrl = URL.createObjectURL(seekableRecording?.blob ?? audioBlob);
+            if (cancelled) {
+              URL.revokeObjectURL(objectUrl);
+              return;
+            }
+            setRecordAudioPlaybackUrl(objectUrl, true);
+            setRecordAudioStatus("loading");
+          } else {
+            const audioUrl = await window.echosyncDesktop?.sessionRecords.getAudioUrl(recordId);
+            if (!cancelled) {
+              setRecordAudioPlaybackUrl(audioUrl ?? null);
+              setRecordAudioStatus(audioUrl ? "loading" : "missing");
+            }
+          }
         }
       } catch (error) {
         log.warn("[session-records] 读取会议记录详情失败:", error);
         if (!cancelled) {
           setSelectedRecord(null);
-          setRecordAudioUrl(null);
+          setRecordAudioPlaybackUrl(null);
           setRecordAudioPlaying(false);
           setRecordAudioError("");
+          setRecordAudioStatus("failed");
           setExportStatus("加载失败");
         }
       } finally {
@@ -2085,6 +2147,13 @@ function SessionRecordsWindow({
       cancelled = true;
     };
   }, [isOpen, selectedId]);
+
+  useEffect(() => () => {
+    if (recordAudioObjectUrlRef.current) {
+      URL.revokeObjectURL(recordAudioObjectUrlRef.current);
+      recordAudioObjectUrlRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const remove = window.echosyncDesktop?.onSessionRecordChanged(async (recordId) => {
@@ -2129,9 +2198,10 @@ function SessionRecordsWindow({
     if (selectedId === recordId) {
       setSelectedId(null);
       setSelectedRecord(null);
-      setRecordAudioUrl(null);
+      setRecordAudioPlaybackUrl(null);
       setRecordAudioPlaying(false);
       setRecordAudioError("");
+      setRecordAudioStatus("idle");
     }
   }
 
@@ -2147,6 +2217,25 @@ function SessionRecordsWindow({
     } catch (error) {
       log.warn("[session-records] 导出会议记录失败:", error);
       setExportStatus("导出失败");
+    }
+  }
+
+  async function regenerateSelectedSummary() {
+    if (!selectedRecord) {
+      return;
+    }
+    try {
+      setExportStatus("摘要生成中...");
+      await window.echosyncDesktop?.sessionRecords.generateSummary(selectedRecord.id);
+      await onRecordsChanged();
+      const record = await window.echosyncDesktop?.sessionRecords.get(selectedRecord.id);
+      if (record) {
+        setSelectedRecord(normalizeSessionRecordForReview(record));
+      }
+      setExportStatus("摘要已更新");
+    } catch (error) {
+      log.warn("[session-records] 重新生成会议摘要失败:", error);
+      setExportStatus("摘要生成失败");
     }
   }
 
@@ -2192,44 +2281,44 @@ function SessionRecordsWindow({
     }
   }
 
+  function handleRecordSegmentKeyDown(segment: SessionRecordSegment, event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    seekToRecordSegment(segment);
+  }
+
   function seekToRecordSegment(segment: SessionRecordSegment) {
     setActiveRecordSegmentId(segment.id);
+    pendingRecordPlayRef.current = true;
     seekRecordAudio(segment.startMs);
-    const audio = recordAudioRef.current;
-    if (!audio) {
-      return;
-    }
-    void audio.play()
-      .then(() => {
-        setRecordAudioPlaying(true);
-      })
-      .catch(() => {
-        setRecordAudioPlaying(false);
-        setRecordAudioError("音频无法播放");
-      });
   }
 
-  function seekRecordAudio(nextMs: number) {
-    const durationMs = selectedRecord?.durationMs ?? 0;
-    const boundedMs = Math.min(Math.max(nextMs, 0), Math.max(durationMs, 0));
-    setPlaybackMs(boundedMs);
-    const audio = recordAudioRef.current;
-    if (!audio) {
-      return;
+  function setRecordAudioPlaybackUrl(nextUrl: string | null, ownsObjectUrl = false) {
+    const currentObjectUrl = recordAudioObjectUrlRef.current;
+    if (currentObjectUrl && currentObjectUrl !== nextUrl) {
+      URL.revokeObjectURL(currentObjectUrl);
     }
-    audio.currentTime = boundedMs / 1000;
+    recordAudioObjectUrlRef.current = ownsObjectUrl ? nextUrl : null;
+    setRecordAudioUrl(nextUrl);
   }
 
-  function toggleRecordAudioPlayback() {
-    const audio = recordAudioRef.current;
-    if (!audio) {
+  function applyPendingRecordSeek(audio: HTMLAudioElement) {
+    const pendingSeekMs = pendingRecordSeekMsRef.current;
+    if (pendingSeekMs === null) {
       return;
     }
-    if (recordAudioPlaying) {
-      audio.pause();
-      setRecordAudioPlaying(false);
+    if (!seekAudioElement(audio, pendingSeekMs)) {
       return;
     }
+    pendingRecordSeekMsRef.current = null;
+    setRecordAudioStatus("ready");
+    setPlaybackMs(pendingSeekMs);
+    if (!pendingRecordPlayRef.current) {
+      return;
+    }
+    pendingRecordPlayRef.current = false;
     setRecordAudioError("");
     void audio.play()
       .then(() => {
@@ -2239,6 +2328,54 @@ function SessionRecordsWindow({
         setRecordAudioPlaying(false);
         setRecordAudioError("音频无法播放");
       });
+  }
+
+  function scrubRecordAudio(nextMs: number) {
+    pendingRecordPlayRef.current = false;
+    seekRecordAudio(nextMs);
+  }
+
+  function seekRecordAudio(nextMs: number) {
+    const durationMs = selectedRecord?.durationMs ?? 0;
+    const boundedMs = Math.min(Math.max(nextMs, 0), Math.max(durationMs, 0));
+    pendingRecordSeekMsRef.current = boundedMs;
+    setPlaybackMs(boundedMs);
+    const audio = recordAudioRef.current;
+    if (!audio) {
+      return;
+    }
+    if (audio.readyState === 0) {
+      setRecordAudioStatus("loading");
+      audio.load();
+      return;
+    }
+    applyPendingRecordSeek(audio);
+  }
+
+  function toggleRecordAudioPlayback() {
+    const audio = recordAudioRef.current;
+    if (!audio) {
+      if (recordAudioStatus === "loading") {
+        setRecordAudioError("音频仍在加载，请稍候");
+      } else if (recordAudioStatus === "missing") {
+        setRecordAudioError("本地没有保存可回放音频");
+      }
+      return;
+    }
+    if (recordAudioPlaying) {
+      audio.pause();
+      setRecordAudioPlaying(false);
+      return;
+    }
+    setRecordAudioError("");
+    pendingRecordPlayRef.current = true;
+    pendingRecordSeekMsRef.current = playbackMs;
+    if (audio.readyState < 2) {
+      setRecordAudioStatus("loading");
+      audio.load();
+      return;
+    }
+    applyPendingRecordSeek(audio);
   }
 
   function updateRecordPlayback(currentMs: number) {
@@ -2345,7 +2482,16 @@ function SessionRecordsWindow({
                   }}
                   onError={() => {
                     setRecordAudioPlaying(false);
+                    setRecordAudioStatus("failed");
                     setRecordAudioError("音频加载失败");
+                  }}
+                  onCanPlay={(event) => {
+                    setRecordAudioStatus("ready");
+                    applyPendingRecordSeek(event.currentTarget);
+                  }}
+                  onLoadedMetadata={(event) => {
+                    setRecordAudioStatus("ready");
+                    applyPendingRecordSeek(event.currentTarget);
                   }}
                   onPause={() => setRecordAudioPlaying(false)}
                   onPlay={() => setRecordAudioPlaying(true)}
@@ -2359,16 +2505,23 @@ function SessionRecordsWindow({
                     aria-label="音频回放进度"
                     max={selectedRecord.durationMs}
                     min={0}
-                    onChange={(event) => seekRecordAudio(Number(event.target.value))}
+                    onChange={(event) => scrubRecordAudio(Number(event.target.value))}
                     step={250}
                     type="range"
                     value={Math.min(playbackMs, selectedRecord.durationMs)}
                   />
                 </div>
+                {recordAudioStatus === "loading" ? <span className="recordAudioStatus" role="status">音频加载中...</span> : null}
                 {recordAudioError ? <span className="recordAudioError" role="status">{recordAudioError}</span> : null}
               </>
             ) : (
-              <span>本地没有保存可回放音频。</span>
+              <span>
+                {recordAudioStatus === "loading"
+                  ? "音频加载中..."
+                  : recordAudioStatus === "failed"
+                    ? "音频加载失败"
+                    : "本地没有保存可回放音频。"}
+              </span>
             )}
             <time>{formatTime(playbackMs)} / {formatTime(selectedRecord.durationMs)}</time>
           </div>
@@ -2376,19 +2529,21 @@ function SessionRecordsWindow({
             <div className="recordTranscriptList" style={{ fontSize: `${reviewScale}em` }} aria-label="双语片段">
               {selectedRecord.segments.length > 0 ? (
                 selectedRecord.segments.map((segment) => (
-                  <button
+                  <article
                     className={segment.id === activeRecordSegmentId ? "recordSegmentPair active" : "recordSegmentPair"}
                     key={segment.id}
                     onClick={() => seekToRecordSegment(segment)}
+                    onKeyDown={(event) => handleRecordSegmentKeyDown(segment, event)}
                     ref={(node) => {
                       recordSegmentRefs.current[segment.id] = node;
                     }}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                   >
                     <time>{formatTime(segment.startMs)}-{formatTime(segment.endMs)}</time>
                     <p className="recordSegmentSource">{selectedRecordSegmentSourceText(segment) || "原文为空"}</p>
                     <p className="recordSegmentTarget">{selectedRecordSegmentTargetText(segment) || "译文待补全"}</p>
-                  </button>
+                  </article>
                 ))
               ) : (
                 <p className="archiveMissing">这条记录没有可复盘文本。</p>
@@ -2401,6 +2556,11 @@ function SessionRecordsWindow({
                 <p>{selectedRecord.summary.text || "摘要暂未生成。保存后仍可先查看完整双语记录。"}</p>
                 {selectedRecord.summary.status === "failed" && selectedRecord.summary.errorMessage ? (
                   <p className="recordSummaryError">{selectedRecord.summary.errorMessage}</p>
+                ) : null}
+                {selectedRecord.summary.status !== "ready" ? (
+                  <button className="recordSummaryRetry" onClick={() => void regenerateSelectedSummary()} type="button">
+                    {selectedRecord.summary.status === "failed" ? "重新生成摘要" : "生成摘要"}
+                  </button>
                 ) : null}
                 {selectedRecord.summary.keywords.length > 0 ? (
                   <div className="recordKeywordList">
@@ -2597,6 +2757,10 @@ function OverlayWindow({
     () => displayPresentation.settlingLines.filter((line) => line.id !== displayActiveLine?.id),
     [displayActiveLine?.id, displayPresentation.settlingLines]
   );
+  const combinedHistoryLines = useMemo(
+    () => [...historyLines, ...settlingLines],
+    [historyLines, settlingLines]
+  );
   const [overlayInteractionLocked, setOverlayInteractionLocked] = useState(false);
   const subtitleVars = {
     "--subtitle-bg-opacity": subtitleStyle.backgroundOpacity,
@@ -2737,7 +2901,7 @@ function OverlayWindow({
         }}
       >
         <section
-          className={`floatingCaption captionWindow ${showChrome ? "withChrome" : ""} ${historyLines.length > 0 || settlingLines.length > 0 ? "hasHistory" : ""} mode-${displayMode} outline-${subtitleStyle.outlineStyle}`}
+          className={`floatingCaption captionWindow ${showChrome ? "withChrome" : ""} ${combinedHistoryLines.length > 0 ? "hasHistory" : ""} mode-${displayMode} outline-${subtitleStyle.outlineStyle}`}
           style={subtitleVars}
         >
           {showChrome ? (
@@ -2762,8 +2926,7 @@ function OverlayWindow({
               />
             </div>
           ) : null}
-          {historyLines.length > 0 ? <OverlayCaptionHistory lines={historyLines} subtitleStyle={subtitleStyle} /> : null}
-          {settlingLines.length > 0 ? <OverlayCaptionHistory lines={settlingLines} subtitleStyle={subtitleStyle} variant="settling" /> : null}
+          {combinedHistoryLines.length > 0 ? <OverlayCaptionHistory lines={combinedHistoryLines} subtitleStyle={subtitleStyle} /> : null}
           <CaptionText line={captionLineForDisplay} subtitleStyle={subtitleStyle} />
           <div className="overlayMeta">
             <span className={`liveDot state-${snapshot.state}`} />
@@ -2938,23 +3101,20 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
 
 function OverlayCaptionHistory({
   lines,
-  subtitleStyle,
-  variant = "history"
+  subtitleStyle
 }: {
   lines: CaptionLine[];
   subtitleStyle: SubtitleStyleState;
-  variant?: "history" | "settling";
 }) {
   const historyRef = useRef<HTMLDivElement | null>(null);
-  const lineIds = lines.map((line) => line.id).join("|");
+  const lineRenderKey = lines.map((line) => `${line.id}:${line.rev}:${line.state}:${line.sourceText.length}:${line.targetText.length}`).join("|");
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => scrollTranscriptToBottom(historyRef.current));
-    return () => window.cancelAnimationFrame(frame);
-  }, [lineIds]);
+  useLayoutEffect(() => {
+    scrollTranscriptToBottom(historyRef.current, "smooth");
+  }, [lineRenderKey]);
 
   return (
-    <div className={`overlayCaptionHistory ${variant}`} ref={historyRef}>
+    <div className="overlayCaptionHistory" ref={historyRef}>
       {lines.map((line, index, visibleLines) => (
         <article className={`historyLine ${line.state} ${index === visibleLines.length - 1 ? "current" : ""}`} key={line.id}>
           <CaptionText line={line} subtitleStyle={subtitleStyle} />
@@ -3329,11 +3489,29 @@ function sourceLabel(sourceId: DesktopAudioSourceId) {
   return DESKTOP_AUDIO_SOURCES.find((source: DesktopAudioSource) => source.id === sourceId)?.label ?? "未知来源";
 }
 
-function scrollTranscriptToBottom(element: HTMLDivElement | null) {
+function scrollTranscriptToBottom(element: HTMLDivElement | null, behavior: ScrollBehavior = "auto") {
   if (!element) {
     return;
   }
-  element.scrollTop = element.scrollHeight;
+  element.scrollTo({ behavior, top: element.scrollHeight });
+}
+
+function seekAudioElement(audio: HTMLAudioElement, nextMs: number) {
+  const nextSeconds = nextMs / 1000;
+  if (!Number.isFinite(nextSeconds)) {
+    return false;
+  }
+  try {
+    const boundedSeconds = Math.max(0, nextSeconds);
+    if (typeof audio.fastSeek === "function") {
+      audio.fastSeek(boundedSeconds);
+    } else {
+      audio.currentTime = boundedSeconds;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function audioActivityLabel(activity: ReturnType<typeof createInitialSessionUiState>["audioActivity"]) {

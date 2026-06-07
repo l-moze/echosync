@@ -78,6 +78,14 @@ describe("首页同传启动器文案", () => {
     );
   });
 
+  it("首页诊断文案隐藏 Electron IPC 调用前缀", () => {
+    expect(
+      productizeHomeDiagnostic(
+        "Error invoking remote method 'agent:get-capabilities': Error: 无法连接同传 Agent（http://127.0.0.1:8766）。"
+      )
+    ).toBe("无法连接同传服务（http://127.0.0.1:8766）。");
+  });
+
   it("字幕窗口设置不承载应用级引擎、日志或 WebSocket 配置", () => {
     const text = SUBTITLE_WINDOW_SETTINGS_ITEMS.join(" ");
 

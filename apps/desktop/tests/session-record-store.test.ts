@@ -55,6 +55,9 @@ describe("主进程会议记录持久化", () => {
       expect(srt.text).toContain("00:00:01,200 --> 00:00:01,800");
 
       expect(await store.getAudioUrl("session:demo")).toMatch(/^file:\/\//);
+      const audioData = await store.getAudioData("session:demo");
+      expect(audioData?.mimeType).toBe("audio/webm");
+      expect(audioData ? Array.from(new Uint8Array(audioData.data)) : []).toEqual([1, 2, 3, 4]);
 
       await store.delete("session:demo");
       expect(await store.get("session:demo")).toBeNull();

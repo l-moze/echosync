@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "electron-log": "^5.4.4",
+    "fix-webm-duration": "^1.0.6",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ws": "^8.21.0"

@@ -25,6 +25,7 @@ export type SessionRecordStore = {
   rename: (id: string, title: string) => Promise<SessionRecord>;
   delete: (id: string) => Promise<void>;
   exportRecord: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
+  getAudioData: (id: string) => Promise<{ data: ArrayBuffer; mimeType: string } | null>;
   getAudioUrl: (id: string) => Promise<string | null>;
 };
 
@@ -161,6 +162,18 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
       }
       return {
         text: serializeRecord(record, format)
+      };
+    },
+
+    async getAudioData(id) {
+      const record = await readRecord(id);
+      if (!record?.audio?.path) {
+        return null;
+      }
+      const buffer = await fs.readFile(record.audio.path);
+      return {
+        data: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
+        mimeType: record.audio.mimeType || "audio/webm"
       };
     },
 

@@ -92,7 +92,11 @@ describe("renderer visual style contract", () => {
     const detailPanelRule = cssRule(".recordDetailPanel");
     const detailLayoutRule = cssRule(".recordDetailLayout");
     const transcriptRule = cssRule(".recordTranscriptList");
+    const segmentRule = cssRule(".recordSegmentPair");
+    const segmentTextRule = cssRule(".recordSegmentPair p");
     const summaryRule = cssRule(".recordSummaryAside");
+    const summarySectionRule = cssRule(".recordSummaryAside section");
+    const summaryErrorRule = cssRule(".recordSummaryError");
 
     expect(detailWindowRule).toContain("height: min(820px, calc(100vh - 92px))");
     expect(detailWindowRule).toContain("grid-template-rows: auto minmax(0, 1fr)");
@@ -102,8 +106,17 @@ describe("renderer visual style contract", () => {
     expect(detailLayoutRule).toContain("min-height: 0");
     expect(transcriptRule).toContain("min-height: 0");
     expect(transcriptRule).toContain("overflow-y: auto");
+    expect(segmentRule).toContain("height: auto");
+    expect(segmentRule).toContain("min-height: 112px");
+    expect(segmentRule).toContain("align-content: start");
+    expect(segmentRule).toContain("cursor: pointer");
+    expect(segmentTextRule).toContain("display: block");
+    expect(segmentTextRule).toContain("white-space: normal");
     expect(summaryRule).toContain("min-height: 0");
     expect(summaryRule).toContain("overflow-y: auto");
+    expect(summaryRule).toContain("overflow-x: hidden");
+    expect(summarySectionRule).toContain("min-width: 0");
+    expect(summaryErrorRule).toContain("overflow-wrap: anywhere");
   });
 
   it("keeps finished transcript review segments in readable block flow", () => {
@@ -176,5 +189,30 @@ describe("renderer visual style contract", () => {
     expect(settingsPanelSource).toContain("findAgentTtsProvider");
     expect(engineChoiceSource).toContain("disabled={option.disabled}");
     expect(engineChoiceSource).toContain("title={option.description}");
+  });
+
+  it("keeps overlay caption history as one clipped bottom-anchored rail", () => {
+    const overlaySource = rendererSource.slice(
+      rendererSource.indexOf("function OverlayWindow"),
+      rendererSource.indexOf("type OverlayResizeDirection")
+    );
+    const historyTextRule = /\.historyLine \.overlaySource,\s*\.historyLine h1,\s*\.historyLine \.overlayTarget\s*\{([^}]*)\}/.exec(stylesheet)?.[1] ?? "";
+
+    expect(overlaySource).toContain("combinedHistoryLines");
+    expect(overlaySource).toContain("<OverlayCaptionHistory lines={combinedHistoryLines}");
+    expect(overlaySource).not.toContain("variant=\"settling\"");
+    expect(rendererSource).toContain("scrollTranscriptToBottom(historyRef.current, \"smooth\")");
+    expect(cssRule(".floatingCaption.hasHistory")).toContain("grid-template-rows: minmax(0, 1fr) auto");
+    expect(cssRule(".floatingCaption.withChrome.hasHistory")).toContain("grid-template-rows: auto minmax(0, 1fr) auto auto");
+    expect(cssRule(".overlayCaptionHistory")).toContain("scroll-behavior: smooth");
+    expect(cssRule(".overlayCaptionHistory")).toContain("overflow-anchor: none");
+    expect(cssRule(".overlayStage.layer-default .overlayCaptionHistory")).toContain("max-height: none");
+    expect(cssRule(".overlayStage.layer-default .overlayCaptionHistory")).toContain("height: 100%");
+    expect(cssRule(".historyLine")).not.toContain("animation");
+    expect(stylesheet).not.toContain("@keyframes historyLineLift");
+    expect(historyTextRule).toContain("overflow: hidden");
+    expect(historyTextRule).toContain("-webkit-box-orient: vertical");
+    expect(cssRule(".historyLine .overlaySource")).toContain("-webkit-line-clamp: 1");
+    expect(cssRule(".historyLine h1")).toContain("-webkit-line-clamp: 1");
   });
 });

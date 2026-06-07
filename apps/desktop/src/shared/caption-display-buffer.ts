@@ -60,11 +60,13 @@ const DEFAULT_TIMING: LaneTiming = {
   maxTargetCharsPerTick: 2,
   revisionDecayMs: 2000
 };
-const READABLE_DWELL_BASE_MS = 1800;
-const READABLE_DWELL_MIN_MS = 2400;
-const READABLE_DWELL_MAX_MS = 6200;
-const SOURCE_READ_MS_PER_GRAPHEME = 28;
-const TARGET_READ_MS_PER_GRAPHEME = 42;
+const READABLE_DWELL_BASE_MS = 2200;
+const READABLE_DWELL_MIN_MS = 3600;
+const READABLE_DWELL_MAX_MS = 9000;
+const SOURCE_READ_MS_PER_GRAPHEME = 34;
+const TARGET_READ_MS_PER_GRAPHEME = 56;
+const SOURCE_READ_MS_CAP = 3200;
+const TARGET_READ_MS_CAP = 5200;
 const graphemeSegmenter = createGraphemeSegmenter();
 const GRAPHEME_CACHE_LIMIT = 2048;
 const graphemeCache = new Map<string, string[]>();
@@ -123,7 +125,7 @@ export function selectDisplayCaptionPresentation(
   });
 
   return {
-    activeLine: selectActiveCaptionLineForDisplay(activeCandidates, displayMode) ?? settlingLines.at(-1),
+    activeLine: settlingLines[0] ?? selectActiveCaptionLineForDisplay(activeCandidates, displayMode),
     settlingLines,
     historyLines
   };
@@ -307,8 +309,8 @@ function selectDesiredTextForDisplay(
 }
 
 function calculateReadableDwellMs(sourceText: string, targetText: string): number {
-  const sourceReadMs = Math.min(1800, graphemes(sourceText).length * SOURCE_READ_MS_PER_GRAPHEME);
-  const targetReadMs = Math.min(2400, graphemes(targetText).length * TARGET_READ_MS_PER_GRAPHEME);
+  const sourceReadMs = Math.min(SOURCE_READ_MS_CAP, graphemes(sourceText).length * SOURCE_READ_MS_PER_GRAPHEME);
+  const targetReadMs = Math.min(TARGET_READ_MS_CAP, graphemes(targetText).length * TARGET_READ_MS_PER_GRAPHEME);
   return clamp(READABLE_DWELL_BASE_MS + Math.max(sourceReadMs, targetReadMs), READABLE_DWELL_MIN_MS, READABLE_DWELL_MAX_MS);
 }
 

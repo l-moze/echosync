@@ -1,3 +1,5 @@
+import fixWebmDuration, { type FixWebmDurationFunction } from "fix-webm-duration";
+
 export type SessionRecording = {
   blob: Blob;
   mimeType: string;
@@ -74,6 +76,33 @@ export function createSessionRecorder({
   };
 }
 
+export async function ensureSeekableSessionRecording(
+  recording: SessionRecording | null | undefined,
+  durationMs: number,
+  fixDuration: FixWebmDurationFunction = fixWebmDuration
+): Promise<SessionRecording | null> {
+  if (!recording) {
+    return null;
+  }
+  const normalizedDurationMs = Math.max(1, Math.round(durationMs));
+  if (!Number.isFinite(normalizedDurationMs) || !isWebmRecording(recording) || recording.blob.size <= 0) {
+    return recording;
+  }
+  try {
+    const fixedBlob = await fixDuration(recording.blob, normalizedDurationMs, { logger: false });
+    return {
+      blob: fixedBlob,
+      mimeType: fixedBlob.type || recording.mimeType
+    };
+  } catch {
+    return recording;
+  }
+}
+
 function selectMimeType(MediaRecorderCtor: typeof MediaRecorder) {
   return PREFERRED_MIME_TYPES.find((type) => MediaRecorderCtor.isTypeSupported(type)) ?? "";
+}
+
+function isWebmRecording(recording: SessionRecording) {
+  return recording.mimeType.includes("webm") || recording.blob.type.includes("webm");
 }

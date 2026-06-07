@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 
 from echosync_agent.domain import AudioFrame, SegmentStatus, TranscriptSegment, new_segment_id
 from echosync_agent.interfaces import Transcriber
+from echosync_agent.services.realtime.latin_delta_join import should_join_latin_word_continuation
 
 logger = logging.getLogger(__name__)
 
@@ -358,6 +359,8 @@ def _merge_transcript_piece(base: str, piece: str) -> str:
             rest = " ".join(piece_words[overlap:])
             return base if not rest else f"{base} {rest}"
 
+    if should_join_latin_word_continuation(base, piece):
+        return f"{base}{piece}"
     if piece[0] in ",.!?;:，。！？；：":
         return f"{base}{piece}"
     if _is_cjk(base[-1]) and _is_cjk(piece[0]):

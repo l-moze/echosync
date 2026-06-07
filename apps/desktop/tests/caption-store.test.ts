@@ -887,7 +887,7 @@ describe("桌面字幕状态机", () => {
     expect(selectActiveCaptionLine(lines)?.id).toBe("seg_old_audio_new_event");
   });
 
-  it("默认字幕保留上一句作为滚动历史，聚焦和驻留态显示可回看的历史字幕", () => {
+  it("字幕弹窗历史选择不按交互层硬裁剪，交给窗口高度决定可见数量", () => {
     const lines: CaptionLine[] = Array.from({ length: 8 }, (_, index) => ({
       id: `seg_${index + 1}`,
       rev: 1,
@@ -900,7 +900,15 @@ describe("桌面字幕状态机", () => {
       patchCount: 0
     }));
 
-    expect(selectOverlayHistoryLines("default", lines, "seg_8").map((line) => line.id)).toEqual(["seg_7"]);
+    expect(selectOverlayHistoryLines("default", lines, "seg_8").map((line) => line.id)).toEqual([
+      "seg_1",
+      "seg_2",
+      "seg_3",
+      "seg_4",
+      "seg_5",
+      "seg_6",
+      "seg_7"
+    ]);
     expect(selectOverlayHistoryLines("controls", lines, "seg_8").map((line) => line.id)).toEqual([
       "seg_1",
       "seg_2",
@@ -921,7 +929,7 @@ describe("桌面字幕状态机", () => {
     ]);
   });
 
-  it("驻留字幕保留足够历史，让有限高度窗口自然滚动", () => {
+  it("驻留字幕保留最近显示窗口内的全部历史，让有限高度窗口自然滚动", () => {
     const lines: CaptionLine[] = Array.from({ length: 28 }, (_, index) => ({
       id: `seg_${index + 1}`,
       rev: 1,
@@ -936,8 +944,8 @@ describe("桌面字幕状态机", () => {
 
     const history = selectOverlayHistoryLines("pinned", lines, "seg_28");
 
-    expect(history).toHaveLength(24);
-    expect(history.at(0)?.id).toBe("seg_4");
+    expect(history).toHaveLength(27);
+    expect(history.at(0)?.id).toBe("seg_1");
     expect(history.at(-1)?.id).toBe("seg_27");
   });
 

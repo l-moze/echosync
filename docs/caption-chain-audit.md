@@ -359,13 +359,14 @@ $env:FUNASR_VAD_ENABLED='true'
 1. 供应商返回“完整滚动 hypothesis”：应替换当前文本。
 2. 供应商返回“新增 delta”：应追加到当前文本。
 
-真实流式 ASR 常见第三种情况：供应商按词返回 delta，但单词前不一定带空格。当前策略对这种情况过于保守，会把 `"Hello, my name is" + "Eevee"` 判成替换，结果只剩 `"Eevee"`。
+真实流式 ASR 常见第三种情况：供应商按词返回 delta，但单词前不一定带空格。当前策略对这种情况过于保守，会把 `"Hello, my name is" + "Eevee"` 判成替换，结果只剩 `"Eevee"`。后续接入 Deepgram 后又暴露出第四种情况：供应商可能把同一个英文长词切成多个 span，例如 `"ident" + "ifi" + "ability"`；如果只按“英文短语后裸词补空格”处理，就会显示成 `ident ifi ability`。
 
-已完成第一轮优化：英文裸词 delta 在已有英文短语或标点上下文后会补空格追加；短 token 拼接和完整 rolling hypothesis 替换契约保持不变。后续如果接入更多供应商，再补最长重叠匹配，兼容局部重复和更复杂的 ASR 修订。
+已完成第二轮优化：英文裸词 delta 在已有英文短语或标点上下文后会补空格追加；英文词内 continuation delta 会无空格续接，例如 `ident + ifi + ability -> identifiability`；常见短功能词如 `to/but/and/the` 仍保留词间空格。短 token 拼接和完整 rolling hypothesis 替换契约保持不变。后续如果接入更多供应商，再补最长重叠匹配，兼容局部重复和更复杂的 ASR 修订。
 
 | 算法点 | 做法 | 目的 |
 |--------|------|------|
 | token-aware append | 当英文短语/标点上下文后出现裸词 delta 时补一个空格追加 | 已完成，兼容英文裸词 delta。 |
+| continuation-aware append | 当当前尾词像未完成词干，incoming 像后缀/短续接片段时无空格追加 | 已完成，避免 `ident ifi ability` 这类显示空格。 |
 | 修订保护 | incoming 与 current 有显著公共前缀时仍走 replace | 已完成，保留供应商纠错能力。 |
 | 最长重叠匹配 | 计算 current 尾部与 incoming 头部的最长重叠 | 后续增强，兼容局部重复和更复杂修订。 |
 
@@ -473,6 +474,8 @@ python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realti
 - `caption-display-buffer` 负责视觉合成：源文和译文分别以字素队列追赶 desired text，`segment.commit` 后先进入 `settling` 驻留，再进入 history。
 
 2026-06-07 性能修正：悬浮字幕不能让整场会话历史参与每帧打字机计算。`selectOverlayDisplayWindow` 只向视觉合成器提供最近窗口，且常规路径只切尾部窗口；active 行落在窗口外时才回扫一次。已补极小窗口契约，避免 `maxLines=1` 时因为 `slice(-0)` 退化成全量历史。`selectActiveCaptionLine` 保持“源文优先、无源文再回退译文”的语义，但底层选择器从 `reduce` 临时对象改为简单循环，减少长会话下每个 realtime event 的分配开销。
+
+2026-06-07 体验修正：前端主字幕选择从“最新 active 优先”调整为“readable dwell 未结束的已提交片段优先”。这样新源文片段到达时，上一句不会在用户刚看到译文时立刻被挤到历史区。readable dwell 公式同步放宽为 `base=2200ms`、短句最少 `3600ms`、长双语最多 `9000ms`，并按源文/译文字素数增加驻留时间。对应回归测试在 `apps/desktop/tests/caption-display-buffer.test.ts`。
 
 2026-06-06 真实日志回放结论：本机 `main.old.log + main.log` 共解析到 `translation.partial=1234`、`transcript.partial=1354`、`segment.commit=57`、`realtime.error=2`。其中译文长度缩短回退 `129` 次，新的策略全部覆盖：`transcript.partial` 不清空已有译文，`translation.partial` 不缩短已可见译文，真正缩短/替换由 `translation.patch` 或 `segment.commit` 负责。源文侧仍允许小范围 ASR 修订，严重前缀回退由 display buffer 保持可见稳定。
 

@@ -10,9 +10,11 @@ const desktopApi: DesktopApi = {
     get: (id) => ipcRenderer.invoke("session-records:get", id),
     saveDraft: (input) => ipcRenderer.invoke("session-records:save-draft", input),
     updateSummary: (id, summary) => ipcRenderer.invoke("session-records:update-summary", id, summary),
+    generateSummary: (id) => ipcRenderer.invoke("session-records:generate-summary", id),
     rename: (id, title) => ipcRenderer.invoke("session-records:rename", id, title),
     delete: (id) => ipcRenderer.invoke("session-records:delete", id),
     export: (id, format) => ipcRenderer.invoke("session-records:export", id, format),
+    getAudioData: (id) => ipcRenderer.invoke("session-records:get-audio-data", id),
     getAudioUrl: (id) => ipcRenderer.invoke("session-records:get-audio-url", id)
   },
   getAgentCapabilities: () => ipcRenderer.invoke("agent:get-capabilities"),

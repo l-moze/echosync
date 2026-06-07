@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createSessionRecorder } from "../src/renderer/session-recorder";
+import { createSessionRecorder, ensureSeekableSessionRecording } from "../src/renderer/session-recorder";
 
 class FakeBlob {
   readonly parts: BlobPart[];
@@ -52,5 +52,20 @@ describe("会话原始音频录制器", () => {
     }
     expect(result.mimeType).toBe("audio/webm;codecs=opus");
     expect(result.blob.type).toBe("audio/webm;codecs=opus");
+  });
+
+  it("停止后用真实会话时长补写 WebM duration，保证复盘点击可 seek", async () => {
+    const originalBlob = new Blob(["audio"], { type: "audio/webm" });
+    const fixedBlob = new Blob(["fixed-audio"], { type: "audio/webm" });
+    const fixWebmDuration = vi.fn().mockResolvedValue(fixedBlob);
+
+    const result = await ensureSeekableSessionRecording(
+      { blob: originalBlob, mimeType: "audio/webm" },
+      12_340,
+      fixWebmDuration
+    );
+
+    expect(fixWebmDuration).toHaveBeenCalledWith(originalBlob, 12_340, { logger: false });
+    expect(result).toEqual({ blob: fixedBlob, mimeType: "audio/webm" });
   });
 });

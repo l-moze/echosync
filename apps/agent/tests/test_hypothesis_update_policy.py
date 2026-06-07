@@ -40,6 +40,26 @@ def test_policy_appends_bare_english_word_delta_after_punctuation() -> None:
     assert result.mode == "append_delta"
 
 
+def test_policy_joins_latin_word_continuation_delta_without_extra_space() -> None:
+    policy = HypothesisUpdatePolicy()
+
+    first = policy.apply(current_text="The task checks ident", incoming_text="ifi")
+    second = policy.apply(current_text=first.text, incoming_text="ability")
+
+    assert first.text == "The task checks identifi"
+    assert second.text == "The task checks identifiability"
+    assert second.mode == "append_delta"
+
+
+def test_policy_keeps_space_before_common_short_words() -> None:
+    policy = HypothesisUpdatePolicy()
+
+    result = policy.apply(current_text="I would like", incoming_text="to")
+
+    assert result.text == "I would like to"
+    assert result.mode == "append_delta"
+
+
 def test_policy_replaces_with_full_hypothesis_when_incoming_contains_current_prefix() -> None:
     policy = HypothesisUpdatePolicy()
 

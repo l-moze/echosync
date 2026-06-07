@@ -104,8 +104,10 @@ Interim -> Stable -> Revised -> Locked
 修订窗口策略：
 
 - 默认只开放最近 2 个 segment。
-- LLM 修订只返回结构化 patch，不返回整屏文本。
+- LLM 修订可以累计更多最近源文/译文上下文，但请求体必须把每条字幕作为结构化对象传入：`segment_id`、`rev`、`source_text`、`target_text`、`start_ms`、`end_ms`。
+- LLM 修订只返回结构化 patch，不返回整屏文本，也不要求前端做字符串搜索替换。
 - patch 必须包含 `base_rev`，前端只能应用到匹配 revision 的行。
+- patch 操作必须基于目标译文字符 index：`from_char` / `to_char` / `at_char`。后端在发布前校验 `segment_id + base_rev`，前端再做同样校验。
 - 若 patch 到达时目标行已 locked 或 revision 已更新，必须丢弃。
 
 ## 延迟预算

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from echosync_agent.services.realtime.latin_delta_join import should_join_latin_word_continuation
+
 HypothesisUpdateMode = Literal["append_delta", "replace_hypothesis"]
 
 
@@ -47,6 +49,8 @@ def _looks_like_append_delta(*, current_text: str, incoming_text: str) -> bool:
         return False
     if incoming_text[0].isspace() or incoming_text[0] in ",.!?;:，。！？；：":
         return True
+    if should_join_latin_word_continuation(current_text, incoming_text):
+        return True
     if _needs_space_before_bare_latin_delta(current_text, incoming_text):
         return True
     return " " not in incoming_text and " " not in current_text
@@ -65,6 +69,8 @@ def _needs_space_before_bare_latin_delta(current_text: str, incoming_text: str) 
     if not _is_latin_word(incoming_trimmed):
         return False
     if not current_text or current_text[-1].isspace():
+        return False
+    if should_join_latin_word_continuation(current_text, incoming_trimmed):
         return False
     if not _has_latin_word_separator(current_text):
         return False

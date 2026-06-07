@@ -10,7 +10,9 @@ const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx
 
 describe("会议记录 AI 摘要链路契约", () => {
   it("主进程在保存会议记录后异步生成摘要并广播刷新事件", () => {
+    expect(mainSource).toContain("loadDesktopEnvironment();");
     expect(mainSource).toContain("createSessionSummaryGeneratorFromEnv()");
+    expect(mainSource).toContain("\"session-records:generate-summary\"");
     expect(mainSource).toContain("runSessionSummaryGeneration({");
     expect(mainSource).toContain("notifySessionRecordChanged");
     expect(mainSource).toContain("\"session-records:update-summary\"");
@@ -19,8 +21,10 @@ describe("会议记录 AI 摘要链路契约", () => {
 
   it("preload 和 DesktopApi 暴露摘要更新与记录变更监听", () => {
     expect(desktopApiSource).toContain("updateSummary: (id: string, summary: Partial<SessionRecordSummary>) => Promise<SessionRecord>;");
+    expect(desktopApiSource).toContain("generateSummary: (id: string) => Promise<void>;");
     expect(desktopApiSource).toContain("onSessionRecordChanged: (listener: (recordId: string) => void) => () => void;");
     expect(preloadSource).toContain("updateSummary: (id, summary) => ipcRenderer.invoke(\"session-records:update-summary\", id, summary)");
+    expect(preloadSource).toContain("generateSummary: (id) => ipcRenderer.invoke(\"session-records:generate-summary\", id)");
     expect(preloadSource).toContain("ipcRenderer.on(\"session-records:changed\", handler)");
   });
 
@@ -32,5 +36,7 @@ describe("会议记录 AI 摘要链路契约", () => {
     expect(rendererSource).toContain("selectedRecord.summary.topics");
     expect(rendererSource).toContain("selectedRecord.summary.risks");
     expect(rendererSource).toContain("selectedRecord.summary.terminologySuggestions");
+    expect(rendererSource).toContain("regenerateSelectedSummary");
+    expect(rendererSource).toContain("window.echosyncDesktop?.sessionRecords.generateSummary(selectedRecord.id)");
   });
 });

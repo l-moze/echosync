@@ -101,7 +101,12 @@ export function findHomeForbiddenTerms(text: string): string[] {
 }
 
 export function productizeHomeDiagnostic(message: string): string {
-  return message
+  const diagnostic = message
+    .replace(/^Error invoking remote method '[^']+':\s*(?:Error:\s*)?/, "")
+    .replace(/^Error:\s*/, "");
+
+  return diagnostic
+    .replaceAll("同传 Agent", "同传服务")
     .replaceAll(/\s*Agent\s*/g, "同传服务")
     .replaceAll(/\s*ASR provider\s*/g, "语音识别引擎")
     .replaceAll(/\s*翻译 provider\s*/g, "翻译引擎")

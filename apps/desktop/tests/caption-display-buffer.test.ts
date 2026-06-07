@@ -130,7 +130,7 @@ describe("字幕显示视觉合成器", () => {
     const afterDwell = selectDisplayCaptionLines(
       tooSoon.buffer,
       [line({ id: "seg_short", sourceText: "Yes.", targetText: "是的。", state: "locked" })],
-      4100
+      4700
     );
     const presentationAfterDwell = selectDisplayCaptionPresentation(afterDwell, "sentencePair");
 
@@ -139,7 +139,7 @@ describe("字幕显示视觉合成器", () => {
     expect(presentationAfterDwell.historyLines.map((historyLine) => historyLine.id)).toEqual(["seg_short"]);
   });
 
-  it("当前源文新段到达时，刚 commit 的上一句仍在 readable 区，不被立即挤进历史", () => {
+  it("当前源文新段到达时，刚 commit 的上一句仍作为主字幕驻留，不被新片段立即抢走", () => {
     const committed = selectDisplayCaptionLines(
       createInitialCaptionDisplayBuffer(),
       [
@@ -150,8 +150,29 @@ describe("字幕显示视觉合成器", () => {
     );
     const presentation = selectDisplayCaptionPresentation(committed, "sentencePair");
 
-    expect(presentation.activeLine?.id).toBe("seg_next");
+    expect(presentation.activeLine?.id).toBe("seg_prev");
     expect(presentation.settlingLines.map((settlingLine) => settlingLine.id)).toEqual(["seg_prev"]);
+    expect(presentation.historyLines).toEqual([]);
+  });
+
+  it("长双语字幕会按内容长度延长驻留时间，避免读到一半就上滚", () => {
+    const longSource = "This is a dense technical sentence about asynchronous translation queues and rendering buffers.";
+    const longTarget = "这是一句信息密度较高的技术字幕，正在解释异步翻译队列和渲染缓冲。";
+    const committed = selectDisplayCaptionLines(
+      createInitialCaptionDisplayBuffer(),
+      [line({ id: "seg_long", sourceText: longSource, targetText: longTarget, state: "locked" })],
+      1000
+    );
+
+    const stillReadable = selectDisplayCaptionLines(
+      committed.buffer,
+      [line({ id: "seg_long", sourceText: longSource, targetText: longTarget, state: "locked" })],
+      7600
+    );
+    const presentation = selectDisplayCaptionPresentation(stillReadable, "sentencePair");
+
+    expect(stillReadable.buffer.entries.seg_long.phase).toBe("readable");
+    expect(presentation.activeLine?.id).toBe("seg_long");
     expect(presentation.historyLines).toEqual([]);
   });
 

@@ -311,15 +311,16 @@ MVP 规则：
 推荐 dwell 公式：
 
 ```text
-base = 1800ms
-source_read = min(1800ms, source_graphemes * 28ms)
-target_read = min(2400ms, target_graphemes * 42ms)
-dwell = clamp(base + max(source_read, target_read), 2400ms, 6200ms)
+base = 2200ms
+source_read = min(3200ms, source_graphemes * 34ms)
+target_read = min(5200ms, target_graphemes * 56ms)
+dwell = clamp(base + max(source_read, target_read), 3600ms, 9000ms)
 ```
 
 补充规则：
 
-- 短句也至少驻留 2400ms，避免 “Yes.” / “是的。” 这类短句一闪而过。
+- 短句也至少驻留 3600ms，避免 “Yes.” / “是的。” 这类短句一闪而过。
+- readable block 优先作为主字幕展示；新 active segment 不应在 readable dwell 未到期时抢走主字幕位。
 - 中文译文在 commit 后才到达时，从 `targetReceivedAtMs` 重新保证至少 1600ms 可读时间。
 - 用户 hover、pinned 或手动滚轮回看时进入 auto-scroll lock，不自动推走正在读的块。
 - caption track 上滚使用 240-320ms 的 transform transition，曲线建议 `cubic-bezier(0.22, 1, 0.36, 1)`。

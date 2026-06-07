@@ -38,4 +38,14 @@ describe("Agent capabilities client", () => {
       "Agent 能力检查失败"
     );
   });
+
+  it("throws readable error when Agent capabilities endpoint is unreachable", async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+
+    await expect(
+      fetchAgentCapabilities("http://127.0.0.1:8766", fetchImpl, {
+        attempts: 1
+      })
+    ).rejects.toThrow(/无法连接同传 Agent.*python -m echosync_agent\.transport\.caption_ws/);
+  });
 });
