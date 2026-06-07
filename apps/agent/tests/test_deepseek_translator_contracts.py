@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -256,6 +257,103 @@ def test_deepseek_prefix_completion_is_not_used_when_source_revision_rewrites_pr
     assert all(message.get("prefix") is None for message in normal_client.calls[0]["messages"])
 
 
+def test_deepseek_repairs_required_glossary_source_copy_without_extra_request() -> None:
+    client = FakeOpenAIClient([FakeChunk("LiveKit 可以降低延迟")])
+    factory = RecordingClientFactory({"https://api.deepseek.com/v1": client})
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://api.deepseek.com/v1",
+        client_factory=factory,
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+    context = CorrectionContext(
+        recent_segments=(),
+        glossary={"LiveKit": "实时媒体引擎"},
+        glossary_constraints={"LiveKit": "required"},
+    )
+
+    results = asyncio.run(
+        collect(
+            translator.stream_translate(
+                transcript_segment(text="LiveKit can reduce latency."),
+                context,
+            )
+        )
+    )
+
+    assert results[-1].target_text == "实时媒体引擎 可以降低延迟"
+    assert results[-1].metrics["glossary_required_terms"] == 1.0
+    assert results[-1].metrics["glossary_repaired_required_terms"] == 1.0
+    assert results[-1].metrics["glossary_missing_required_terms"] == 0.0
+    assert len(client.calls) == 1
+
+
+def test_deepseek_reports_required_glossary_miss_when_not_safely_repairable() -> None:
+    client = FakeOpenAIClient([FakeChunk("这个引擎可以降低延迟")])
+    factory = RecordingClientFactory({"https://api.deepseek.com/v1": client})
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://api.deepseek.com/v1",
+        client_factory=factory,
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+    context = CorrectionContext(
+        recent_segments=(),
+        glossary={"LiveKit": "实时媒体引擎"},
+        glossary_constraints={"LiveKit": "required"},
+    )
+
+    results = asyncio.run(
+        collect(
+            translator.stream_translate(
+                transcript_segment(text="LiveKit can reduce latency."),
+                context,
+            )
+        )
+    )
+
+    assert results[-1].target_text == "这个引擎可以降低延迟"
+    assert results[-1].metrics["glossary_required_terms"] == 1.0
+    assert results[-1].metrics["glossary_missing_required_terms"] == 1.0
+    assert "glossary_repaired_required_terms" not in results[-1].metrics
+    assert len(client.calls) == 1
+
+
+def test_deepseek_batch_telemetry_uses_repaired_required_glossary_text(caplog) -> None:
+    client = FakeBatchOpenAIClient("LiveKit 可以降低延迟")
+    factory = RecordingClientFactory({"https://api.deepseek.com/v1": client})
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://api.deepseek.com/v1",
+        client_factory=factory,
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+    context = CorrectionContext(
+        recent_segments=(),
+        glossary={"LiveKit": "实时媒体引擎"},
+        glossary_constraints={"LiveKit": "required"},
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        result = asyncio.run(
+            translator.translate(
+                transcript_segment(text="LiveKit can reduce latency."),
+                context,
+            )
+        )
+
+    assert result.target_text == "实时媒体引擎 可以降低延迟"
+    assert result.metrics["glossary_repaired_required_terms"] == 1.0
+    assert not any(
+        record.getMessage() == "glossary_target_missing"
+        for record in caplog.records
+    )
+    assert len(client.calls) == 1
+
+
 def transcript_segment(text: str):
     from echosync_agent.domain import TranscriptSegment
 
@@ -294,11 +392,11 @@ async def collect(items: AsyncIterator[TranslationSegment]) -> list[TranslationS
 
 
 class RecordingClientFactory:
-    def __init__(self, clients: dict[str, FakeOpenAIClient]) -> None:
+    def __init__(self, clients: dict[str, Any]) -> None:
         self.clients = clients
         self.base_urls: list[str] = []
 
-    def __call__(self, *, api_key: str, base_url: str) -> FakeOpenAIClient:
+    def __call__(self, *, api_key: str, base_url: str) -> Any:
         assert api_key == "test"
         if base_url not in self.base_urls:
             self.base_urls.append(base_url)
@@ -350,3 +448,40 @@ class FakeUsage:
     def __init__(self, *, hit: int, miss: int) -> None:
         self.prompt_cache_hit_tokens = hit
         self.prompt_cache_miss_tokens = miss
+
+
+class FakeBatchOpenAIClient:
+    def __init__(self, content: str) -> None:
+        self.calls: list[dict[str, Any]] = []
+        self.chat = FakeBatchChat(self)
+        self._content = content
+
+
+class FakeBatchChat:
+    def __init__(self, client: FakeBatchOpenAIClient) -> None:
+        self.completions = FakeBatchCompletions(client)
+
+
+class FakeBatchCompletions:
+    def __init__(self, client: FakeBatchOpenAIClient) -> None:
+        self.client = client
+
+    async def create(self, **kwargs: Any) -> FakeBatchResponse:
+        self.client.calls.append(kwargs)
+        return FakeBatchResponse(self.client._content)
+
+
+class FakeBatchResponse:
+    def __init__(self, content: str) -> None:
+        self.choices = [FakeBatchChoice(content)]
+        self.usage = None
+
+
+class FakeBatchChoice:
+    def __init__(self, content: str) -> None:
+        self.message = FakeBatchMessage(content)
+
+
+class FakeBatchMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content

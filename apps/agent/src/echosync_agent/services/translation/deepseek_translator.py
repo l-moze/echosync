@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from html import escape
@@ -50,10 +51,15 @@ class DeepSeekTranslator(Translator):
         target_text = response.choices[0].message.content or ""
         metrics = _usage_metrics(getattr(response, "usage", None))
 
+        translated = self._build_segment(
+            segment,
+            target_text.strip(),
+            metrics=metrics,
+            context=context,
+        )
         # 术语缺失埋点（非阻塞）
-        self._telemetry_glossary_missing(target_text.strip(), context)
-
-        return self._build_segment(segment, target_text.strip(), metrics=metrics)
+        self._telemetry_glossary_missing(translated.target_text, context)
+        return translated
 
     async def stream_translate(
         self,
@@ -132,16 +138,20 @@ class DeepSeekTranslator(Translator):
                 }
             )
             stripped_target = _combine_prefix_completion(prefix, target_text)
+            published = self._build_segment(
+                segment,
+                stripped_target,
+                metrics=metrics,
+                context=context,
+            )
             if should_flush_streaming_target(
                 previous_text=last_published_target,
-                next_text=stripped_target,
+                next_text=published.target_text,
             ):
-                last_published_target = stripped_target
-                last_published_metrics = dict(metrics)
-                yield self._build_segment(segment, stripped_target, metrics=metrics)
+                last_published_target = published.target_text
+                last_published_metrics = dict(published.metrics)
+                yield published
 
-        final_target = _combine_prefix_completion(prefix, target_text)
-        final_has_new_metrics = metrics != last_published_metrics
         if first_delta_ms is None:
             metrics.update(
                 {
@@ -151,6 +161,14 @@ class DeepSeekTranslator(Translator):
                     "deepseek_stream_open_ms": stream_open_ms,
                 }
             )
+        final_target = _combine_prefix_completion(prefix, target_text)
+        final_segment = self._build_segment(
+            segment,
+            final_target,
+            metrics=metrics,
+            context=context,
+        )
+        final_has_new_metrics = final_segment.metrics != last_published_metrics
         logger.debug(
             "deepseek_stream_finished session_id=%s segment_id=%s rev=%d "
             "stream_open_ms=%.1f first_delta_ms=%.1f delta_count=%d target_chars=%d "
@@ -168,14 +186,17 @@ class DeepSeekTranslator(Translator):
         if (
             should_flush_streaming_target(
                 previous_text=last_published_target,
-                next_text=final_target,
+                next_text=final_segment.target_text,
                 is_final=True,
             )
-            and (final_target != last_published_target or final_has_new_metrics)
+            and (
+                final_segment.target_text != last_published_target
+                or final_has_new_metrics
+            )
         ):
-            yield self._build_segment(segment, final_target, metrics=metrics)
+            yield final_segment
 
-        self._telemetry_glossary_missing(final_target, context)
+        self._telemetry_glossary_missing(final_segment.target_text, context)
 
     def _client_for_base_url(self, base_url: str) -> Any:
         if base_url not in self._clients:
@@ -257,7 +278,12 @@ class DeepSeekTranslator(Translator):
         target_text: str,
         *,
         metrics: dict[str, float] | None = None,
+        context: CorrectionContext | None = None,
     ) -> TranslationSegment:
+        target_text, glossary_metrics = _repair_required_glossary_copies(
+            target_text,
+            context,
+        )
         return TranslationSegment(
             session_id=segment.session_id,
             segment_id=segment.segment_id,
@@ -272,7 +298,7 @@ class DeepSeekTranslator(Translator):
             status=segment.status,
             stability=segment.stability,
             speaker=segment.speaker,
-            metrics=metrics or {},
+            metrics={**(metrics or {}), **glossary_metrics},
         )
 
     def _build_user_prompt(self, source_text: str, context: CorrectionContext) -> str:
@@ -347,6 +373,61 @@ def _xml_text(value: str) -> str:
 def _xml_attr(value: str) -> str:
     """XML 属性值转义（转义引号）。"""
     return escape(value, quote=True)
+
+
+def _repair_required_glossary_copies(
+    target_text: str,
+    context: CorrectionContext | None,
+) -> tuple[str, dict[str, float]]:
+    if context is None or not context.glossary:
+        return target_text, {}
+
+    required_terms = [
+        (source, target)
+        for source, target in context.glossary.items()
+        if context.glossary_constraints.get(source, "required") == "required"
+        and source.strip()
+        and target.strip()
+    ]
+    if not required_terms:
+        return target_text, {}
+
+    repaired_text = target_text
+    repaired_count = 0
+    missing_count = 0
+    for source, target in required_terms:
+        if target in repaired_text:
+            continue
+        repaired_text, repaired = _replace_source_copy_with_target(
+            repaired_text,
+            source,
+            target,
+        )
+        if repaired and target in repaired_text:
+            repaired_count += 1
+            continue
+        missing_count += 1
+
+    metrics = {
+        "glossary_required_terms": float(len(required_terms)),
+        "glossary_missing_required_terms": float(missing_count),
+    }
+    if repaired_count:
+        metrics["glossary_repaired_required_terms"] = float(repaired_count)
+    return repaired_text, metrics
+
+
+def _replace_source_copy_with_target(
+    text: str,
+    source: str,
+    target: str,
+) -> tuple[str, bool]:
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_]){re.escape(source)}(?![A-Za-z0-9_])",
+        re.IGNORECASE,
+    )
+    repaired, count = pattern.subn(target, text)
+    return repaired, count > 0
 
 
 def _default_client_factory(*, api_key: str, base_url: str) -> Any:

@@ -10,10 +10,12 @@ from echosync_agent.domain import (
     CorrectionContext,
     SegmentCommit,
     SegmentStatus,
+    SubtitlePatch,
     TranscriptSegment,
     TranslationSegment,
 )
 from echosync_agent.interfaces import CorrectionEngine, Transcriber, Translator
+from echosync_agent.services.correction.revision_window import RevisionWindowCorrectionEngine
 from echosync_agent.services.engine.cascaded_engine import CascadedInterpretationEngine
 
 
@@ -128,6 +130,14 @@ def test_cascaded_engine_passes_current_segment_revision_context() -> None:
     asyncio.run(_assert_cascaded_engine_passes_current_segment_revision_context())
 
 
+def test_cascaded_engine_patches_current_segment_revision_without_waiting_for_commit() -> None:
+    asyncio.run(_assert_cascaded_engine_patches_current_segment_revision_without_waiting_for_commit())
+
+
+def test_cascaded_engine_does_not_block_commit_on_slow_correction() -> None:
+    asyncio.run(_assert_cascaded_engine_does_not_block_commit_on_slow_correction())
+
+
 async def _assert_engine_translates_segments_and_records_latency_metrics() -> None:
     translator = RecordingTranslator()
     engine = CascadedInterpretationEngine(
@@ -203,6 +213,41 @@ async def _assert_cascaded_engine_passes_current_segment_revision_context() -> N
         translator.contexts[1].current_segment_revisions[-1].target_text
         == "[zh] The model starts,"
     )
+
+
+async def _assert_cascaded_engine_patches_current_segment_revision_without_waiting_for_commit() -> None:
+    first_translated = asyncio.Event()
+    second_translated = asyncio.Event()
+    engine = CascadedInterpretationEngine(
+        transcriber=RefreshingStableTranscriber(first_translated, second_translated),
+        translator=SignalingTranslator(first_translated, second_translated),
+        correction_engine=RevisionWindowCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    events = await _collect_events(engine.stream(_frames()))
+    patches = [event for event in events if isinstance(event, SubtitlePatch)]
+
+    assert patches
+    assert patches[0].segment_id == "seg_refreshing_stable"
+    assert patches[0].base_rev == 1
+    assert patches[0].rev == 2
+    assert patches[0].operations[0].text
+
+
+async def _assert_cascaded_engine_does_not_block_commit_on_slow_correction() -> None:
+    engine = CascadedInterpretationEngine(
+        transcriber=ImmediateCommittedTranscriber(),
+        translator=RecordingTranslator(),
+        correction_engine=SlowCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+        correction_timeout_ms=1,
+    )
+
+    events = await asyncio.wait_for(_collect_events(engine.stream(_frames())), timeout=0.2)
+
+    assert any(isinstance(event, SegmentCommit) for event in events)
+    assert not any(isinstance(event, SubtitlePatch) for event in events)
 
 
 async def _assert_cascaded_engine_streams_source_hypotheses_and_translation_deltas() -> None:
@@ -792,6 +837,22 @@ class BackloggedStableRefreshOnlyTranscriber(Transcriber):
                     await asyncio.sleep(0)
 
 
+class ImmediateCommittedTranscriber(Transcriber):
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for frame in frames:
+            yield TranscriptSegment(
+                session_id=frame.session_id,
+                segment_id="seg_immediate_commit",
+                rev=1,
+                start_ms=0,
+                end_ms=1_000,
+                source_lang="en",
+                text="Immediate commit.",
+                status=SegmentStatus.COMMITTED,
+                stability=1.0,
+            )
+
+
 class RefreshingStableTranscriber(Transcriber):
     def __init__(self, first_translated: asyncio.Event, second_translated: asyncio.Event) -> None:
         self.first_translated = first_translated
@@ -1023,6 +1084,25 @@ class NoopCorrectionEngine(CorrectionEngine):
         context: CorrectionContext,
     ):
         return None
+
+
+class SlowCorrectionEngine(CorrectionEngine):
+    async def revise(
+        self,
+        segment: TranslationSegment,
+        context: CorrectionContext,
+    ):
+        await asyncio.sleep(0.05)
+        return SubtitlePatch(
+            session_id=segment.session_id,
+            segment_id=segment.segment_id,
+            rev=segment.rev + 1,
+            base_rev=segment.rev,
+            target_lang=segment.target_lang,
+            operations=(),
+            reason="revision_window",
+            stability=segment.stability,
+        )
 
 
 async def _frames() -> AsyncIterator[AudioFrame]:

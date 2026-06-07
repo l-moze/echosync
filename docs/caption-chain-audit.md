@@ -239,6 +239,10 @@ current='Feels funny to say that at normal speed,' incoming='but'
 
    2026-06-07 追加质量修正：真实英语输入中出现过 `... a spatial reasoning tasks` 被翻成“新的空间推理”，漏掉尾部 head noun `tasks`。根因不是前端展示，而是后端翻译 prompt 过度强调 concise，且 DeepSeek prefix completion 可能把上一版已句末闭合的译文前缀固定住，导致后续追加名词只能生硬补在句号后。后端已把提示词改为“compact but do not summarize/drop/merge semantic content”，明确保留 final content words / head nouns，并在旧源文未句末闭合但旧译文已闭合时禁用 prefix completion，让 committed/stable 新版本走完整重译。
 
+   2026-06-07 追加上下文和术语修订：DeepSeek Chat Completion 对 EchoSync 仍按无状态请求处理，不能依赖供应商替应用保留长会话状态；每次请求都需要 EchoSync 自己发送最近 committed 上下文、当前段历史修订和本段命中的术语。当前快路径保持 `partial` 只发源文假设，`stable/committed` 才进入 DeepSeek，append-only 当前段修订才使用 `/beta` prefix completion，source rewrite 和“旧源文未闭合但旧译文已闭合”的情况继续走普通 `/v1` 重译。术语匹配现在先匹配当前段，再用 prefix 窗口补足，避免历史高优先级术语挤掉当前段术语。required glossary 如果被模型原样复制成英文源词，会在本地零额外请求替换为指定译名，并输出 `glossary_required_terms`、`glossary_missing_required_terms`、`glossary_repaired_required_terms` 指标；如果模型语义漏译且无法安全替换，只记录缺失指标，不在首 token 路径追加第二次 LLM 请求。
+
+   2026-06-07 追加慢路径边界：`RevisionWindowCorrectionEngine` 已能基于 `current_segment_revisions` 对当前段稳定修订生成 `translation.patch`，不再只依赖 committed 历史。修订逻辑被 `correction_timeout_ms=120` 包住，超时记录 `translation_revision_timeout` 并继续发布/commit 译文，避免慢修订把实时字幕卡住。完整 LLM structured patch manager 仍未实现，后续只能作为超时受控或异步慢路径加入。
+
 8. **SemanticChunker + FunASR endpoint cache reset**
 
    `services/asr/semantic_chunker.py` 已提供第一版 `SemanticAudioChunker`：支持 soft endpoint、hard cut 和 hard cut 后保留 overlap。这个完整 chunker 适合未来 batch ASR 或非流式模型。

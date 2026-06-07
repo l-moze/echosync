@@ -28,6 +28,34 @@
 - [x] Kept rewritten source revisions on the normal streaming path.
 - [x] Real API smoke test exposed late stream usage chunks; final streaming snapshots now publish updated metrics even when final text is unchanged.
 
+## Status 2026-06-07
+
+- [x] Tightened the system prompt so live captions stay compact without summarizing or dropping semantic head nouns such as tasks, methods, demonstrations, datasets, models, and reasoning types.
+- [x] Kept DeepSeek requests stateless from EchoSync's perspective, but strengthened every request with recent committed context, current-segment revisions, and matched terminology.
+- [x] Prioritized terminology matches from the current segment before supplementing with the prefix window, so high-priority history terms cannot crowd out terms that appear in the active source text.
+- [x] Added zero-extra-request repair for required glossary terms when DeepSeek copies the source term verbatim in the target output. Safe repairs run before streaming publish and before batch return.
+- [x] Added glossary metrics: `glossary_required_terms`, `glossary_missing_required_terms`, and `glossary_repaired_required_terms`.
+- [x] Aligned batch and streaming glossary telemetry so missing-term logs are based on the repaired final text.
+- [x] Fixed current-segment revision patches by letting `RevisionWindowCorrectionEngine` compare against `context.current_segment_revisions`, not only committed history.
+- [x] Added a default `120ms` correction timeout so slow revision logic cannot indefinitely block committed subtitles.
+
+## Fast vs Slow Path Boundary
+
+Fast path:
+
+- `partial` transcript events continue to publish source hypotheses only; they do not call DeepSeek by default.
+- `stable` and `committed` checkpoints call DeepSeek once through the latest-wins queue. Streaming deltas are published according to the local text emission policy.
+- Append-only current-segment revisions may use DeepSeek `/beta` prefix completion with the previous target as an assistant prefix. Rewritten source revisions, unchanged revisions, and open-source tails with already closed target translations fall back to normal `/v1` streaming.
+- Required glossary source-copy repair is local string repair after DeepSeek output and before publish. It does not add another model request.
+- Current-segment terminology is matched first, then recent committed prefix terms supplement the context up to the term cap.
+
+Slow path:
+
+- `RevisionWindowCorrectionEngine` can emit `SubtitlePatch` for current-segment translation revisions after a final stable/committed translation snapshot.
+- Correction is timeout-bounded by `correction_timeout_ms` (`120ms` by default). If it times out, the pipeline logs `translation_revision_timeout` and proceeds without a patch.
+- Required glossary omissions that are not safely repairable are reported through metrics instead of triggering an extra LLM retry on the hot path.
+- A full LLM structured revision manager remains future work and must stay off the first-token path unless it is bounded or asynchronous.
+
 ## Verification
 
 Focused translator contracts:
@@ -52,6 +80,18 @@ Result:
 
 ```text
 68 passed in 0.76s
+```
+
+2026-06-07 focused regression after context/terminology/revision changes:
+
+```powershell
+python -m pytest apps/agent/tests/test_deepseek_translator_contracts.py apps/agent/tests/test_cascaded_latency_contracts.py apps/agent/tests/test_terminology.py apps/agent/tests/test_pipeline_contracts.py apps/agent/tests/test_caption_update_contracts.py -q
+```
+
+Result:
+
+```text
+81 passed in 0.59s
 ```
 
 Full Agent test suite:
@@ -99,3 +139,5 @@ Finding: DeepSeek returns stream usage in a final chunk with empty `choices`. Th
 - Surface DeepSeek cache metrics through `caption_update`, not only legacy `translation.partial`.
 - Compare live logs before and after this change: `translation_first_token_ms`, `prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, and segment source length.
 - Keep prefix completion conservative: use it for append-only current segment revisions, and continue falling back to full `/v1` translation when ASR rewrites the source prefix.
+- Implement real TermQuickAdd backend sync; the current runtime glossary injection works, but the frontend quick-add panel still does not update the Agent glossary live.
+- Decide whether non-repairable required glossary misses should feed a slow diagnostics/review lane. They must not add an automatic retry to the realtime first-token path.

@@ -718,6 +718,44 @@ def test_cascaded_context_keeps_unique_terms_after_repeated_matches() -> None:
     assert len(ctx.glossary) == 2
 
 
+def test_cascaded_context_prioritizes_current_segment_terms_over_prefix_terms() -> None:
+    prefix_entries = tuple(
+        _make_entry(f"prefix{i}", f"前缀{i}", match_mode="word", priority=100)
+        for i in range(20)
+    )
+    glossary = Glossary((
+        *prefix_entries,
+        _make_entry("currentTerm", "当前术语", match_mode="word", priority=1),
+    ))
+    engine = CascadedInterpretationEngine(
+        transcriber=MockTranscriber(),
+        translator=MockTranslator(),
+        correction_engine=RevisionWindowCorrectionEngine(),
+        glossary=glossary,
+    )
+    for index in range(20):
+        engine._history.append(
+            TranslationSegment(
+                session_id="sess_terms",
+                segment_id=f"seg_prefix_{index}",
+                rev=1,
+                source_rev=1,
+                start_ms=index * 100,
+                end_ms=(index + 1) * 100,
+                source_lang="en",
+                target_lang="zh-CN",
+                source_text=f"prefix{index}",
+                target_text=f"前缀{index}",
+                status=SegmentStatus.COMMITTED,
+                stability=1.0,
+            )
+        )
+
+    ctx = engine._context("currentTerm controls the pipeline", "seg_current")
+
+    assert ctx.glossary["currentTerm"] == "当前术语"
+
+
 def test_large_glossary_boundary_matches_small_glossary_next_to_non_ascii() -> None:
     """Switching to AC for large glossaries should not change ASCII term boundaries."""
     entries = [_make_entry("API", "API", match_mode="word")]

@@ -23,14 +23,7 @@ class RevisionWindowCorrectionEngine(CorrectionEngine):
         current: TranslationSegment,
         context: CorrectionContext,
     ) -> SubtitlePatch | None:
-        previous = next(
-            (
-                item
-                for item in reversed(context.recent_segments)
-                if item.segment_id == current.segment_id and item.rev < current.rev
-            ),
-            None,
-        )
+        previous = _previous_revision(current, context)
         if previous is None or previous.target_text == current.target_text:
             return None
 
@@ -59,3 +52,21 @@ class RevisionWindowCorrectionEngine(CorrectionEngine):
                 text=new[j1:j2],
             )
         return SubtitlePatchOperation(op="replace", from_char=0, to_char=len(old), text=new)
+
+
+def _previous_revision(
+    current: TranslationSegment,
+    context: CorrectionContext,
+) -> TranslationSegment | None:
+    candidates = (
+        *context.current_segment_revisions,
+        *context.recent_segments,
+    )
+    return next(
+        (
+            item
+            for item in reversed(candidates)
+            if item.segment_id == current.segment_id and item.rev < current.rev
+        ),
+        None,
+    )

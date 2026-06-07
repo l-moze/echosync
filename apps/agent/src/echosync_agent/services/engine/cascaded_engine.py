@@ -17,6 +17,7 @@ from echosync_agent.domain import (
     ModelProfile,
     SegmentCommit,
     SegmentStatus,
+    SubtitlePatch,
     TranscriptSegment,
     TranslationSegment,
 )
@@ -34,7 +35,7 @@ from echosync_agent.services.translation.simul_policy import (
     SimulTranslationPolicy,
     simul_action_code,
 )
-from echosync_agent.services.translation.terminology import Glossary
+from echosync_agent.services.translation.terminology import Glossary, MatchedTerm
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         partial_translation_min_chars: int = 8,
         translate_partial_checkpoints: bool = False,
         simul_policy: SimulTranslationPolicy | None = None,
+        correction_timeout_ms: int = 120,
     ) -> None:
         self.transcriber = transcriber
         self.translator = translator
@@ -77,6 +79,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         self.partial_translation_min_chars = partial_translation_min_chars
         self.translate_partial_checkpoints = translate_partial_checkpoints
         self.simul_policy = simul_policy or SimulTranslationPolicy()
+        self.correction_timeout_ms = correction_timeout_ms
         # 统一转为 Glossary 对象
         if isinstance(glossary, dict):
             self._glossary = Glossary.from_dict(glossary)
@@ -375,7 +378,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
         if final_translation.status == SegmentStatus.PARTIAL:
             return
 
-        patch = await self.correction_engine.revise(final_translation, context)
+        patch = await self._revise_with_timeout(final_translation, context)
         if patch is not None:
             yield patch
 
@@ -403,6 +406,29 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 target_unstable_text=final_translation.target_unstable_text,
                 metrics=dict(final_translation.metrics),
             )
+
+    async def _revise_with_timeout(
+        self,
+        translation: TranslationSegment,
+        context: CorrectionContext,
+    ) -> SubtitlePatch | None:
+        if self.correction_timeout_ms <= 0:
+            return await self.correction_engine.revise(translation, context)
+        try:
+            return await asyncio.wait_for(
+                self.correction_engine.revise(translation, context),
+                timeout=self.correction_timeout_ms / 1000,
+            )
+        except asyncio.TimeoutError:
+            logger.info(
+                "translation_revision_timeout session_id=%s segment_id=%s "
+                "rev=%d timeout_ms=%d",
+                translation.session_id,
+                translation.segment_id,
+                translation.rev,
+                self.correction_timeout_ms,
+            )
+            return None
 
     @staticmethod
     def _checkpoint_key(transcript: TranscriptSegment) -> tuple[str, SegmentStatus]:
@@ -733,9 +759,21 @@ class CascadedInterpretationEngine(InterpretationEngine):
             source_window = f"{prefix} {current_source_text}".strip()
             current_start = len(prefix) + 1 if prefix else 0
 
-            matched_terms = self._glossary.match_terms(source_window, max_terms=12)
+            current_terms = self._glossary.match_terms(current_source_text, max_terms=12)
+            matched_terms = [
+                _offset_matched_term(term, current_start)
+                for term in current_terms
+            ]
+            if len(matched_terms) < 12 and prefix:
+                matched_terms.extend(
+                    self._glossary.match_terms(
+                        source_window,
+                        max_terms=12 + len(matched_terms),
+                    )
+                )
             # 只保留 span 与当前段重叠的术语
             matched_terms = [m for m in matched_terms if m.end > current_start]
+            matched_terms = _unique_matched_terms(matched_terms, max_terms=12)
 
             context_glossary = {m.source_for_prompt: m.entry.target for m in matched_terms}
             context_constraints = {m.source_for_prompt: m.entry.constraint for m in matched_terms}
@@ -770,6 +808,30 @@ def _metric_value(metrics: dict[str, float], key: str) -> float:
     if value is None:
         return -1.0
     return float(value)
+
+
+def _offset_matched_term(term: MatchedTerm, offset: int) -> MatchedTerm:
+    return replace(term, start=term.start + offset, end=term.end + offset)
+
+
+def _unique_matched_terms(
+    terms: list[MatchedTerm],
+    *,
+    max_terms: int,
+) -> list[MatchedTerm]:
+    selected: list[MatchedTerm] = []
+    seen: set[str] = set()
+    for term in terms:
+        identity = term.entry.source.strip()
+        if not term.entry.case_sensitive:
+            identity = identity.lower()
+        if identity in seen:
+            continue
+        selected.append(term)
+        seen.add(identity)
+        if len(selected) >= max_terms:
+            break
+    return selected
 
 
 def _with_metric(
