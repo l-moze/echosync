@@ -19,6 +19,8 @@
     ·
     <a href="#项目亮点"><strong>项目亮点</strong></a>
     ·
+    <a href="https://space.bilibili.com/451552520?spm_id_from=333.1007.0.0"><strong>项目介绍视频</strong></a>
+    ·
     <a href="#核心工作流"><strong>核心工作流</strong></a>
     ·
     <a href="#技术方案"><strong>技术方案</strong></a>
