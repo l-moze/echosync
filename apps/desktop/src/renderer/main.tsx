@@ -36,7 +36,12 @@ import {
   selectDisplayCaptionLines,
   type CaptionDisplayBuffer
 } from "../shared/caption-display-buffer";
-import { selectCaptionTextBlocks } from "../shared/caption-text-view";
+import {
+  createInitialCaptionTextBlockBuffer,
+  selectBufferedCaptionTextBlocks,
+  selectCaptionTextBlocks,
+  type CaptionTextBlockBuffer
+} from "../shared/caption-text-view";
 import {
   applyRealtimeEvent,
   isRealtimeEventForActiveSession,
@@ -2918,7 +2923,7 @@ function OverlayWindow({
             </div>
           ) : null}
           {combinedHistoryLines.length > 0 ? <OverlayCaptionHistory lines={combinedHistoryLines} subtitleStyle={subtitleStyle} /> : null}
-          <CaptionText line={captionLineForDisplay} subtitleStyle={subtitleStyle} />
+          <CaptionText line={captionLineForDisplay} subtitleStyle={subtitleStyle} useBufferedBlocks />
           <div className="overlayMeta">
             <span className={`liveDot state-${snapshot.state}`} />
             <span>{isListening ? "正在同传" : "实时字幕"}</span>
@@ -3056,8 +3061,16 @@ function resizeBoundsFromPointer(
   return next;
 }
 
-function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyle: SubtitleStyleState }) {
-  const blocks = selectCaptionTextBlocks(line, subtitleStyle);
+function CaptionText({
+  line,
+  subtitleStyle,
+  useBufferedBlocks = false
+}: {
+  line?: CaptionLine;
+  subtitleStyle: SubtitleStyleState;
+  useBufferedBlocks?: boolean;
+}) {
+  const blocks = useCaptionTextBlocks(line, subtitleStyle, useBufferedBlocks);
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
 
   return (
@@ -3082,6 +3095,33 @@ function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyl
       ))}
     </div>
   );
+}
+
+function useCaptionTextBlocks(
+  line: CaptionLine | undefined,
+  subtitleStyle: SubtitleStyleState,
+  useBufferedBlocks: boolean
+) {
+  const blockBufferRef = useRef<CaptionTextBlockBuffer>(createInitialCaptionTextBlockBuffer());
+  const [blockTickMs, setBlockTickMs] = useState(() => Date.now());
+  const nowMs = Date.now();
+  const bufferedSelection = useBufferedBlocks
+    ? selectBufferedCaptionTextBlocks(blockBufferRef.current, line, subtitleStyle, nowMs)
+    : null;
+  if (bufferedSelection) {
+    blockBufferRef.current = bufferedSelection.buffer;
+  }
+  const blocks = bufferedSelection?.blocks ?? selectCaptionTextBlocks(line, subtitleStyle);
+
+  useEffect(() => {
+    if (!bufferedSelection?.pending) {
+      return;
+    }
+    const timer = window.setTimeout(() => setBlockTickMs(Date.now()), 48);
+    return () => window.clearTimeout(timer);
+  }, [bufferedSelection?.pending, blockTickMs]);
+
+  return blocks;
 }
 
 function OverlayCaptionHistory({

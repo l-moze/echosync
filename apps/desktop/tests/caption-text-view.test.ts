@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { selectCaptionTextBlocks, selectCaptionTextParts } from "../src/shared/caption-text-view";
+import {
+  createInitialCaptionTextBlockBuffer,
+  selectBufferedCaptionTextBlocks,
+  selectCaptionTextBlocks,
+  selectCaptionTextParts
+} from "../src/shared/caption-text-view";
 import type { CaptionLine } from "../src/shared/caption-store";
 import { defaultSubtitleStyle, type SubtitleStyleState } from "../src/shared/subtitle-style-state";
 
@@ -73,6 +78,133 @@ describe("字幕文本视图", () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].sourceText).toContain("probable segmentation");
     expect(blocks[0].targetText).toContain("提示分割");
+  });
+
+  it("逐句对照超过三行长度后先保留反应时间，再拆成稳定视觉块", () => {
+    const longLine = line({
+      sourceText:
+        "I've been talking about this framework that I've been building in the past about neural symbolic concepts to enable more data efficient learning and better generalization I would say this is a new bet for generally intelligent systems.",
+      targetText:
+        "我一直在谈论我过去一直在构建的关于神经符号概念的框架，以使更多的数据高效学习和更好的泛化。我想说这是一个新的赌注。"
+    });
+    const first = selectBufferedCaptionTextBlocks(
+      createInitialCaptionTextBlockBuffer(),
+      longLine,
+      defaultSubtitleStyle,
+      1000
+    );
+
+    expect(first.blocks).toHaveLength(1);
+    expect(first.pending).toBe(true);
+
+    const stillReading = selectBufferedCaptionTextBlocks(first.buffer, longLine, defaultSubtitleStyle, 1600);
+
+    expect(stillReading.blocks).toHaveLength(1);
+    expect(stillReading.pending).toBe(true);
+
+    const split = selectBufferedCaptionTextBlocks(stillReading.buffer, longLine, defaultSubtitleStyle, 1900);
+
+    expect(split.blocks.length).toBeGreaterThanOrEqual(2);
+    expect(split.pending).toBe(false);
+    expect(split.blocks[0].id).toBe("seg:visual:0");
+    expect(split.blocks[1].id).toBe("seg:visual:1");
+    expect(split.blocks[0].sourceText).toContain("neural symbolic concepts");
+    expect(split.blocks[1].sourceText).toContain("I would say");
+  });
+
+  it("视觉块拆分后冻结前段边界，后续实时追加不会重排已读内容", () => {
+    const initialText =
+      "I've been talking about this framework that I've been building in the past about neural symbolic concepts to enable more data efficient learning and better generalization I would say this is a new bet for generally intelligent systems.";
+    const appendedText = `${initialText} And now we can look at the practical subtitle behavior in a streaming user interface.`;
+    const first = selectBufferedCaptionTextBlocks(
+      createInitialCaptionTextBlockBuffer(),
+      line({ sourceText: initialText, targetText: "" }),
+      defaultSubtitleStyle,
+      1000
+    );
+    const split = selectBufferedCaptionTextBlocks(
+      first.buffer,
+      line({ sourceText: initialText, targetText: "" }),
+      defaultSubtitleStyle,
+      2000
+    );
+    const firstBlockBeforeAppend = split.blocks[0].sourceText;
+
+    const afterAppend = selectBufferedCaptionTextBlocks(
+      split.buffer,
+      line({ sourceText: appendedText, targetText: "" }),
+      defaultSubtitleStyle,
+      2100
+    );
+
+    expect(afterAppend.blocks[0].sourceText).toBe(firstBlockBeforeAppend);
+    expect(afterAppend.blocks.at(-1)?.sourceText).toContain("streaming user interface");
+  });
+
+  it("译文迟到或修订时不移动已经冻结的原文视觉边界", () => {
+    const sourceText =
+      "I've been talking about this framework that I've been building in the past about neural symbolic concepts to enable more data efficient learning and better generalization I would say this is a new bet for generally intelligent systems.";
+    const targetText =
+      "我一直在谈论这个框架，它关于神经符号概念，能够带来更高的数据效率和更好的泛化能力。我想说这是通向通用智能系统的新尝试。";
+    const first = selectBufferedCaptionTextBlocks(
+      createInitialCaptionTextBlockBuffer(),
+      line({ sourceText, targetText: "" }),
+      defaultSubtitleStyle,
+      1000
+    );
+    const sourceSplit = selectBufferedCaptionTextBlocks(
+      first.buffer,
+      line({ sourceText, targetText: "" }),
+      defaultSubtitleStyle,
+      2000
+    );
+    const firstSourceBlock = sourceSplit.blocks[0].sourceText;
+
+    const withTranslation = selectBufferedCaptionTextBlocks(
+      sourceSplit.buffer,
+      line({ sourceText, targetText, state: "revised", rev: 2 }),
+      defaultSubtitleStyle,
+      2100
+    );
+
+    expect(withTranslation.blocks[0].sourceText).toBe(firstSourceBlock);
+    expect(withTranslation.blocks[0].targetText).toContain("神经符号概念");
+    expect(withTranslation.blocks[1].sourceText).toContain("I would say");
+  });
+
+  it("连续超长实时段会分批成熟拆分，不等待下一次 ASR token 才继续整理", () => {
+    const sourceText = [
+      "I've been talking about this framework that I've been building in the past about neural symbolic concepts to enable more data efficient learning and better generalization",
+      "I would say this is a new bet for generally intelligent systems because it lets us combine symbolic constraints with neural representations",
+      "And now we can look at the practical subtitle behavior in a streaming user interface where readers need enough time to understand each part"
+    ].join(" ");
+    const first = selectBufferedCaptionTextBlocks(
+      createInitialCaptionTextBlockBuffer(),
+      line({ sourceText, targetText: "" }),
+      defaultSubtitleStyle,
+      1000
+    );
+    const firstSplit = selectBufferedCaptionTextBlocks(
+      first.buffer,
+      line({ sourceText, targetText: "" }),
+      defaultSubtitleStyle,
+      1900
+    );
+
+    expect(firstSplit.blocks).toHaveLength(2);
+    expect(firstSplit.pending).toBe(true);
+
+    const secondSplit = selectBufferedCaptionTextBlocks(
+      firstSplit.buffer,
+      line({ sourceText, targetText: "" }),
+      defaultSubtitleStyle,
+      2800
+    );
+
+    expect(secondSplit.blocks.length).toBeGreaterThanOrEqual(3);
+    expect(secondSplit.blocks[0].sourceText).toContain("neural symbolic concepts");
+    expect(secondSplit.blocks[1].sourceText).toContain("generally intelligent systems");
+    expect(secondSplit.blocks[2].sourceText).toContain("streaming user interface");
   });
 });
 

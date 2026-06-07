@@ -167,6 +167,20 @@ Overlay 主入口只保留两种双语对照模式，不再把 `interim` / `stab
 - 源文永远在上，译文永远在下。`translationFirst` 不再作为 overlay 主模式行为，避免翻译流式更新时把英文锚点挤走。
 - 译文尚未返回时不显示“正在翻译...”占位；保留译文行槽位，显示为空，让中文 lane 在真实译文到达后从左到右生成。
 
+#### 逐句对照的长段视觉拆分
+
+长段拆分是显示层行为，不是 ASR 断句，也不是翻译 checkpoint。当前主字幕使用 `CaptionTextBlockBuffer` 管理 visual block 生命周期：
+
+- 纯 `selectCaptionTextBlocks()` 只作为历史行和无状态展示的 fallback。
+- 主字幕使用 buffered selector，记录每个 `segment_id` 的 source/target 已提交视觉边界。
+- 源文超过约 `118` 个可见字符、译文超过约 `68` 个可见字符，并且存在可用自然边界时，进入 `pending`，先保持单个连续块。
+- 普通常规长句等待约 `900ms` 后才拆第一刀，给用户看到“正在增长的长句”到“被整理成块”的反应时间。
+- 只有异常超长尾巴才走 `450ms` 硬兜底，避免一段话持续挤满字幕区。
+- 每次只提交一个冻结边界；剩余尾巴如果仍超过阈值，进入下一轮 pending，形成分批整理，而不是一次性大重排。
+- 后续 token 追加、译文迟到或修订补丁到达时，已经冻结的前段边界不移动；只整理新的尾部。
+
+这个策略解决的是阅读体验：超过三行附近可以继续看完整上下文，但不会长期堆成不可读大段；拆分发生时也有明确反应时间和稳定 key，CSS transform/opacity 过渡才有意义。
+
 ### Segment 生命周期
 
 EchoSync 的实时字幕核心必须从 append-only 文本流升级为 segment-based provisional caption engine。
@@ -462,3 +476,7 @@ type CaptionUpdateEvent = {
 - 窗口高度不因每次 token 更新而改变。
 - stable checkpoint 与 committed checkpoint 在后端翻译调度中分轨，前者不能被后者覆盖。
 - committed 行必须最终 flush 到可见文本，并在 readable dwell 后进入 past track。
+- 逐句对照长段超过约三行时，主字幕先保持单块 pending，不允许立即拆成多块。
+- pending 到约 900ms 后才提交第一条视觉边界；异常超长尾巴可以走较短硬兜底。
+- 已提交的视觉边界必须冻结，后续 ASR 追加、译文迟到和 DeepSeek 修订不能移动前段边界。
+- 连续超长尾巴需要分批成熟拆分，不能等下一次 ASR token 才继续整理。

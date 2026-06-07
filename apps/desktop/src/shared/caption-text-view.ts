@@ -17,11 +17,44 @@ export type CaptionTextBlock = {
   isTargetPlaceholder?: boolean;
 };
 
+export type CaptionTextBlockLaneState = {
+  text: string;
+  committedBreaks: number[];
+  pendingSinceMs: number | null;
+};
+
+export type CaptionTextBlockEntry = {
+  lineId: string;
+  mode: "sentencePair" | "zonedPair";
+  source: CaptionTextBlockLaneState;
+  target: CaptionTextBlockLaneState;
+};
+
+export type CaptionTextBlockBuffer = {
+  entries: Record<string, CaptionTextBlockEntry>;
+};
+
+export type CaptionTextBlockSelection = {
+  blocks: CaptionTextBlock[];
+  buffer: CaptionTextBlockBuffer;
+  pending: boolean;
+};
+
 const SOURCE_SOFT_BLOCK_CHARS = 112;
 const TARGET_SOFT_BLOCK_CHARS = 44;
 const SOURCE_HARD_BLOCK_CHARS = 148;
 const TARGET_HARD_BLOCK_CHARS = 64;
+const SOURCE_PENDING_CHARS = 118;
+const TARGET_PENDING_CHARS = 68;
+const SOURCE_HARD_PENDING_CHARS = 230;
+const TARGET_HARD_PENDING_CHARS = 132;
+const SOFT_SPLIT_GRACE_MS = 900;
+const HARD_SPLIT_GRACE_MS = 450;
 const SOURCE_DISCOURSE_BOUNDARY = /\s+(?=(?:I would|I think|I mean|That is|This is|And|But|So|Now|Then)\b)/g;
+
+export function createInitialCaptionTextBlockBuffer(): CaptionTextBlockBuffer {
+  return { entries: {} };
+}
 
 export function selectCaptionTextParts(
   line: CaptionLine | undefined,
@@ -44,6 +77,58 @@ export function selectCaptionTextParts(
     : null;
 
   return target ? [source, target] : [source];
+}
+
+export function selectBufferedCaptionTextBlocks(
+  buffer: CaptionTextBlockBuffer,
+  line: CaptionLine | undefined,
+  subtitleStyle: SubtitleStyleState,
+  nowMs: number
+): CaptionTextBlockSelection {
+  if (!line) {
+    return {
+      blocks: selectCaptionTextBlocks(line, subtitleStyle),
+      buffer: createInitialCaptionTextBlockBuffer(),
+      pending: false
+    };
+  }
+
+  const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
+  const sourceText = line.sourceText.trim();
+  const targetText = line.targetText.trim();
+  if (displayMode === "zonedPair") {
+    return {
+      blocks: selectCaptionTextBlocks(line, subtitleStyle),
+      buffer: {
+        entries: {
+          [line.id]: {
+            lineId: line.id,
+            mode: displayMode,
+            source: createLaneState(sourceText),
+            target: createLaneState(targetText)
+          }
+        }
+      },
+      pending: false
+    };
+  }
+
+  const previous = buffer.entries[line.id];
+  const previousForMode = previous?.mode === displayMode ? previous : undefined;
+  const source = updateBlockLane(previousForMode?.source, sourceText, "source", nowMs);
+  const target = updateBlockLane(previousForMode?.target, targetText, "target", nowMs);
+  const entry: CaptionTextBlockEntry = {
+    lineId: line.id,
+    mode: displayMode,
+    source,
+    target
+  };
+
+  return {
+    blocks: buildBlocksFromEntry(line, entry),
+    buffer: { entries: { [line.id]: entry } },
+    pending: source.pendingSinceMs !== null || target.pendingSinceMs !== null
+  };
 }
 
 export function selectCaptionTextBlocks(
@@ -93,6 +178,116 @@ export function selectCaptionTextBlocks(
       isTargetPlaceholder: !targetBlock
     };
   });
+}
+
+function buildBlocksFromEntry(line: CaptionLine, entry: CaptionTextBlockEntry): CaptionTextBlock[] {
+  const sourceBlocks = selectBlocksForBreaks(entry.source.text || "等待音频输入...", entry.source.committedBreaks);
+  const targetBlocks = entry.target.text ? selectBlocksForBreaks(entry.target.text, entry.target.committedBreaks) : [];
+  const blockCount = Math.max(1, sourceBlocks.length, targetBlocks.length);
+
+  return Array.from({ length: blockCount }, (_, index) => {
+    const sourceBlock = sourceBlocks[index] ?? "";
+    const targetBlock = targetBlocks[index] ?? "";
+    return {
+      id: `${line.id}:visual:${index}`,
+      sourceText: sourceBlock,
+      targetText: targetBlock,
+      state: line.state,
+      isSourcePlaceholder: !sourceBlock,
+      isTargetPlaceholder: !targetBlock
+    };
+  });
+}
+
+function updateBlockLane(
+  previous: CaptionTextBlockLaneState | undefined,
+  text: string,
+  lane: "source" | "target",
+  nowMs: number
+): CaptionTextBlockLaneState {
+  const normalized = text.trim();
+  if (!normalized) {
+    return createLaneState(normalized);
+  }
+
+  const base = previous && normalized.startsWith(previous.text)
+    ? { ...previous, text: normalized }
+    : createLaneState(normalized);
+  const lastCommittedBreak = base.committedBreaks.at(-1) ?? 0;
+  const tail = normalized.slice(lastCommittedBreak).trimStart();
+  if (!shouldStartPendingSplit(tail, lane)) {
+    return { ...base, pendingSinceMs: null };
+  }
+
+  const pendingSinceMs = base.pendingSinceMs ?? nowMs;
+  const graceMs = shouldHardSplit(tail, lane) ? HARD_SPLIT_GRACE_MS : SOFT_SPLIT_GRACE_MS;
+  if (nowMs - pendingSinceMs < graceMs) {
+    return { ...base, pendingSinceMs };
+  }
+
+  const nextBreak = findNextCommittedBreak(normalized, lastCommittedBreak, lane);
+  if (nextBreak <= lastCommittedBreak || nextBreak >= normalized.length) {
+    return { ...base, pendingSinceMs };
+  }
+
+  const committedBreaks = [...base.committedBreaks, nextBreak];
+  const remainingTail = normalized.slice(nextBreak).trimStart();
+  return {
+    text: normalized,
+    committedBreaks,
+    pendingSinceMs: shouldStartPendingSplit(remainingTail, lane) ? nowMs : null
+  };
+}
+
+function createLaneState(text: string): CaptionTextBlockLaneState {
+  return {
+    text,
+    committedBreaks: [],
+    pendingSinceMs: null
+  };
+}
+
+function selectBlocksForBreaks(text: string, breaks: number[]): string[] {
+  const normalized = text.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  let cursor = 0;
+  for (const breakAt of breaks) {
+    const part = normalized.slice(cursor, breakAt).trim();
+    if (part) {
+      parts.push(part);
+    }
+    cursor = breakAt;
+  }
+  const tail = normalized.slice(cursor).trim();
+  if (tail) {
+    parts.push(tail);
+  }
+  return parts.length > 0 ? parts : [normalized];
+}
+
+function shouldStartPendingSplit(text: string, lane: "source" | "target"): boolean {
+  const limit = lane === "source" ? SOURCE_PENDING_CHARS : TARGET_PENDING_CHARS;
+  return visibleLength(text) > limit && findNextCommittedBreak(text, 0, lane) < text.length;
+}
+
+function shouldHardSplit(text: string, lane: "source" | "target"): boolean {
+  const limit = lane === "source" ? SOURCE_HARD_PENDING_CHARS : TARGET_HARD_PENDING_CHARS;
+  return visibleLength(text) > limit;
+}
+
+function findNextCommittedBreak(text: string, offset: number, lane: "source" | "target"): number {
+  const rawTail = text.slice(offset);
+  const tail = rawTail.trimStart();
+  const skippedWhitespace = rawTail.length - tail.length;
+  const candidateBlocks = splitDisplayBlocks(tail, lane);
+  if (candidateBlocks.length <= 1) {
+    return text.length;
+  }
+  return offset + skippedWhitespace + candidateBlocks[0].length;
 }
 
 function splitDisplayBlocks(text: string, lane: "source" | "target"): string[] {

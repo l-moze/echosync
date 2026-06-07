@@ -230,6 +230,8 @@ describe("renderer visual style contract", () => {
     );
 
     expect(captionTextSource).toContain("selectCaptionTextBlocks");
+    expect(captionTextSource).toContain("selectBufferedCaptionTextBlocks");
+    expect(captionTextSource).toContain("useBufferedBlocks");
     expect(captionTextSource).toContain("captionTextBlock");
     expect(cssRule(".captionText")).toContain("align-content: end");
     expect(cssRule(".captionTextBlock")).toContain("display: grid");
