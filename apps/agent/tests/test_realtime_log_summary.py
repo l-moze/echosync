@@ -35,7 +35,12 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
             (
                 "caption_event_published type=caption_update session_id=sess segment_id=seg "
                 "translation_queue_wait_ms=12.0 translation_first_token_ms=140.0 "
-                "translation_latency_ms=210.0 simul_policy_action=1.0"
+                "translation_latency_ms=210.0 prompt_cache_hit_tokens=80.0 "
+                "prompt_cache_miss_tokens=20.0 deepseek_stream_open_ms=35.0 "
+                "deepseek_first_delta_ms=105.0 deepseek_delta_count=4.0 "
+                "deepseek_prompt_chars=720.0 deepseek_prefix_chars=18.0 "
+                "glossary_required_terms=2.0 glossary_missing_required_terms=1.0 "
+                "glossary_repaired_required_terms=1.0 simul_policy_action=1.0"
             ),
             (
                 "audio_stream_metrics session_id=sess trace_id=sess frames=12 audio_ms=960 "
@@ -80,6 +85,16 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
     assert summary.queue_wait_ms == [12.0]
     assert summary.first_token_ms == [140.0]
     assert summary.translation_latency_ms == [210.0]
+    assert summary.prompt_cache_hit_tokens == [80.0]
+    assert summary.prompt_cache_miss_tokens == [20.0]
+    assert summary.deepseek_stream_open_ms == [35.0]
+    assert summary.deepseek_first_delta_ms == [105.0]
+    assert summary.deepseek_delta_count == [4.0]
+    assert summary.deepseek_prompt_chars == [720.0]
+    assert summary.deepseek_prefix_chars == [18.0]
+    assert summary.glossary_required_terms == [2.0]
+    assert summary.glossary_missing_required_terms == [1.0]
+    assert summary.glossary_repaired_required_terms == [1.0]
     assert summary.avg_audio_transport_ms == [4.0]
     assert summary.p95_audio_transport_ms == [8.0]
     assert summary.avg_asr_queue_wait_ms == [2.0]
@@ -102,4 +117,39 @@ def test_realtime_log_summary_formats_empty_counters() -> None:
     assert "skipped_reasons=-" in output
     assert "dropped_reasons=-" in output
     assert "translation_first_token_ms=n:0" in output
+    assert "prompt_cache_hit_tokens=n:0" in output
+    assert "glossary_required_total=0" in output
     assert "tts_started=0 tts_finished=0 tts_failed=0" in output
+
+
+def test_realtime_log_summary_formats_deepseek_and_glossary_metrics() -> None:
+    output = format_summary(
+        summarize_log_lines(
+            [
+                (
+                    "caption_event_published type=caption_update session_id=sess "
+                    "segment_id=seg prompt_cache_hit_tokens=80.0 "
+                    "prompt_cache_miss_tokens=20.0 deepseek_stream_open_ms=35.0 "
+                    "deepseek_first_delta_ms=105.0 deepseek_delta_count=4.0 "
+                    "deepseek_prompt_chars=720.0 deepseek_prefix_chars=18.0 "
+                    "glossary_required_terms=2.0 "
+                    "glossary_missing_required_terms=1.0 "
+                    "glossary_repaired_required_terms=1.0"
+                ),
+                (
+                    "caption_event_published type=caption_update session_id=sess "
+                    "segment_id=seg2 prompt_cache_hit_tokens=120.0 "
+                    "prompt_cache_miss_tokens=8.0 glossary_required_terms=1.0 "
+                    "glossary_missing_required_terms=0.0 "
+                    "glossary_repaired_required_terms=1.0"
+                ),
+            ]
+        )
+    )
+
+    assert "prompt_cache_hit_tokens=n:2 avg:100.0" in output
+    assert "deepseek_stream_open_ms=n:1 avg:35.0" in output
+    assert "glossary_missing_required_terms=n:2 avg:0.5" in output
+    assert "glossary_required_total=3" in output
+    assert "glossary_missing_required_total=1" in output
+    assert "glossary_repaired_required_total=2" in output

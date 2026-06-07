@@ -32,6 +32,16 @@ class RealtimeLogSummary:
     queue_wait_ms: list[float] = field(default_factory=list)
     first_token_ms: list[float] = field(default_factory=list)
     translation_latency_ms: list[float] = field(default_factory=list)
+    prompt_cache_hit_tokens: list[float] = field(default_factory=list)
+    prompt_cache_miss_tokens: list[float] = field(default_factory=list)
+    deepseek_stream_open_ms: list[float] = field(default_factory=list)
+    deepseek_first_delta_ms: list[float] = field(default_factory=list)
+    deepseek_delta_count: list[float] = field(default_factory=list)
+    deepseek_prompt_chars: list[float] = field(default_factory=list)
+    deepseek_prefix_chars: list[float] = field(default_factory=list)
+    glossary_required_terms: list[float] = field(default_factory=list)
+    glossary_missing_required_terms: list[float] = field(default_factory=list)
+    glossary_repaired_required_terms: list[float] = field(default_factory=list)
     tts_started: int = 0
     tts_finished: int = 0
     tts_failed: int = 0
@@ -78,6 +88,22 @@ def summarize_log_lines(lines: Iterable[str]) -> RealtimeLogSummary:
         if "caption_event_published" in line:
             event_type = fields.get("type", "unknown")
             summary.caption_events[event_type] += 1
+            _append_float(summary.prompt_cache_hit_tokens, fields.get("prompt_cache_hit_tokens"))
+            _append_float(summary.prompt_cache_miss_tokens, fields.get("prompt_cache_miss_tokens"))
+            _append_float(summary.deepseek_stream_open_ms, fields.get("deepseek_stream_open_ms"))
+            _append_float(summary.deepseek_first_delta_ms, fields.get("deepseek_first_delta_ms"))
+            _append_float(summary.deepseek_delta_count, fields.get("deepseek_delta_count"))
+            _append_float(summary.deepseek_prompt_chars, fields.get("deepseek_prompt_chars"))
+            _append_float(summary.deepseek_prefix_chars, fields.get("deepseek_prefix_chars"))
+            _append_float(summary.glossary_required_terms, fields.get("glossary_required_terms"))
+            _append_float(
+                summary.glossary_missing_required_terms,
+                fields.get("glossary_missing_required_terms"),
+            )
+            _append_float(
+                summary.glossary_repaired_required_terms,
+                fields.get("glossary_repaired_required_terms"),
+            )
         if "audio_stream_metrics" in line:
             _append_float(summary.avg_audio_transport_ms, fields.get("avg_transport_ms"))
             _append_float(summary.p95_audio_transport_ms, fields.get("p95_transport_ms"))
@@ -135,6 +161,30 @@ def format_summary(summary: RealtimeLogSummary) -> str:
         _format_distribution("translation_queue_wait_ms", summary.queue_wait_ms),
         _format_distribution("translation_first_token_ms", summary.first_token_ms),
         _format_distribution("translation_latency_ms", summary.translation_latency_ms),
+        _format_distribution("prompt_cache_hit_tokens", summary.prompt_cache_hit_tokens),
+        _format_distribution("prompt_cache_miss_tokens", summary.prompt_cache_miss_tokens),
+        _format_distribution("deepseek_stream_open_ms", summary.deepseek_stream_open_ms),
+        _format_distribution("deepseek_first_delta_ms", summary.deepseek_first_delta_ms),
+        _format_distribution("deepseek_delta_count", summary.deepseek_delta_count),
+        _format_distribution("deepseek_prompt_chars", summary.deepseek_prompt_chars),
+        _format_distribution("deepseek_prefix_chars", summary.deepseek_prefix_chars),
+        _format_distribution("glossary_required_terms", summary.glossary_required_terms),
+        _format_distribution(
+            "glossary_missing_required_terms",
+            summary.glossary_missing_required_terms,
+        ),
+        _format_distribution(
+            "glossary_repaired_required_terms",
+            summary.glossary_repaired_required_terms,
+        ),
+        (
+            "glossary_required_total="
+            f"{_sum_values(summary.glossary_required_terms):.0f} "
+            "glossary_missing_required_total="
+            f"{_sum_values(summary.glossary_missing_required_terms):.0f} "
+            "glossary_repaired_required_total="
+            f"{_sum_values(summary.glossary_repaired_required_terms):.0f}"
+        ),
         (
             f"tts_started={summary.tts_started} "
             f"tts_finished={summary.tts_finished} tts_failed={summary.tts_failed}"
@@ -189,6 +239,16 @@ def _merge(target: RealtimeLogSummary, source: RealtimeLogSummary) -> None:
     target.queue_wait_ms.extend(source.queue_wait_ms)
     target.first_token_ms.extend(source.first_token_ms)
     target.translation_latency_ms.extend(source.translation_latency_ms)
+    target.prompt_cache_hit_tokens.extend(source.prompt_cache_hit_tokens)
+    target.prompt_cache_miss_tokens.extend(source.prompt_cache_miss_tokens)
+    target.deepseek_stream_open_ms.extend(source.deepseek_stream_open_ms)
+    target.deepseek_first_delta_ms.extend(source.deepseek_first_delta_ms)
+    target.deepseek_delta_count.extend(source.deepseek_delta_count)
+    target.deepseek_prompt_chars.extend(source.deepseek_prompt_chars)
+    target.deepseek_prefix_chars.extend(source.deepseek_prefix_chars)
+    target.glossary_required_terms.extend(source.glossary_required_terms)
+    target.glossary_missing_required_terms.extend(source.glossary_missing_required_terms)
+    target.glossary_repaired_required_terms.extend(source.glossary_repaired_required_terms)
     target.tts_started += source.tts_started
     target.tts_finished += source.tts_finished
     target.tts_failed += source.tts_failed
@@ -215,6 +275,10 @@ def _format_distribution(name: str, values: Sequence[float]) -> str:
         f"p95:{_percentile(ordered, 0.95):.1f} "
         f"max:{ordered[-1]:.1f}"
     )
+
+
+def _sum_values(values: Sequence[float]) -> float:
+    return sum(values)
 
 
 def _percentile(ordered_values: Sequence[float], percentile: float) -> float:

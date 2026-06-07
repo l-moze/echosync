@@ -61,6 +61,12 @@ def test_caption_update_from_translated_segment_includes_target_regions() -> Non
             metrics={
                 "translation_first_token_ms": 140.0,
                 "translation_queue_wait_ms": 8.0,
+                "prompt_cache_hit_tokens": 64.0,
+                "prompt_cache_miss_tokens": 12.0,
+                "deepseek_stream_open_ms": 40.0,
+                "glossary_required_terms": 1.0,
+                "glossary_missing_required_terms": 0.0,
+                "glossary_repaired_required_terms": 1.0,
             },
             source_stable_text="I think this module",
             source_unstable_text="should work",
@@ -80,6 +86,12 @@ def test_caption_update_from_translated_segment_includes_target_regions() -> Non
     assert event["metrics"] == {
         "translation_first_token_ms": 140.0,
         "translation_queue_wait_ms": 8.0,
+        "prompt_cache_hit_tokens": 64.0,
+        "prompt_cache_miss_tokens": 12.0,
+        "deepseek_stream_open_ms": 40.0,
+        "glossary_required_terms": 1.0,
+        "glossary_missing_required_terms": 0.0,
+        "glossary_repaired_required_terms": 1.0,
     }
 
 

@@ -38,6 +38,7 @@
 - [x] Aligned batch and streaming glossary telemetry so missing-term logs are based on the repaired final text.
 - [x] Fixed current-segment revision patches by letting `RevisionWindowCorrectionEngine` compare against `context.current_segment_revisions`, not only committed history.
 - [x] Added a default `120ms` correction timeout so slow revision logic cannot indefinitely block committed subtitles.
+- [x] Surfaced DeepSeek cache/stream and glossary metrics through `caption_update` metrics, `caption_event_published` logs, and `realtime_log_summary` distributions/totals.
 
 ## Fast vs Slow Path Boundary
 
@@ -136,8 +137,8 @@ Finding: DeepSeek returns stream usage in a final chunk with empty `choices`. Th
 ## Remaining Follow-Up
 
 - Fix Voxtral segment timing so realtime text deltas do not carry session-long `start_ms` / `end_ms` windows.
-- Surface DeepSeek cache metrics through `caption_update`, not only legacy `translation.partial`.
 - Compare live logs before and after this change: `translation_first_token_ms`, `prompt_cache_hit_tokens`, `prompt_cache_miss_tokens`, and segment source length.
 - Keep prefix completion conservative: use it for append-only current segment revisions, and continue falling back to full `/v1` translation when ASR rewrites the source prefix.
 - Implement real TermQuickAdd backend sync; the current runtime glossary injection works, but the frontend quick-add panel still does not update the Agent glossary live.
 - Decide whether non-repairable required glossary misses should feed a slow diagnostics/review lane. They must not add an automatic retry to the realtime first-token path.
+- Persist per-session diagnostics JSONL so the new log-summary metrics are attached to saved meeting records.

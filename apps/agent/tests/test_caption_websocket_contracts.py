@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -79,6 +81,51 @@ def test_caption_websocket_handles_missing_span_id_without_crashing() -> None:
     assert message["type"] == "translation.partial"
     assert message["target_text"] == "[zh] Hello from the caption pipeline."
     assert isinstance(message["published_at_ms"], int)
+
+
+def test_caption_event_hub_logs_deepseek_and_glossary_metrics(caplog) -> None:
+    hub = CaptionEventHub()
+
+    with caplog.at_level(logging.INFO):
+        asyncio.run(
+            hub.publish(
+                "caption_update",
+                {
+                    "session_id": "sess_caption_metrics",
+                    "segment_id": "seg_caption_metrics",
+                    "source_text": "LiveKit can reduce latency.",
+                    "target_text": "实时媒体引擎可以降低延迟。",
+                    "metrics": {
+                        "prompt_cache_hit_tokens": 80.0,
+                        "prompt_cache_miss_tokens": 20.0,
+                        "deepseek_stream_open_ms": 35.0,
+                        "deepseek_first_delta_ms": 105.0,
+                        "deepseek_delta_count": 4.0,
+                        "deepseek_prompt_chars": 720.0,
+                        "deepseek_prefix_chars": 18.0,
+                        "glossary_required_terms": 2.0,
+                        "glossary_missing_required_terms": 1.0,
+                        "glossary_repaired_required_terms": 1.0,
+                    },
+                },
+            )
+        )
+
+    message = next(
+        record.getMessage()
+        for record in caplog.records
+        if "caption_event_published" in record.getMessage()
+    )
+    assert "prompt_cache_hit_tokens=80.0" in message
+    assert "prompt_cache_miss_tokens=20.0" in message
+    assert "deepseek_stream_open_ms=35.0" in message
+    assert "deepseek_first_delta_ms=105.0" in message
+    assert "deepseek_delta_count=4.0" in message
+    assert "deepseek_prompt_chars=720.0" in message
+    assert "deepseek_prefix_chars=18.0" in message
+    assert "glossary_required_terms=2.0" in message
+    assert "glossary_missing_required_terms=1.0" in message
+    assert "glossary_repaired_required_terms=1.0" in message
 
 
 def test_caption_server_does_not_start_demo_producer_by_default(monkeypatch) -> None:

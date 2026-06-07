@@ -75,6 +75,12 @@ class CaptionEventHub:
             "asr_latency_ms=%.1f asr_stream_elapsed_ms=%.1f asr_audio_lag_ms=%.1f "
             "merge_wait_ms=%.1f translation_queue_wait_ms=%.1f "
             "translation_first_token_ms=%.1f translation_latency_ms=%.1f "
+            "prompt_cache_hit_tokens=%.1f prompt_cache_miss_tokens=%.1f "
+            "deepseek_stream_open_ms=%.1f deepseek_first_delta_ms=%.1f "
+            "deepseek_delta_count=%.1f deepseek_prompt_chars=%.1f "
+            "deepseek_prefix_chars=%.1f glossary_required_terms=%.1f "
+            "glossary_missing_required_terms=%.1f "
+            "glossary_repaired_required_terms=%.1f "
             "tts_first_audio_ms=%.1f tts_total_ms=%.1f "
             "tts_audio_chunks=%.1f tts_audio_bytes=%.1f "
             "simul_policy_action=%.1f simul_policy_request_action=%.1f "
@@ -96,6 +102,16 @@ class CaptionEventHub:
             _metric(metrics, "translation_queue_wait_ms"),
             _metric(metrics, "translation_first_token_ms"),
             _metric(metrics, "translation_latency_ms"),
+            _metric(metrics, "prompt_cache_hit_tokens"),
+            _metric(metrics, "prompt_cache_miss_tokens"),
+            _metric(metrics, "deepseek_stream_open_ms"),
+            _metric(metrics, "deepseek_first_delta_ms"),
+            _metric(metrics, "deepseek_delta_count"),
+            _metric(metrics, "deepseek_prompt_chars"),
+            _metric(metrics, "deepseek_prefix_chars"),
+            _metric(metrics, "glossary_required_terms"),
+            _metric(metrics, "glossary_missing_required_terms"),
+            _metric(metrics, "glossary_repaired_required_terms"),
             _metric(metrics, "tts_first_audio_ms"),
             _metric(metrics, "tts_total_ms"),
             _metric(metrics, "tts_audio_chunks"),

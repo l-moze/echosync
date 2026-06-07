@@ -75,6 +75,7 @@
 - `caption_update` 已带 source/target full/stable/unstable text 和可选 metrics。
 - Agent 已有 `translation_checkpoint_queued/started/first_token/finished/skipped/dropped` 日志。
 - Desktop telemetry 可读取 caption event 的基本 metrics。
+- `caption_event_published` 已展开 DeepSeek cache/stream 与 glossary 指标，`realtime_log_summary` 已汇总这些字段的分布和 required/missing/repaired 总量。
 
 缺口：
 
@@ -106,7 +107,7 @@
 缺口：
 
 - prefix completion 仍是保守策略，不是“长连接状态会话”。DeepSeek Chat Completion 对 EchoSync 仍是无状态请求，provider-side context cache 只能靠稳定 prompt 提升命中率。
-- cache metrics 还没有完整贯穿到所有 `caption_update` 和离线诊断汇总。
+- DeepSeek cache/stream 与 glossary metrics 已贯穿到 `caption_update`、`caption_event_published` 和 `realtime_log_summary`；但尚未自动落盘到每场会话的 `diagnostics.jsonl`。
 - required glossary 如果不是源词原样复制，而是被语义漏译或错译，当前只通过 `glossary_missing_required_terms` 记录，不会为了修复它在实时热路径追加第二次 LLM 请求。
 - 完整 LLM structured revision manager 仍未落地；当前修订是本地 diff/patch 慢路径，已加超时保护。
 
@@ -420,7 +421,7 @@
 
 1. FunASR SenseVoice profile 或 source language preflight。
 2. TermQuickAdd 真实同步到 glossary，并进入运行中 pipeline。
-3. DeepSeek cache/translation/glossary metrics 完整贯穿到 caption_update 和 diagnostics。
+3. 每会话 diagnostics JSONL 自动落盘，并包含 DeepSeek cache/translation/glossary metrics。
 4. 基于 diagnostics 汇总 `glossary_missing_required_terms`，把不能安全本地修复的术语问题送入会后复盘或慢速修订，不进入实时首 token 路径。
 
 理由：用户现在反馈的主要痛点是英文真实场景的识别/翻译质量，而不是再添加 UI。
@@ -438,6 +439,6 @@
 
 - 会议摘要不是空实现：Electron main 已经有摘要生成器。
 - Deepgram 和 DeepL 不是完全未实现：Agent 已有 provider 和 capabilities。
-- Telemetry metrics passthrough 不是完全未实现：`SegmentCommit.metrics` 和 `caption_update.metrics` 已存在。
+- Telemetry metrics passthrough 不是完全未实现：`SegmentCommit.metrics`、`caption_update.metrics`、DeepSeek/glossary 发布日志和 `realtime_log_summary` 汇总已存在。
 - 文件回放不是 Agent 完全没有：Agent 侧媒体源能力存在，Desktop 产品链路未接通。
 - 术语表不是翻译 prompt 完全没有：Agent 可从 CSV 加载并匹配术语；缺的是前端快加到后端的 live sync。
