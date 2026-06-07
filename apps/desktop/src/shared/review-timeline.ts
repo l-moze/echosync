@@ -145,6 +145,28 @@ export function selectSkippedSilenceMarker(timeline: ReviewTimeline, reviewMs: n
   };
 }
 
+export function selectReviewPlaybackMs(timeline: ReviewTimeline, rawMs: number): number {
+  const clampedRawMs = clamp(rawMs, 0, timeline.rawDurationMs);
+  const span = findSpanByRawMs(timeline.spans, clampedRawMs);
+  if (!span || span.type !== "long_silence") {
+    return rawToReviewMs(timeline, clampedRawMs);
+  }
+
+  const visibleSilenceMs = clamp(clampedRawMs - span.rawStartMs, 0, span.compactMs);
+  return Math.round(span.reviewStartMs + visibleSilenceMs);
+}
+
+export function selectAutoSkipTargetRawMs(timeline: ReviewTimeline, rawMs: number): number | null {
+  const span = selectCompressedSilenceSpanByRawMs(timeline, rawMs);
+  if (!span || rawMs >= span.rawEndMs) {
+    return null;
+  }
+  if (rawMs - span.rawStartMs < span.compactMs) {
+    return null;
+  }
+  return span.rawEndMs;
+}
+
 export function selectCompressedSilenceSpanByRawMs(
   timeline: ReviewTimeline,
   rawMs: number

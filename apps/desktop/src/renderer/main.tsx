@@ -96,9 +96,9 @@ import {
 } from "../shared/session-records";
 import {
   buildReviewTimeline,
-  rawToReviewMs,
   reviewToRawMs,
-  selectCompressedSilenceSpanByRawMs,
+  selectAutoSkipTargetRawMs,
+  selectReviewPlaybackMs,
   selectSkippedSilenceMarker,
   type ReviewTimeline,
   type ReviewTimelineMode,
@@ -1721,7 +1721,7 @@ function FinishedDashboard({
     [sessionArchive?.timeline]
   );
   const archiveReviewDurationMs = reviewDurationMsForTimeline(archiveReviewTimeline, sessionArchive?.durationMs ?? 0);
-  const archiveReviewPlaybackMs = archiveReviewTimeline ? rawToReviewMs(archiveReviewTimeline, playbackMs) : playbackMs;
+  const archiveReviewPlaybackMs = archiveReviewTimeline ? selectReviewPlaybackMs(archiveReviewTimeline, playbackMs) : playbackMs;
   const archiveSkippedSilenceMarker = archiveReviewTimeline
     ? selectSkippedSilenceMarker(archiveReviewTimeline, archiveReviewPlaybackMs)
     : null;
@@ -1826,15 +1826,13 @@ function FinishedDashboard({
   }
 
   function updateArchivePlayback(currentMs: number) {
-    const compressedSilence = archiveReviewTimeline
-      ? selectCompressedSilenceSpanByRawMs(archiveReviewTimeline, currentMs)
-      : null;
-    if (compressedSilence && archiveAudioPlaying) {
+    const skipTargetRawMs = archiveReviewTimeline ? selectAutoSkipTargetRawMs(archiveReviewTimeline, currentMs) : null;
+    if (skipTargetRawMs !== null && archiveAudioPlaying) {
       pendingArchivePlayRef.current = false;
-      pendingArchiveSeekMsRef.current = compressedSilence.rawEndMs;
-      setPlaybackMs(compressedSilence.rawEndMs);
+      pendingArchiveSeekMsRef.current = skipTargetRawMs;
+      setPlaybackMs(skipTargetRawMs);
       const audio = audioRef.current;
-      if (audio && seekAudioElement(audio, compressedSilence.rawEndMs)) {
+      if (audio && seekAudioElement(audio, skipTargetRawMs)) {
         pendingArchiveSeekMsRef.current = null;
       }
       return;
@@ -2299,7 +2297,7 @@ function SessionRecordsWindow({
     [selectedRecord?.timeline]
   );
   const reviewDurationMs = reviewDurationMsForTimeline(selectedReviewTimeline, selectedRecord?.durationMs ?? 0);
-  const reviewPlaybackMs = selectedReviewTimeline ? rawToReviewMs(selectedReviewTimeline, playbackMs) : playbackMs;
+  const reviewPlaybackMs = selectedReviewTimeline ? selectReviewPlaybackMs(selectedReviewTimeline, playbackMs) : playbackMs;
   const skippedSilenceMarker = selectedReviewTimeline
     ? selectSkippedSilenceMarker(selectedReviewTimeline, reviewPlaybackMs)
     : null;
@@ -2634,19 +2632,21 @@ function SessionRecordsWindow({
   }
 
   function updateRecordPlayback(currentMs: number) {
-    const compressedSilence = selectedReviewTimeline
-      ? selectCompressedSilenceSpanByRawMs(selectedReviewTimeline, currentMs)
-      : null;
-    if (compressedSilence && recordAudioPlaying) {
+    const skipTargetRawMs = selectedReviewTimeline ? selectAutoSkipTargetRawMs(selectedReviewTimeline, currentMs) : null;
+    if (skipTargetRawMs !== null && recordAudioPlaying) {
       const audio = recordAudioRef.current;
       pendingRecordPlayRef.current = false;
-      pendingRecordSeekMsRef.current = compressedSilence.rawEndMs;
-      setPlaybackMs(compressedSilence.rawEndMs);
+      pendingRecordSeekMsRef.current = skipTargetRawMs;
+      setPlaybackMs(skipTargetRawMs);
       if (audio) {
-        if (!seekAudioElement(audio, compressedSilence.rawEndMs)) {
+        if (!seekAudioElement(audio, skipTargetRawMs)) {
           return;
         }
         pendingRecordSeekMsRef.current = null;
+      }
+      if (selectedRecord) {
+        const segmentId = selectSessionRecordPlaybackSegmentId(selectedRecord.segments, skipTargetRawMs);
+        setActiveRecordSegmentId(segmentId);
       }
       return;
     }

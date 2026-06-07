@@ -69,7 +69,8 @@ describe("会议记录窗口契约", () => {
     expect(finishedSource).toContain("applyPendingArchiveSeek(event.currentTarget)");
     expect(finishedSource).toContain("seekAudioElement(audio, pendingSeekMs)");
     expect(finishedSource).toContain("reviewToRawMs(archiveReviewTimeline, nextReviewMs)");
-    expect(finishedSource).toContain("selectCompressedSilenceSpanByRawMs(archiveReviewTimeline, currentMs)");
+    expect(finishedSource).toContain("selectAutoSkipTargetRawMs(archiveReviewTimeline, currentMs)");
+    expect(finishedSource).toContain("selectReviewPlaybackMs(archiveReviewTimeline, playbackMs)");
     expect(finishedSource).toContain("audio.readyState === 0");
     expect(finishedSource).toContain("audio.load();");
     expect(finishedSource).toContain("setPlaybackMs(line.startMs);");
@@ -121,9 +122,9 @@ describe("会议记录窗口契约", () => {
     expect(windowSource).toContain("const [recordAudioPlaying, setRecordAudioPlaying] = useState(false);");
     expect(windowSource).toContain("const [recordAudioStatus, setRecordAudioStatus]");
     expect(windowSource).toContain("reviewTimelineFromSessionTimeline(selectedRecord?.timeline)");
-    expect(windowSource).toContain("rawToReviewMs(selectedReviewTimeline, playbackMs)");
+    expect(windowSource).toContain("selectReviewPlaybackMs(selectedReviewTimeline, playbackMs)");
     expect(windowSource).toContain("reviewToRawMs(selectedReviewTimeline, nextReviewMs)");
-    expect(windowSource).toContain("selectCompressedSilenceSpanByRawMs(selectedReviewTimeline, currentMs)");
+    expect(windowSource).toContain("selectAutoSkipTargetRawMs(selectedReviewTimeline, currentMs)");
     expect(windowSource).toContain("function seekRecordAudio(nextMs: number)");
     expect(windowSource).toContain("function toggleRecordAudioPlayback()");
     expect(windowSource).toContain("recordAudioStatus === \"loading\"");
@@ -134,6 +135,23 @@ describe("会议记录窗口契约", () => {
     expect(progressSource).toContain("value={Math.min(reviewPlaybackMs, reviewDurationMs)}");
     expect(progressSource).toContain("onChange={(event) => scrubRecordAudio(Number(event.target.value))}");
     expect(windowSource).not.toContain("<audio\n                controls");
+  });
+
+  it("压缩静音自动跳过保留 compact gap，且记录详情页跳过后同步刷新高亮片段", () => {
+    const finishedSource = sourceAround("function updateArchivePlayback", 0, 1200);
+    const recordSource = sourceAround("function updateRecordPlayback", 0, 1800);
+
+    expect(finishedSource).toContain("const skipTargetRawMs = archiveReviewTimeline");
+    expect(finishedSource).toContain("selectAutoSkipTargetRawMs(archiveReviewTimeline, currentMs)");
+    expect(rendererSource).toContain("selectReviewPlaybackMs(archiveReviewTimeline, playbackMs)");
+    expect(finishedSource).toContain("if (skipTargetRawMs !== null && archiveAudioPlaying)");
+    expect(finishedSource).not.toContain("pendingArchiveSeekMsRef.current = compressedSilence.rawEndMs");
+    expect(recordSource).toContain("const skipTargetRawMs = selectedReviewTimeline");
+    expect(recordSource).toContain("selectAutoSkipTargetRawMs(selectedReviewTimeline, currentMs)");
+    expect(rendererSource).toContain("selectReviewPlaybackMs(selectedReviewTimeline, playbackMs)");
+    expect(recordSource).toContain("const segmentId = selectSessionRecordPlaybackSegmentId(selectedRecord.segments, skipTargetRawMs)");
+    expect(recordSource).toContain("setActiveRecordSegmentId(segmentId);");
+    expect(recordSource).not.toContain("pendingRecordSeekMsRef.current = compressedSilence.rawEndMs");
   });
 
   it("停止保存时为复盘记录生成三条时间线并持久化", () => {
@@ -147,7 +165,7 @@ describe("会议记录窗口契约", () => {
   });
 
   it("详情页片段使用非 button 卡片，避免原生按钮布局把双语文本压扁", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 21000);
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 23000);
 
     expect(windowSource).toContain("function handleRecordSegmentKeyDown");
     expect(windowSource).toContain("<article");

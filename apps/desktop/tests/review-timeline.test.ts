@@ -4,7 +4,9 @@ import {
   buildReviewTimeline,
   rawToReviewMs,
   reviewToRawMs,
+  selectAutoSkipTargetRawMs,
   selectCompressedSilenceSpanByRawMs,
+  selectReviewPlaybackMs,
   selectSkippedSilenceMarker
 } from "../src/shared/review-timeline";
 
@@ -166,5 +168,31 @@ describe("复盘播放器三条时间线", () => {
     });
     expect(selectCompressedSilenceSpanByRawMs(timeline, 1000)).toBeNull();
     expect(selectCompressedSilenceSpanByRawMs(timeline, 7200)).toBeNull();
+  });
+
+  it("自动跳过长静音前先保留 compact gap 的播放时间", () => {
+    const timeline = buildReviewTimeline({
+      rawDurationMs: 10000,
+      activeRanges: [
+        { rawStartMs: 0, rawEndMs: 2000 },
+        { rawStartMs: 7000, rawEndMs: 10000 }
+      ],
+      mode: "video",
+      thresholdMs: 2500,
+      compactGapMs: 500
+    });
+
+    expect(selectAutoSkipTargetRawMs(timeline, 1999)).toBeNull();
+    expect(selectAutoSkipTargetRawMs(timeline, 2000)).toBeNull();
+    expect(selectAutoSkipTargetRawMs(timeline, 2499)).toBeNull();
+    expect(selectAutoSkipTargetRawMs(timeline, 2500)).toBe(7000);
+    expect(selectAutoSkipTargetRawMs(timeline, 3500)).toBe(7000);
+    expect(selectAutoSkipTargetRawMs(timeline, 7200)).toBeNull();
+
+    expect(selectReviewPlaybackMs(timeline, 2000)).toBe(2000);
+    expect(selectReviewPlaybackMs(timeline, 2250)).toBe(2250);
+    expect(selectReviewPlaybackMs(timeline, 2500)).toBe(2500);
+    expect(selectReviewPlaybackMs(timeline, 3500)).toBe(2500);
+    expect(selectReviewPlaybackMs(timeline, 7000)).toBe(2500);
   });
 });
