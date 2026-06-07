@@ -94,6 +94,13 @@ export function createSessionSummaryGeneratorFromEnv(
 
 export function buildSessionSummaryPrompt(record: SessionRecord) {
   const segments = record.segments.map(formatSegmentForPrompt).join("\n\n");
+  const durationLines = record.timeline
+    ? [
+        `复盘时长毫秒：${record.timeline.reviewDurationMs}`,
+        `总录制时长毫秒：${record.timeline.rawDurationMs}`,
+        `有效内容时长毫秒：${record.timeline.contentDurationMs}`
+      ]
+    : [`时长毫秒：${record.durationMs}`];
   return [
     "请生成会议复盘摘要。",
     "",
@@ -101,7 +108,7 @@ export function buildSessionSummaryPrompt(record: SessionRecord) {
     `语言：${record.sourceLang} -> ${record.targetLang}`,
     `开始时间：${record.startedAt}`,
     `结束时间：${record.endedAt}`,
-    `时长毫秒：${record.durationMs}`,
+    ...durationLines,
     `片段数：${record.segments.length}`,
     "",
     "输出 JSON 格式：",

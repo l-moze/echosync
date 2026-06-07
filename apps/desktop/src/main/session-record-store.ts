@@ -107,6 +107,7 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
           hasTranslationGap: Boolean(input.diagnostics?.hasTranslationGap),
           logPath: input.diagnostics?.logPath
         },
+        timeline: input.timeline,
         segments: normalizedTiming.segments,
         updatedAt: now
       };

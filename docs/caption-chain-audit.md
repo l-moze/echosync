@@ -493,6 +493,14 @@ python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realti
 
 Renderer 侧仍保留 stopping session 集合过滤，作为异常竞态的最后防线；但产品契约应由 Agent 层保证：`user_stop` 之后的 provider late exception 不发布给字幕面板。
 
+2026-06-07 复盘时间线修正：视频暂停/长静音不再被当作 `user_stop`，也不直接暂停 `MediaRecorder`。Desktop 录音仍保存 raw elapsed 时间线；实时 ASR 继续走 `audio-gate` + provider keepalive；复盘层新增三条时间线：
+
+- `rawDurationMs`：开关打开到停止的真实录制时长，用于原始音频 seek 和 SRT 原始时间戳。
+- `contentDurationMs`：有效音频活动区间合计，不把长静音算作学习/会议内容。
+- `reviewDurationMs`：复盘播放器时间线。`windows-system` / `file` 默认压缩超过约 `2.5s` 的长静音为 `500ms`，`microphone` / `mixed` 默认按会议语义保留完整时间线。
+
+实现边界：`realtime-audio-client` 在发送有效 PCM audio chunk 时合并 `activityRanges`，`ensureSeekableSessionRecording` 修 WebM duration 时保留该元数据；保存记录时用 `buildReviewTimeline` 生成 `SessionRecord.timeline`。会话结束页和复盘详情页的进度条显示 `reviewMs`，音频元素仍 seek 到 `rawMs`，播放进入被压缩静音段时自动跳到该段 raw 末尾。Markdown/列表/摘要 prompt 使用复盘时长，同时保留总录制时长；SRT 导出继续使用原始 segment 时间戳，避免和原始音频对不齐。
+
 ## 下一轮必须补的 telemetry
 
 为了继续收敛瓶颈，下一轮不要再只看肉眼观感，应把一条字幕的关键时间戳串起来：

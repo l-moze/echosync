@@ -61,15 +61,21 @@ describe("会议记录窗口契约", () => {
   });
 
   it("本次复盘点击片段在音频元数据就绪后补偿跳转", () => {
-    const finishedSource = sourceAround("function FinishedDashboard", 0, 5200);
+    const finishedSource = sourceAround("function FinishedDashboard", 0, 9000);
+    const archiveProgressSource = sourceAround("aria-label=\"本次复盘音频进度\"", 700, 700);
 
     expect(finishedSource).toContain("pendingArchiveSeekMsRef");
     expect(finishedSource).toContain("pendingArchivePlayRef");
     expect(finishedSource).toContain("applyPendingArchiveSeek(event.currentTarget)");
     expect(finishedSource).toContain("seekAudioElement(audio, pendingSeekMs)");
+    expect(finishedSource).toContain("reviewToRawMs(archiveReviewTimeline, nextReviewMs)");
+    expect(finishedSource).toContain("selectCompressedSilenceSpanByRawMs(archiveReviewTimeline, currentMs)");
     expect(finishedSource).toContain("audio.readyState === 0");
     expect(finishedSource).toContain("audio.load();");
     expect(finishedSource).toContain("setPlaybackMs(line.startMs);");
+    expect(archiveProgressSource).toContain("max={archiveReviewDurationMs}");
+    expect(archiveProgressSource).toContain("value={Math.min(archiveReviewPlaybackMs, archiveReviewDurationMs)}");
+    expect(finishedSource).not.toContain("<audio\n              controls");
   });
 
   it("详情页导出按钮会通过主进程导出并复制当前记录", () => {
@@ -110,19 +116,34 @@ describe("会议记录窗口契约", () => {
 
   it("详情页音频回放使用记录时长自绘进度，避免 WebM 原生时长误导", () => {
     const windowSource = sourceAround("function SessionRecordsWindow", 0, 19000);
+    const progressSource = sourceAround("aria-label=\"音频回放进度\"", 700, 700);
 
     expect(windowSource).toContain("const [recordAudioPlaying, setRecordAudioPlaying] = useState(false);");
     expect(windowSource).toContain("const [recordAudioStatus, setRecordAudioStatus]");
+    expect(windowSource).toContain("reviewTimelineFromSessionTimeline(selectedRecord?.timeline)");
+    expect(windowSource).toContain("rawToReviewMs(selectedReviewTimeline, playbackMs)");
+    expect(windowSource).toContain("reviewToRawMs(selectedReviewTimeline, nextReviewMs)");
+    expect(windowSource).toContain("selectCompressedSilenceSpanByRawMs(selectedReviewTimeline, currentMs)");
     expect(windowSource).toContain("function seekRecordAudio(nextMs: number)");
     expect(windowSource).toContain("function toggleRecordAudioPlayback()");
     expect(windowSource).toContain("recordAudioStatus === \"loading\"");
     expect(windowSource).toContain("setRecordAudioStatus(\"ready\")");
     expect(windowSource).toContain("pendingRecordSeekMsRef.current = playbackMs");
     expect(windowSource).toContain("className=\"recordAudioControls\"");
-    expect(windowSource).toContain("max={selectedRecord.durationMs}");
-    expect(windowSource).toContain("value={Math.min(playbackMs, selectedRecord.durationMs)}");
-    expect(windowSource).toContain("onChange={(event) => scrubRecordAudio(Number(event.target.value))}");
+    expect(progressSource).toContain("max={reviewDurationMs}");
+    expect(progressSource).toContain("value={Math.min(reviewPlaybackMs, reviewDurationMs)}");
+    expect(progressSource).toContain("onChange={(event) => scrubRecordAudio(Number(event.target.value))}");
     expect(windowSource).not.toContain("<audio\n                controls");
+  });
+
+  it("停止保存时为复盘记录生成三条时间线并持久化", () => {
+    const stopSource = sourceAround("async function stopCapture", 0, 4300);
+    const draftSource = sourceAround("async function buildSessionRecordDraftInput", 0, 1800);
+
+    expect(stopSource).toContain("const timeline = buildSessionRecordTimeline");
+    expect(stopSource).toContain("activityRanges: seekableRecording?.activityRanges");
+    expect(stopSource).toContain("timeline,");
+    expect(draftSource).toContain("timeline: archive.timeline");
   });
 
   it("详情页片段使用非 button 卡片，避免原生按钮布局把双语文本压扁", () => {

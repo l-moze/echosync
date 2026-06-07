@@ -91,8 +91,20 @@ import {
   type SessionRecordDraftInput,
   type SessionRecordExportFormat,
   type SessionRecordListItem,
-  type SessionRecordSegment
+  type SessionRecordSegment,
+  type SessionRecordTimeline
 } from "../shared/session-records";
+import {
+  buildReviewTimeline,
+  rawToReviewMs,
+  reviewToRawMs,
+  selectCompressedSilenceSpanByRawMs,
+  selectSkippedSilenceMarker,
+  type ReviewTimeline,
+  type ReviewTimelineMode,
+  type TimelineRange,
+  type TimelineSpan
+} from "../shared/review-timeline";
 import {
   buildSessionArchiveDraft,
   selectPlaybackSegmentId,
@@ -124,12 +136,117 @@ type SessionArchiveSaveStatus = {
   state: "idle" | "saving" | "saved" | "failed";
 };
 const TRANSCRIPT_REVIEW_STACKED_WIDTH_PX = 720;
+const REVIEW_TIMELINE_THRESHOLD_MS = 2500;
+const REVIEW_TIMELINE_COMPACT_GAP_MS = 500;
 
 function releaseSessionArchive(archive: SessionArchiveDraft | null) {
   if (!archive?.audio?.objectUrl) {
     return;
   }
   URL.revokeObjectURL(archive.audio.objectUrl);
+}
+
+function buildSessionRecordTimeline({
+  activityRanges,
+  lines,
+  rawDurationMs,
+  sourceId
+}: {
+  activityRanges?: Array<{ startMs: number; endMs: number }>;
+  lines: CaptionLine[];
+  rawDurationMs: number;
+  sourceId: DesktopAudioSourceId;
+}): SessionRecordTimeline {
+  const mode = reviewTimelineModeForSource(sourceId);
+  const compressionEnabled = mode !== "meeting";
+  const timeline = buildReviewTimeline({
+    activeRanges: selectReviewTimelineActiveRanges(activityRanges, lines),
+    compactGapMs: REVIEW_TIMELINE_COMPACT_GAP_MS,
+    compressLongSilence: compressionEnabled,
+    mode,
+    rawDurationMs,
+    thresholdMs: REVIEW_TIMELINE_THRESHOLD_MS
+  });
+
+  return {
+    compressionEnabled,
+    contentDurationMs: timeline.contentDurationMs,
+    mode,
+    rawDurationMs: timeline.rawDurationMs,
+    reviewDurationMs: timeline.reviewDurationMs,
+    spans: timeline.spans.map((span) => ({
+      kind: span.type === "long_silence" ? "silence" : "content",
+      rawEndMs: span.rawEndMs,
+      rawStartMs: span.rawStartMs,
+      reviewEndMs: span.reviewEndMs,
+      reviewStartMs: span.reviewStartMs
+    }))
+  };
+}
+
+function selectReviewTimelineActiveRanges(
+  activityRanges: Array<{ startMs: number; endMs: number }> | undefined,
+  lines: CaptionLine[]
+): TimelineRange[] {
+  const recordingRanges = activityRanges
+    ?.map((range) => ({
+      rawEndMs: range.endMs,
+      rawStartMs: range.startMs
+    }))
+    .filter((range) => range.rawEndMs > range.rawStartMs);
+  if (recordingRanges && recordingRanges.length > 0) {
+    return recordingRanges;
+  }
+  return lines
+    .map((line) => ({
+      rawEndMs: line.endMs,
+      rawStartMs: line.startMs
+    }))
+    .filter((range) => range.rawEndMs > range.rawStartMs);
+}
+
+function reviewTimelineModeForSource(sourceId: DesktopAudioSourceId): ReviewTimelineMode {
+  if (sourceId === "microphone" || sourceId === "mixed") {
+    return "meeting";
+  }
+  if (sourceId === "file") {
+    return "course";
+  }
+  return "video";
+}
+
+function reviewTimelineFromSessionTimeline(timeline: SessionRecordTimeline | undefined): ReviewTimeline | null {
+  if (!timeline) {
+    return null;
+  }
+  return {
+    contentDurationMs: timeline.contentDurationMs,
+    rawDurationMs: timeline.rawDurationMs,
+    reviewDurationMs: timeline.reviewDurationMs,
+    spans: timeline.spans.map((span): TimelineSpan => {
+      if (span.kind === "silence") {
+        return {
+          compactMs: Math.max(0, span.reviewEndMs - span.reviewStartMs),
+          rawEndMs: span.rawEndMs,
+          rawStartMs: span.rawStartMs,
+          reviewEndMs: span.reviewEndMs,
+          reviewStartMs: span.reviewStartMs,
+          type: "long_silence"
+        };
+      }
+      return {
+        rawEndMs: span.rawEndMs,
+        rawStartMs: span.rawStartMs,
+        reviewEndMs: span.reviewEndMs,
+        reviewStartMs: span.reviewStartMs,
+        type: "active_audio"
+      };
+    })
+  };
+}
+
+function reviewDurationMsForTimeline(timeline: ReviewTimeline | null, fallbackMs: number) {
+  return timeline?.reviewDurationMs ?? fallbackMs;
 }
 
 async function buildSessionRecordDraftInput(
@@ -160,6 +277,7 @@ async function buildSessionRecordDraftInput(
           mimeType: archive.audio.mimeType
         }
       : undefined,
+    timeline: archive.timeline,
     summary: {
       status: "pending",
       text: "",
@@ -662,6 +780,12 @@ function App() {
     const durationMs = Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0);
     const averageCaptionLagMs = selectAverageCaptionLatencyMs(lines, startedAtMs) ?? undefined;
     const seekableRecording = await ensureSeekableSessionRecording(recording, durationMs);
+    const timeline = buildSessionRecordTimeline({
+      activityRanges: seekableRecording?.activityRanges,
+      lines,
+      rawDurationMs: durationMs,
+      sourceId
+    });
     const hasSessionContent = Boolean(seekableRecording) || lines.some((line) => line.sourceText.trim() || line.targetText.trim());
     if (hasSessionContent) {
       const archive = buildSessionArchiveDraft({
@@ -672,6 +796,7 @@ function App() {
         durationMs,
         id: currentClient?.sessionId ?? nextSnapshot?.sessionId ?? `sess_${endedAt.getTime()}`,
         lines,
+        timeline,
         title: sessionArchiveTitleFromDate(endedAt)
       });
       setSessionArchiveDraft(archive);
@@ -684,7 +809,7 @@ function App() {
       setSessionArchiveSaveStatus({ message: "本次没有可保存内容", state: "idle" });
     }
     const summary: SessionSummary = {
-      durationMs,
+      durationMs: timeline.reviewDurationMs,
       segmentCount: lines.length,
       patchCount: lines.reduce((sum, line) => sum + line.patchCount, 0),
       averageLatencyMs: averageCaptionLagMs ?? 0,
@@ -1588,6 +1713,18 @@ function FinishedDashboard({
   const [editableTranscript, setEditableTranscript] = useState(() => transcriptLinesToEditableText(lines));
   const [exportStatus, setExportStatus] = useState("等待导出");
   const [playbackMs, setPlaybackMs] = useState(0);
+  const [archiveAudioPlaying, setArchiveAudioPlaying] = useState(false);
+  const [archiveAudioError, setArchiveAudioError] = useState("");
+  const [archiveAudioStatus, setArchiveAudioStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle");
+  const archiveReviewTimeline = useMemo(
+    () => reviewTimelineFromSessionTimeline(sessionArchive?.timeline),
+    [sessionArchive?.timeline]
+  );
+  const archiveReviewDurationMs = reviewDurationMsForTimeline(archiveReviewTimeline, sessionArchive?.durationMs ?? 0);
+  const archiveReviewPlaybackMs = archiveReviewTimeline ? rawToReviewMs(archiveReviewTimeline, playbackMs) : playbackMs;
+  const archiveSkippedSilenceMarker = archiveReviewTimeline
+    ? selectSkippedSilenceMarker(archiveReviewTimeline, archiveReviewPlaybackMs)
+    : null;
   const cleanedLines = useMemo(() => editableTextToTranscriptLines(editableTranscript, lines), [editableTranscript, lines]);
   const activePlaybackSegmentId = useMemo(
     () => selectPlaybackSegmentId(cleanedLines, playbackMs),
@@ -1619,6 +1756,28 @@ function FinishedDashboard({
     applyPendingArchiveSeek(audio);
   }
 
+  function scrubArchiveAudio(nextReviewMs: number) {
+    pendingArchivePlayRef.current = false;
+    seekArchiveAudio(archiveReviewTimeline ? reviewToRawMs(archiveReviewTimeline, nextReviewMs) : nextReviewMs);
+  }
+
+  function seekArchiveAudio(nextRawMs: number) {
+    const durationMs = sessionArchive?.durationMs ?? 0;
+    const boundedMs = Math.min(Math.max(nextRawMs, 0), Math.max(durationMs, 0));
+    pendingArchiveSeekMsRef.current = boundedMs;
+    setPlaybackMs(boundedMs);
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+    if (audio.readyState === 0) {
+      setArchiveAudioStatus("loading");
+      audio.load();
+      return;
+    }
+    applyPendingArchiveSeek(audio);
+  }
+
   function applyPendingArchiveSeek(audio: HTMLAudioElement) {
     const pendingSeekMs = pendingArchiveSeekMsRef.current;
     if (pendingSeekMs === null) {
@@ -1628,15 +1787,60 @@ function FinishedDashboard({
       return;
     }
     pendingArchiveSeekMsRef.current = null;
+    setArchiveAudioStatus("ready");
     setPlaybackMs(pendingSeekMs);
     if (!pendingArchivePlayRef.current) {
       return;
     }
     pendingArchivePlayRef.current = false;
-    void audio.play().catch(() => {
-      // The explicit click already moved the review playhead; playback may still
-      // be rejected by the platform until the media element is ready.
-    });
+    setArchiveAudioError("");
+    void audio.play()
+      .then(() => {
+        setArchiveAudioPlaying(true);
+      })
+      .catch(() => {
+        setArchiveAudioPlaying(false);
+        setArchiveAudioError("音频无法播放");
+      });
+  }
+
+  function toggleArchiveAudioPlayback() {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+    if (archiveAudioPlaying) {
+      audio.pause();
+      setArchiveAudioPlaying(false);
+      return;
+    }
+    setArchiveAudioError("");
+    pendingArchivePlayRef.current = true;
+    pendingArchiveSeekMsRef.current = playbackMs;
+    if (audio.readyState < 2) {
+      setArchiveAudioStatus("loading");
+      audio.load();
+      return;
+    }
+    applyPendingArchiveSeek(audio);
+  }
+
+  function updateArchivePlayback(currentMs: number) {
+    const compressedSilence = archiveReviewTimeline
+      ? selectCompressedSilenceSpanByRawMs(archiveReviewTimeline, currentMs)
+      : null;
+    if (compressedSilence && archiveAudioPlaying) {
+      pendingArchivePlayRef.current = false;
+      pendingArchiveSeekMsRef.current = compressedSilence.rawEndMs;
+      setPlaybackMs(compressedSilence.rawEndMs);
+      const audio = audioRef.current;
+      if (audio && seekAudioElement(audio, compressedSilence.rawEndMs)) {
+        pendingArchiveSeekMsRef.current = null;
+      }
+      return;
+    }
+    const durationMs = sessionArchive?.durationMs ?? currentMs;
+    setPlaybackMs(Math.min(currentMs, durationMs));
   }
 
   async function copyMarkdown() {
@@ -1662,14 +1866,53 @@ function FinishedDashboard({
         {sessionArchive?.audio ? (
           <section className="archivePlaybackPanel" aria-label="会话录音回放">
             <audio
-              controls
+              hidden
+              preload="auto"
               ref={audioRef}
               src={sessionArchive.audio.objectUrl}
-              onCanPlay={(event) => applyPendingArchiveSeek(event.currentTarget)}
-              onLoadedMetadata={(event) => applyPendingArchiveSeek(event.currentTarget)}
-              onTimeUpdate={(event) => setPlaybackMs(Math.round(event.currentTarget.currentTime * 1000))}
+              onCanPlay={(event) => {
+                setArchiveAudioStatus("ready");
+                applyPendingArchiveSeek(event.currentTarget);
+              }}
+              onEnded={() => {
+                setArchiveAudioPlaying(false);
+                updateArchivePlayback(sessionArchive.durationMs);
+              }}
+              onError={() => {
+                setArchiveAudioPlaying(false);
+                setArchiveAudioStatus("failed");
+                setArchiveAudioError("音频加载失败");
+              }}
+              onLoadedMetadata={(event) => {
+                setArchiveAudioStatus("ready");
+                applyPendingArchiveSeek(event.currentTarget);
+              }}
+              onPause={() => setArchiveAudioPlaying(false)}
+              onPlay={() => setArchiveAudioPlaying(true)}
+              onTimeUpdate={(event) => updateArchivePlayback(Math.round(event.currentTarget.currentTime * 1000))}
             />
-            <span>{formatTime(playbackMs)} / {formatTime(sessionArchive.durationMs)}</span>
+            <div className="recordAudioControls">
+              <button onClick={toggleArchiveAudioPlayback} type="button">
+                {archiveAudioPlaying ? "暂停" : "播放"}
+              </button>
+              <input
+                aria-label="本次复盘音频进度"
+                max={archiveReviewDurationMs}
+                min={0}
+                onChange={(event) => scrubArchiveAudio(Number(event.target.value))}
+                step={250}
+                type="range"
+                value={Math.min(archiveReviewPlaybackMs, archiveReviewDurationMs)}
+              />
+            </div>
+            <span>{formatTime(archiveReviewPlaybackMs)} / {formatTime(archiveReviewDurationMs)}</span>
+            {archiveAudioStatus === "loading" ? <span className="recordAudioStatus" role="status">音频加载中...</span> : null}
+            {archiveAudioError ? <span className="recordAudioError" role="status">{archiveAudioError}</span> : null}
+            {archiveSkippedSilenceMarker ? (
+              <span className="recordAudioStatus" role="status">
+                已压缩 {formatDurationForRecord(archiveSkippedSilenceMarker.skippedMs)} 静音
+              </span>
+            ) : null}
           </section>
         ) : (
           <p className="archiveMissing">本次会话没有可回放录音，仍可导出双语文本。</p>
@@ -2051,6 +2294,15 @@ function SessionRecordsWindow({
   const filteredRecords = useMemo(() => filterSessionRecordsByTitle(records, searchQuery), [records, searchQuery]);
   const selectedListRecord = selectedId ? records.find((record) => record.id === selectedId) ?? null : null;
   const isDetailView = Boolean(selectedId);
+  const selectedReviewTimeline = useMemo(
+    () => reviewTimelineFromSessionTimeline(selectedRecord?.timeline),
+    [selectedRecord?.timeline]
+  );
+  const reviewDurationMs = reviewDurationMsForTimeline(selectedReviewTimeline, selectedRecord?.durationMs ?? 0);
+  const reviewPlaybackMs = selectedReviewTimeline ? rawToReviewMs(selectedReviewTimeline, playbackMs) : playbackMs;
+  const skippedSilenceMarker = selectedReviewTimeline
+    ? selectSkippedSilenceMarker(selectedReviewTimeline, reviewPlaybackMs)
+    : null;
 
   useEffect(() => {
     if (!isOpen || !selectedId) {
@@ -2328,7 +2580,7 @@ function SessionRecordsWindow({
 
   function scrubRecordAudio(nextMs: number) {
     pendingRecordPlayRef.current = false;
-    seekRecordAudio(nextMs);
+    seekRecordAudio(reviewToRawRecordMs(nextMs));
   }
 
   function seekRecordAudio(nextMs: number) {
@@ -2346,6 +2598,13 @@ function SessionRecordsWindow({
       return;
     }
     applyPendingRecordSeek(audio);
+  }
+
+  function reviewToRawRecordMs(nextReviewMs: number) {
+    if (!selectedReviewTimeline) {
+      return nextReviewMs;
+    }
+    return reviewToRawMs(selectedReviewTimeline, nextReviewMs);
   }
 
   function toggleRecordAudioPlayback() {
@@ -2375,6 +2634,22 @@ function SessionRecordsWindow({
   }
 
   function updateRecordPlayback(currentMs: number) {
+    const compressedSilence = selectedReviewTimeline
+      ? selectCompressedSilenceSpanByRawMs(selectedReviewTimeline, currentMs)
+      : null;
+    if (compressedSilence && recordAudioPlaying) {
+      const audio = recordAudioRef.current;
+      pendingRecordPlayRef.current = false;
+      pendingRecordSeekMsRef.current = compressedSilence.rawEndMs;
+      setPlaybackMs(compressedSilence.rawEndMs);
+      if (audio) {
+        if (!seekAudioElement(audio, compressedSilence.rawEndMs)) {
+          return;
+        }
+        pendingRecordSeekMsRef.current = null;
+      }
+      return;
+    }
     const boundedMs = selectedRecord ? Math.min(currentMs, selectedRecord.durationMs) : currentMs;
     setPlaybackMs(boundedMs);
     if (!selectedRecord) {
@@ -2499,16 +2774,21 @@ function SessionRecordsWindow({
                   </button>
                   <input
                     aria-label="音频回放进度"
-                    max={selectedRecord.durationMs}
+                    max={reviewDurationMs}
                     min={0}
                     onChange={(event) => scrubRecordAudio(Number(event.target.value))}
                     step={250}
                     type="range"
-                    value={Math.min(playbackMs, selectedRecord.durationMs)}
+                    value={Math.min(reviewPlaybackMs, reviewDurationMs)}
                   />
                 </div>
                 {recordAudioStatus === "loading" ? <span className="recordAudioStatus" role="status">音频加载中...</span> : null}
                 {recordAudioError ? <span className="recordAudioError" role="status">{recordAudioError}</span> : null}
+                {skippedSilenceMarker ? (
+                  <span className="recordAudioStatus" role="status">
+                    已压缩 {formatDurationForRecord(skippedSilenceMarker.skippedMs)} 静音
+                  </span>
+                ) : null}
               </>
             ) : (
               <span>
@@ -2519,7 +2799,7 @@ function SessionRecordsWindow({
                     : "本地没有保存可回放音频。"}
               </span>
             )}
-            <time>{formatTime(playbackMs)} / {formatTime(selectedRecord.durationMs)}</time>
+            <time>{formatTime(reviewPlaybackMs)} / {formatTime(reviewDurationMs)}</time>
           </div>
           <div className="recordDetailLayout">
             <div className="recordTranscriptList" style={{ fontSize: `${reviewScale}em` }} aria-label="双语片段">
@@ -2571,7 +2851,8 @@ function SessionRecordsWindow({
               <section className="recordMetadataGrid">
                 <span>开始</span><strong>{formatDateTimeForRecord(selectedRecord.startedAt)}</strong>
                 <span>结束</span><strong>{formatDateTimeForRecord(selectedRecord.endedAt)}</strong>
-                <span>时长</span><strong>{formatDurationForRecord(selectedRecord.durationMs)}</strong>
+                <span>复盘时长</span><strong>{formatDurationForRecord(reviewDurationMs)}</strong>
+                <span>总录制时长</span><strong>{formatDurationForRecord(selectedRecord.durationMs)}</strong>
                 <span>语言</span><strong>{selectedRecord.sourceLang} → {selectedRecord.targetLang}</strong>
                 <span>片段</span><strong>{selectedRecord.metadata.segmentCount}</strong>
                 <span>修订</span><strong>{selectedRecord.metadata.patchCount}</strong>

@@ -97,6 +97,7 @@ export function createRealtimeAudioClient({
   let started = false;
   let recordingStarted = false;
   let lastAudioCallbackAtMs: number | null = null;
+  let activityRanges: NonNullable<SessionRecording["activityRanges"]> = [];
   const telemetryWindow = createCaptureTelemetryWindow();
   const audioGate = createAudioGate({
     chunkMs: AUDIO_FRAME_DURATION_MS,
@@ -108,6 +109,7 @@ export function createRealtimeAudioClient({
       return;
     }
     started = true;
+    activityRanges = [];
 
     try {
       mediaStream = await openCaptureStream(sourceId);
@@ -248,7 +250,12 @@ export function createRealtimeAudioClient({
 
     socket?.close();
     socket = null;
-    return recording;
+    return recording
+      ? {
+          ...recording,
+          activityRanges: [...activityRanges]
+        }
+      : null;
   }
 
   return {
@@ -299,6 +306,7 @@ export function createRealtimeAudioClient({
     }
 
     seq += 1;
+    recordActivityRange(activityRanges, samplesToMs(chunk.startSample), samplesToMs(chunk.endSample));
     const frame = createPcm16BinaryFrame({
       endMs: samplesToMs(chunk.endSample),
       isFinal: chunk.isFinal,
@@ -321,6 +329,27 @@ export function createRealtimeAudioClient({
       sendMs
     };
   }
+}
+
+function recordActivityRange(
+  activityRanges: NonNullable<SessionRecording["activityRanges"]>,
+  startMs: number,
+  endMs: number
+) {
+  const normalizedStartMs = Math.max(0, Math.round(startMs));
+  const normalizedEndMs = Math.max(normalizedStartMs, Math.round(endMs));
+  if (normalizedEndMs <= normalizedStartMs) {
+    return;
+  }
+  const previous = activityRanges.at(-1);
+  if (previous && normalizedStartMs <= previous.endMs + 1) {
+    previous.endMs = Math.max(previous.endMs, normalizedEndMs);
+    return;
+  }
+  activityRanges.push({
+    endMs: normalizedEndMs,
+    startMs: normalizedStartMs
+  });
 }
 
 type AudioSendStats = {

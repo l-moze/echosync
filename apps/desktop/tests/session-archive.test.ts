@@ -95,4 +95,40 @@ describe("会话归档模型", () => {
     expect(draft.audio).toBeUndefined();
     expect(draft.segments).toHaveLength(2);
   });
+
+  it("保留复盘压缩时间线元数据", () => {
+    const draft = buildSessionArchiveDraft({
+      id: "sess_timeline",
+      title: "2026年06月05日_记录",
+      createdAt: "2026-06-05T07:20:00.000Z",
+      durationMs: 12000,
+      lines,
+      timeline: {
+        rawDurationMs: 12000,
+        contentDurationMs: 2600,
+        reviewDurationMs: 3100,
+        mode: "video",
+        compressionEnabled: true,
+        spans: [
+          {
+            kind: "content",
+            rawStartMs: 0,
+            rawEndMs: 2600,
+            reviewStartMs: 0,
+            reviewEndMs: 2600
+          },
+          {
+            kind: "silence",
+            rawStartMs: 2600,
+            rawEndMs: 12000,
+            reviewStartMs: 2600,
+            reviewEndMs: 3100
+          }
+        ]
+      }
+    });
+
+    expect(draft.timeline?.reviewDurationMs).toBe(3100);
+    expect(draft.timeline?.spans[1]?.kind).toBe("silence");
+  });
 });

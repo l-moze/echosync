@@ -1,6 +1,10 @@
 import fixWebmDuration, { type FixWebmDurationFunction } from "fix-webm-duration";
 
 export type SessionRecording = {
+  activityRanges?: Array<{
+    startMs: number;
+    endMs: number;
+  }>;
   blob: Blob;
   mimeType: string;
 };
@@ -91,6 +95,7 @@ export async function ensureSeekableSessionRecording(
   try {
     const fixedBlob = await fixDuration(recording.blob, normalizedDurationMs, { logger: false });
     return {
+      activityRanges: recording.activityRanges,
       blob: fixedBlob,
       mimeType: fixedBlob.type || recording.mimeType
     };

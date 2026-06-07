@@ -42,6 +42,25 @@ export type SessionRecordSegment = {
   patchCount: number;
 };
 
+export type SessionRecordTimelineMode = "meeting" | "video" | "course";
+
+export type SessionRecordTimelineSpan = {
+  kind: "content" | "silence";
+  rawStartMs: number;
+  rawEndMs: number;
+  reviewStartMs: number;
+  reviewEndMs: number;
+};
+
+export type SessionRecordTimeline = {
+  rawDurationMs: number;
+  contentDurationMs: number;
+  reviewDurationMs: number;
+  mode: SessionRecordTimelineMode;
+  compressionEnabled: boolean;
+  spans: SessionRecordTimelineSpan[];
+};
+
 export type SessionRecord = {
   id: string;
   title: string;
@@ -55,6 +74,7 @@ export type SessionRecord = {
   summary: SessionRecordSummary;
   metadata: SessionRecordMetadata;
   diagnostics?: SessionRecordDiagnostics;
+  timeline?: SessionRecordTimeline;
   segments: SessionRecordSegment[];
   updatedAt: string;
 };
@@ -75,6 +95,7 @@ export type SessionRecordDraftInput = {
   targetLang?: string;
   averageCaptionLagMs?: number;
   audio?: SessionRecordDraftAudio;
+  timeline?: SessionRecordTimeline;
   summary?: Partial<SessionRecordSummary>;
   diagnostics?: Partial<SessionRecordDiagnostics>;
   segments: SessionRecordSegment[];
@@ -113,7 +134,7 @@ export function toSessionRecordListItem(record: SessionRecord): SessionRecordLis
     id: record.id,
     title: record.title,
     endedAt: formatDateTimeForRecord(record.endedAt),
-    duration: formatDurationForRecord(record.durationMs),
+    duration: formatDurationForRecord(record.timeline?.reviewDurationMs ?? record.durationMs),
     sourceText: firstTextSegment?.sourceEditedText ?? firstTextSegment?.sourceText ?? "",
     targetText: firstTextSegment?.targetEditedText ?? firstTextSegment?.targetText ?? "",
     summaryStatus: record.summary.status,
@@ -239,6 +260,14 @@ export function formatDateTimeForRecord(value: string) {
 
 function serializeFullSessionRecordMarkdown(record: SessionRecord) {
   const summaryText = record.summary.text || "待生成";
+  const durationLines = record.timeline
+    ? [
+        `- 复盘时长：${formatDurationForRecord(record.timeline.reviewDurationMs)}`,
+        ...(record.timeline.rawDurationMs !== record.timeline.reviewDurationMs
+          ? [`- 总录制时长：${formatDurationForRecord(record.timeline.rawDurationMs)}`]
+          : [])
+      ]
+    : [`- 时长：${formatDurationForRecord(record.durationMs)}`];
   const transcript = record.segments.flatMap((segment) => [
     `### ${formatReviewTimestamp(segment.startMs)}-${formatReviewTimestamp(segment.endMs)}`,
     "",
@@ -253,7 +282,7 @@ function serializeFullSessionRecordMarkdown(record: SessionRecord) {
     "",
     `- 开始时间：${formatDateTimeForRecord(record.startedAt)}`,
     `- 结束时间：${formatDateTimeForRecord(record.endedAt)}`,
-    `- 时长：${formatDurationForRecord(record.durationMs)}`,
+    ...durationLines,
     `- 片段数：${record.metadata.segmentCount}`,
     "",
     "## 摘要",

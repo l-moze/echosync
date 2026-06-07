@@ -199,6 +199,55 @@ describe("renderer realtime audio client", () => {
     expect(recording?.mimeType).toBe("audio/webm");
   });
 
+  it("returns active audio ranges separately from the raw recording", async () => {
+    const audioContext = new FakeAudioContext();
+    FakeAudioContext.nextInstance = audioContext;
+    const stream = createFakeMediaStream();
+    const recorder = {
+      start: vi.fn(),
+      stop: vi.fn().mockResolvedValue({
+        blob: new Blob(["audio"], { type: "audio/webm" }),
+        mimeType: "audio/webm"
+      }),
+      discard: vi.fn()
+    };
+    const sockets: FakeWebSocket[] = [];
+    vi.stubGlobal("WebSocket", class extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    });
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getDisplayMedia: vi.fn().mockResolvedValue(stream)
+      }
+    });
+    vi.stubGlobal("window", {
+      AudioContext: FakeAudioContext,
+      webkitAudioContext: undefined
+    });
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+
+    const client = createRealtimeAudioClient({
+      endpointBaseUrl: "ws://agent/realtime",
+      recorder,
+      sessionId: "sess_activity_ranges",
+      sourceId: "windows-system"
+    });
+
+    await client.start();
+    audioContext.emitAudioProcess(new Float32Array(7680).fill(0.25));
+    audioContext.emitAudioProcess(new Float32Array(38_400));
+    audioContext.emitAudioProcess(new Float32Array(7680).fill(0.25));
+    const recording = await client.stop();
+
+    expect(recording?.activityRanges).toEqual([
+      { startMs: 0, endMs: 160 },
+      { startMs: 960, endMs: 1120 }
+    ]);
+  });
+
   it("declares the binary PCM protocol when starting a realtime session", async () => {
     const stream = createFakeMediaStream();
     const sockets: FakeWebSocket[] = [];

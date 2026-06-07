@@ -20,6 +20,39 @@ describe("会议记录 AI 摘要生成器", () => {
     expect(prompt).toContain("译文：备用链路应先显示原文。");
   });
 
+  it("摘要 prompt 同时写入复盘时长和总录制时长", () => {
+    const prompt = buildSessionSummaryPrompt({
+      ...recordFixture(),
+      timeline: {
+        rawDurationMs: 180_000,
+        contentDurationMs: 3_100,
+        reviewDurationMs: 3_600,
+        mode: "video",
+        compressionEnabled: true,
+        spans: [
+          {
+            kind: "content",
+            rawStartMs: 0,
+            rawEndMs: 3100,
+            reviewStartMs: 0,
+            reviewEndMs: 3100
+          },
+          {
+            kind: "silence",
+            rawStartMs: 3100,
+            rawEndMs: 180_000,
+            reviewStartMs: 3100,
+            reviewEndMs: 3600
+          }
+        ]
+      }
+    });
+
+    expect(prompt).toContain("复盘时长毫秒：3600");
+    expect(prompt).toContain("总录制时长毫秒：180000");
+    expect(prompt.split("\n")).not.toContain("时长毫秒：180000");
+  });
+
   it("调用 OpenAI-compatible 接口并解析结构化摘要", async () => {
     const requests: Array<{ url: string; body: unknown; authorization?: string }> = [];
     const fetchFn = async (url: string, init: { body?: string; headers?: Record<string, string> }) => {

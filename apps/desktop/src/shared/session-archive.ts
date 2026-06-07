@@ -1,4 +1,5 @@
 import type { CaptionLine, CaptionLineState } from "./caption-store";
+import type { SessionRecordTimeline } from "./session-records";
 
 export type SessionArchiveSegment = {
   segmentId: string;
@@ -20,6 +21,7 @@ export type SessionArchiveDraft = {
     objectUrl: string;
     blob?: Blob;
   };
+  timeline?: SessionRecordTimeline;
   segments: SessionArchiveSegment[];
 };
 
@@ -31,6 +33,7 @@ export type BuildSessionArchiveDraftInput = {
   audioMimeType?: string;
   audioObjectUrl?: string;
   audioBlob?: Blob;
+  timeline?: SessionRecordTimeline;
   lines: CaptionLine[];
 };
 
@@ -49,6 +52,7 @@ export function buildSessionArchiveDraft({
   durationMs,
   id,
   lines,
+  timeline,
   title
 }: BuildSessionArchiveDraftInput): SessionArchiveDraft {
   return {
@@ -63,6 +67,7 @@ export function buildSessionArchiveDraft({
           blob: audioBlob
         }
       : undefined,
+    timeline,
     segments: lines.map((line) => ({
       segmentId: line.id,
       startMs: line.startMs,

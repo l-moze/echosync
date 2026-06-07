@@ -134,6 +134,52 @@ describe("主进程会议记录持久化", () => {
       await fs.rm(rootDir, { force: true, recursive: true });
     }
   });
+
+  it("保存草稿时持久化复盘压缩时间线", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "echosync-record-store-"));
+    try {
+      const store = createSessionRecordStore(rootDir);
+      const saved = await store.saveDraft({
+        id: "timeline-demo",
+        title: "网课复盘",
+        createdAt: "2026-06-06T10:00:00.000Z",
+        endedAt: "2026-06-06T10:04:00.000Z",
+        durationMs: 240_000,
+        segments: [
+          segment({ id: "seg_1", startMs: 0, endMs: 2_000, sourceText: "Hello", targetText: "你好" })
+        ],
+        timeline: {
+          rawDurationMs: 240_000,
+          contentDurationMs: 2_000,
+          reviewDurationMs: 2_500,
+          mode: "video",
+          compressionEnabled: true,
+          spans: [
+            {
+              kind: "content",
+              rawStartMs: 0,
+              rawEndMs: 2_000,
+              reviewStartMs: 0,
+              reviewEndMs: 2_000
+            },
+            {
+              kind: "silence",
+              rawStartMs: 2_000,
+              rawEndMs: 240_000,
+              reviewStartMs: 2_000,
+              reviewEndMs: 2_500
+            }
+          ]
+        }
+      });
+
+      expect(saved.timeline?.reviewDurationMs).toBe(2_500);
+      expect((await store.get("timeline-demo"))?.timeline?.spans).toHaveLength(2);
+      expect((await store.list())[0]?.duration).toBe("3秒");
+    } finally {
+      await fs.rm(rootDir, { force: true, recursive: true });
+    }
+  });
 });
 
 function segment(overrides: Partial<SessionRecordSegment>): SessionRecordSegment {

@@ -68,4 +68,27 @@ describe("会话原始音频录制器", () => {
     expect(fixWebmDuration).toHaveBeenCalledWith(originalBlob, 12_340, { logger: false });
     expect(result).toEqual({ blob: fixedBlob, mimeType: "audio/webm" });
   });
+
+  it("补写 WebM duration 时保留有效音频区间元数据", async () => {
+    const originalBlob = new Blob(["audio"], { type: "audio/webm" });
+    const fixedBlob = new Blob(["fixed-audio"], { type: "audio/webm" });
+
+    const result = await ensureSeekableSessionRecording(
+      {
+        activityRanges: [
+          { startMs: 0, endMs: 1200 },
+          { startMs: 6200, endMs: 8000 }
+        ],
+        blob: originalBlob,
+        mimeType: "audio/webm"
+      },
+      12_000,
+      vi.fn().mockResolvedValue(fixedBlob)
+    );
+
+    expect(result?.activityRanges).toEqual([
+      { startMs: 0, endMs: 1200 },
+      { startMs: 6200, endMs: 8000 }
+    ]);
+  });
 });
