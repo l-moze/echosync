@@ -81,6 +81,10 @@ def test_cascaded_engine_refreshes_stable_translation_for_long_segment() -> None
     asyncio.run(_assert_cascaded_engine_refreshes_stable_translation_for_long_segment())
 
 
+def test_cascaded_engine_debounces_short_stable_refreshes() -> None:
+    asyncio.run(_assert_cascaded_engine_debounces_short_stable_refreshes())
+
+
 def test_cascaded_engine_accepts_batch_only_translator() -> None:
     asyncio.run(_assert_cascaded_engine_accepts_batch_only_translator())
 
@@ -135,7 +139,7 @@ def test_cascaded_engine_passes_current_segment_revision_context() -> None:
 
 
 def test_cascaded_engine_patches_current_segment_revision_without_waiting_for_commit() -> None:
-    asyncio.run(_assert_cascaded_engine_patches_current_segment_revision_without_waiting_for_commit())
+    asyncio.run(_assert_cascaded_engine_patches_current_revision_before_commit())
 
 
 def test_cascaded_engine_does_not_block_commit_on_slow_correction() -> None:
@@ -219,7 +223,7 @@ async def _assert_cascaded_engine_passes_current_segment_revision_context() -> N
     )
 
 
-async def _assert_cascaded_engine_patches_current_segment_revision_without_waiting_for_commit() -> None:
+async def _assert_cascaded_engine_patches_current_revision_before_commit() -> None:
     first_translated = asyncio.Event()
     second_translated = asyncio.Event()
     engine = CascadedInterpretationEngine(
@@ -509,6 +513,27 @@ async def _assert_cascaded_engine_refreshes_stable_translation_for_long_segment(
         and event.status == SegmentStatus.STABLE
         for event in translations
     )
+
+
+async def _assert_cascaded_engine_debounces_short_stable_refreshes() -> None:
+    first_translated = asyncio.Event()
+    second_translated = asyncio.Event()
+    translator = SignalingTranslator(first_translated, second_translated)
+    engine = CascadedInterpretationEngine(
+        transcriber=FrequentStableRefreshTranscriber(second_translated),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    events = [event async for event in engine.stream(_frames())]
+
+    assert [segment.text for segment in translator.seen_segments] == [
+        "The model starts,",
+        "The model starts, then explains the pipeline with context",
+        "The model starts, then explains the pipeline with context.",
+    ]
+    assert any(isinstance(event, SegmentCommit) for event in events)
 
 
 async def _assert_cascaded_engine_accepts_batch_only_translator() -> None:
@@ -884,8 +909,8 @@ class BackloggedStableRefreshOnlyTranscriber(Transcriber):
                     session_id=frame.session_id,
                     segment_id=segment_id,
                     rev=index + 1,
-                    start_ms=index * 1_200,
-                    end_ms=(index + 1) * 1_200,
+                    start_ms=index * 1_400,
+                    end_ms=(index + 1) * 1_400,
                     source_lang="en",
                     text=text,
                     status=status,
@@ -951,6 +976,56 @@ class RefreshingStableTranscriber(Transcriber):
                 end_ms=3_200,
                 source_lang="en",
                 text="The model starts, then explains the pipeline.",
+                status=SegmentStatus.COMMITTED,
+                stability=1.0,
+            )
+            return
+
+
+class FrequentStableRefreshTranscriber(Transcriber):
+    def __init__(self, second_translated: asyncio.Event) -> None:
+        self.second_translated = second_translated
+
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for _frame in frames:
+            for rev, end_ms, text in (
+                (
+                    1,
+                    1_000,
+                    "The model starts,",
+                ),
+                (
+                    2,
+                    2_000,
+                    "The model starts, then",
+                ),
+                (
+                    3,
+                    2_600,
+                    "The model starts, then explains the pipeline with context",
+                ),
+            ):
+                yield TranscriptSegment(
+                    session_id="sess_debounce_stable",
+                    segment_id="seg_debounce_stable",
+                    rev=rev,
+                    start_ms=0,
+                    end_ms=end_ms,
+                    source_lang="en",
+                    text=text,
+                    status=SegmentStatus.STABLE,
+                    stability=0.9,
+                )
+            with suppress(TimeoutError):
+                await asyncio.wait_for(self.second_translated.wait(), timeout=0.05)
+            yield TranscriptSegment(
+                session_id="sess_debounce_stable",
+                segment_id="seg_debounce_stable",
+                rev=4,
+                start_ms=0,
+                end_ms=3_200,
+                source_lang="en",
+                text="The model starts, then explains the pipeline with context.",
                 status=SegmentStatus.COMMITTED,
                 stability=1.0,
             )

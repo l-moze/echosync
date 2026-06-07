@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
-const stylesheet = readFileSync(resolve(__dirname, "../src/renderer/styles.css"), "utf8");
+const stylesheet = readFileSync(resolve(__dirname, "../src/renderer/styles.css"), "utf8").replace(/\r\n/g, "\n");
 
 function cssRule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -406,12 +406,15 @@ describe("renderer visual style contract", () => {
     expect(cssRule(".zonedCaptionText")).toContain("text-overflow: clip");
     expect(cssRule(".zonedCaptionText.sourceText,\n.zonedCaptionText.targetText")).toContain("-webkit-line-clamp: unset");
     expect(zonedLaneSource).toContain("selectZonedCaptionLaneChunks");
+    expect(zonedLaneSource).toContain("const chunks = lines.length > 0");
+    expect(zonedLaneSource).not.toContain("const chunks = selectedChunks.length > 0");
     expect(zonedLaneSource).toContain("useZonedCaptionLaneViewport");
     expect(zonedLaneSource).toContain("className={`zonedCaptionStream");
     expect(zonedLaneSource).toContain("className={`zonedCaptionChunk");
     expect(zonedLaneSource).not.toContain("textParts.join");
     expect(zonedLaneSource).toContain("selectZonedCaptionAlignedScrollTop");
     expect(zonedLaneSource).toContain("measureZonedCaptionLineOffsets");
+    expect(zonedLaneSource).toContain("zonedCaptionTextFingerprint");
     expect(zonedLaneSource).toContain("stream.scrollTop = scrollTop");
     expect(zonedLaneSource).not.toContain("stream.scrollHeight - stream.clientHeight);\n      if");
     expect(zonedLaneSource).not.toContain("behavior: \"smooth\"");
@@ -421,6 +424,7 @@ describe("renderer visual style contract", () => {
     expect(cssRule(".zonedCaptionStream,\n.zonedCaptionLine")).toContain("white-space: normal");
     expect(cssRule(".zonedCaptionChunk")).toContain("display: inline");
     expect(zonedLaneSource).toContain("{chunk.text}{index < chunks.length - 1 ? \" \" : \"\"}");
+    expect(stylesheet).not.toContain(".zonedCaptionChunk + .zonedCaptionChunk::before");
   });
 
   it("keeps the finished review layout inside the viewport with adaptive columns", () => {

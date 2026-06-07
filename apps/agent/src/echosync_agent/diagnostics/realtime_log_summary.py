@@ -9,6 +9,7 @@ from pathlib import Path
 
 FLOAT_RE = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)"
 KEY_VALUE_RE = re.compile(rf"([a-zA-Z_][a-zA-Z0-9_]*)=({FLOAT_RE}|[^\s]+)")
+ELECTRON_FIELD_RE = re.compile(r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*(.+?),?\s*$")
 
 
 @dataclass(slots=True)
@@ -23,6 +24,7 @@ class RealtimeLogSummary:
     simul_wait: int = 0
     simul_actions: Counter[str] = field(default_factory=Counter)
     caption_events: Counter[str] = field(default_factory=Counter)
+    agent_to_renderer_ms: list[float] = field(default_factory=list)
     avg_audio_transport_ms: list[float] = field(default_factory=list)
     p95_audio_transport_ms: list[float] = field(default_factory=list)
     avg_asr_queue_wait_ms: list[float] = field(default_factory=list)
@@ -63,8 +65,25 @@ class RealtimeLogSummary:
 
 def summarize_log_lines(lines: Iterable[str]) -> RealtimeLogSummary:
     summary = RealtimeLogSummary()
+    electron_block: list[str] | None = None
+    electron_seen: set[tuple[str, str, str, str]] = set()
     for line in lines:
         summary.lines += 1
+        if electron_block is not None:
+            if line.strip() == "}":
+                _apply_electron_event_block(
+                    summary,
+                    _parse_electron_event_block(electron_block),
+                    electron_seen,
+                )
+                electron_block = None
+            else:
+                electron_block.append(line)
+            continue
+        if _starts_electron_event_block(line):
+            electron_block = []
+            continue
+
         fields = _parse_key_values(line)
 
         if "translation_checkpoint_started" in line:
@@ -164,6 +183,7 @@ def format_summary(summary: RealtimeLogSummary) -> str:
         f"dropped_reasons={_format_counter(summary.dropped_reasons)}",
         f"simul_actions={_format_counter(summary.simul_actions)}",
         f"caption_events={_format_counter(summary.caption_events)}",
+        _format_distribution("agent_to_renderer_ms", summary.agent_to_renderer_ms),
         _format_distribution("avg_audio_transport_ms", summary.avg_audio_transport_ms),
         _format_distribution("p95_audio_transport_ms", summary.p95_audio_transport_ms),
         _format_distribution("avg_asr_queue_wait_ms", summary.avg_asr_queue_wait_ms),
@@ -229,6 +249,72 @@ def _parse_key_values(line: str) -> dict[str, str]:
     return {match.group(1): match.group(2) for match in KEY_VALUE_RE.finditer(line)}
 
 
+def _starts_electron_event_block(line: str) -> bool:
+    return "[caption-event] main_forwarded {" in line or "caption_event_renderer_received {" in line
+
+
+def _parse_electron_event_block(lines: Sequence[str]) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in lines:
+        match = ELECTRON_FIELD_RE.match(line)
+        if match is None:
+            continue
+        fields[match.group(1)] = _normalize_electron_value(match.group(2))
+    return fields
+
+
+def _normalize_electron_value(raw: str) -> str:
+    value = raw.strip().rstrip(",")
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1]
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        return value[1:-1]
+    return value
+
+
+def _apply_electron_event_block(
+    summary: RealtimeLogSummary,
+    fields: dict[str, str],
+    seen: set[tuple[str, str, str, str]],
+) -> None:
+    event_type = fields.get("type")
+    if event_type:
+        summary.caption_events[event_type] += 1
+    _append_float(summary.agent_to_renderer_ms, fields.get("agentToRendererMs"))
+    for target, field_name in (
+        (summary.queue_wait_ms, "translationQueueWaitMs"),
+        (summary.first_token_ms, "translationFirstTokenMs"),
+        (summary.translation_latency_ms, "translationLatencyMs"),
+        (summary.tts_first_audio_ms, "ttsFirstAudioMs"),
+        (summary.tts_queue_wait_ms, "ttsQueueWaitMs"),
+        (summary.tts_total_ms, "ttsTotalMs"),
+        (summary.tts_audio_chunks, "ttsAudioChunks"),
+        (summary.tts_audio_bytes, "ttsAudioBytes"),
+    ):
+        _append_electron_metric_once(target, fields, seen, field_name)
+
+
+def _append_electron_metric_once(
+    values: list[float],
+    fields: dict[str, str],
+    seen: set[tuple[str, str, str, str]],
+    field_name: str,
+) -> None:
+    raw = fields.get(field_name)
+    if raw is None:
+        return
+    key = (
+        field_name,
+        fields.get("segmentId", ""),
+        fields.get("revision", ""),
+        raw,
+    )
+    if key in seen:
+        return
+    seen.add(key)
+    _append_float(values, raw)
+
+
 def _append_float(values: list[float], raw: str | None) -> None:
     if raw is None:
         return
@@ -251,6 +337,7 @@ def _merge(target: RealtimeLogSummary, source: RealtimeLogSummary) -> None:
     target.simul_wait += source.simul_wait
     target.simul_actions.update(source.simul_actions)
     target.caption_events.update(source.caption_events)
+    target.agent_to_renderer_ms.extend(source.agent_to_renderer_ms)
     target.avg_audio_transport_ms.extend(source.avg_audio_transport_ms)
     target.p95_audio_transport_ms.extend(source.p95_audio_transport_ms)
     target.avg_asr_queue_wait_ms.extend(source.avg_asr_queue_wait_ms)

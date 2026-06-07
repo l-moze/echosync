@@ -37,7 +37,10 @@ def test_capabilities_report_defaults_and_provider_readiness() -> None:
     assert _provider(capabilities["asr_providers"], "funasr")["status"] == "ready"
     assert _provider(capabilities["asr_providers"], "voxtral")["status"] == "missing_key"
     assert _provider(capabilities["asr_providers"], "deepgram")["status"] == "missing_key"
+    assert not any(provider["id"] == "qwen-livetranslate" for provider in capabilities["asr_providers"])
     assert _provider(capabilities["translation_providers"], "deepseek")["status"] == "missing_key"
+    assert _provider(capabilities["translation_providers"], "qwen-livetranslate")["kind"] == "translation"
+    assert _provider(capabilities["translation_providers"], "qwen-livetranslate")["status"] == "missing_key"
     assert _provider(capabilities["tts_providers"], "disabled")["status"] == "ready"
     assert _provider(capabilities["tts_providers"], "edge-tts")["status"] == "ready"
     assert _provider(capabilities["tts_providers"], "elevenlabs")["status"] == "missing_key"

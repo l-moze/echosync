@@ -370,6 +370,7 @@ function registerIpc() {
     log.info("[audio:start] 收到桌面采集请求", {
       asrLatencyMode: request.asrLatencyMode,
       asrProvider: request.asrProvider ?? "server-default",
+      endToEndSourceBackfill: request.endToEndSourceBackfill ?? true,
       sessionId,
       sourceId,
       sourceLang: request.sourceLang,

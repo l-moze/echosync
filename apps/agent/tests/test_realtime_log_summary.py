@@ -128,6 +128,58 @@ def test_realtime_log_summary_formats_empty_counters() -> None:
     assert "tts_started=0 tts_finished=0 tts_failed=0" in output
 
 
+def test_realtime_log_summary_parses_electron_caption_event_blocks_once() -> None:
+    summary = summarize_log_lines(
+        [
+            "[2026-06-07 23:44:23.043] [info]  [caption-event] main_forwarded {",
+            "  type: 'caption_update',",
+            "  sessionId: 'sess',",
+            "  segmentId: 'seg_1',",
+            "  revision: 2,",
+            "  agentToRendererMs: 4,",
+            "  translationQueueWaitMs: 12.5,",
+            "  translationFirstTokenMs: 140.0,",
+            "  translationLatencyMs: 210.0,",
+            "}",
+            "[2026-06-07 23:44:23.044] [info]  [caption-event] main_forwarded {",
+            "  type: 'translation.partial',",
+            "  sessionId: 'sess',",
+            "  segmentId: 'seg_1',",
+            "  revision: 2,",
+            "  agentToRendererMs: 6,",
+            "  translationQueueWaitMs: 12.5,",
+            "  translationFirstTokenMs: 140.0,",
+            "  translationLatencyMs: 210.0,",
+            "}",
+            "[2026-06-07 23:44:23.500] [debug] caption_event_renderer_received {",
+            "  type: 'tts.audio',",
+            "  sessionId: 'sess',",
+            "  segmentId: 'seg_1_tts01',",
+            "  revision: 2,",
+            "  agentToRendererMs: 3,",
+            "  ttsFirstAudioMs: 180.0,",
+            "  ttsQueueWaitMs: 8.0,",
+            "  ttsTotalMs: 360.0,",
+            "  ttsAudioChunks: 2,",
+            "  ttsAudioBytes: 8192,",
+            "}",
+        ]
+    )
+
+    assert summary.caption_events["caption_update"] == 1
+    assert summary.caption_events["translation.partial"] == 1
+    assert summary.caption_events["tts.audio"] == 1
+    assert summary.agent_to_renderer_ms == [4.0, 6.0, 3.0]
+    assert summary.queue_wait_ms == [12.5]
+    assert summary.first_token_ms == [140.0]
+    assert summary.translation_latency_ms == [210.0]
+    assert summary.tts_first_audio_ms == [180.0]
+    assert summary.tts_queue_wait_ms == [8.0]
+    assert summary.tts_total_ms == [360.0]
+    assert summary.tts_audio_chunks == [2.0]
+    assert summary.tts_audio_bytes == [8192.0]
+
+
 def test_realtime_log_summary_formats_deepseek_and_glossary_metrics() -> None:
     output = format_summary(
         summarize_log_lines(

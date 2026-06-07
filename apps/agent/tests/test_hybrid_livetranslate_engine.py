@@ -40,6 +40,32 @@ def test_hybrid_livetranslate_commits_when_source_stays_partial_until_timeout() 
     assert commits[0].metrics["qwen_livetranslate_hybrid_commit"] == 1.0
 
 
+def test_hybrid_livetranslate_commits_target_only_when_source_missing() -> None:
+    async def scenario() -> list[object]:
+        engine = SourceBackfilledLiveTranslateEngine(
+            source_transcriber=_EmptySourceTranscriber(),
+            source_timeout_ms=5,
+            target_engine=_CommittedTargetEngine(),
+            target_lang="zh-CN",
+        )
+        return [event async for event in engine.stream(_frames())]
+
+    events = asyncio.run(scenario())
+
+    commits = [event for event in events if isinstance(event, SegmentCommit)]
+    assert len(commits) == 1
+    assert commits[0].source_text == ""
+    assert commits[0].target_text == "你好。"
+
+
+class _EmptySourceTranscriber:
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for _frame in frames:
+            pass
+        if False:
+            yield
+
+
 class _SlowPartialSourceTranscriber:
     async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
         async for frame in frames:

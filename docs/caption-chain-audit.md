@@ -627,6 +627,10 @@ echosync-log-summary path\to\agent.log
 
 当前真实 Agent paced A/B 已经证明：收益不是让单次 DeepSeek TTFT 消失，也没有稳定降低 `translation_first_token_ms` / `translation_latency_ms`；当前收益是减少重复请求、半句翻译和后续回滚风险。下一刀优化必须用同样的 `real_agent_translation_benchmark` 做反转顺序 A/B，只有当两种执行顺序下 current 都稳定降低首 token、final 或字幕相对音频时间线滞后，才允许写“延迟降低”。
 
+2026-06-07 深夜优化修订：本机 Electron 日志此前无法被 `realtime_log_summary` 识别，导致真实测评只能依赖 Agent 控制台。诊断脚本现在同时解析 Electron 的 `[caption-event] main_forwarded` / `caption_event_renderer_received` 多行对象，并按 `segmentId + revision + metric` 对 `translationFirstTokenMs`、`translationQueueWaitMs`、`ttsFirstAudioMs` 等指标去重。用现有 `main.old.log + main.log` 复盘可见：`caption_events=2367`，`agent_to_renderer_ms p95=17ms`，`translation_queue_wait_ms p95≈885.6ms`，`translation_first_token_ms p95≈1162.4ms`，`tts_first_audio_ms p95≈2250.5ms`。结论是桌面转发不是当前主瓶颈，翻译请求过密和 TTS 首音仍是核心体验瓶颈。
+
+同轮实现三处保守优化，等待下一次真实 A/B 量化：第一，`CascadedInterpretationEngine` 的同段 stable refresh 默认门槛从 `1000ms/12 chars` 提升到 `1400ms/18 chars`，属于 debounce + minimum edit distance 策略，保留首个 stable 和 committed，减少短抖动修订反复打 LLM；第二，`audio.end(reason=user_stop)` 不再取消 pipeline，而是让 ASR flush、翻译和 `segment.commit` 正常 drain 后再发 `realtime.done`，避免停止时尾句停留在 draft；第三，Windows WASAPI 录音保存前会把 PCM16 WAV 按真实会话 `durationMs` 裁掉长尾数字静音，并裁剪 `activityRanges`，避免复盘音频和字幕时间线被保存证据污染。对应覆盖包括 `test_realtime_log_summary.py`、`test_cascaded_latency_contracts.py`、`test_realtime_caption_websocket_contracts.py`、WASAPI/recording/renderer visual contract 测试。
+
 2026-06-06 TTS 补充：ElevenLabs 官方延迟建议把 Flash 模型、streaming、地域就近和 voice 选择作为主要手段；Flash v2.5 的约 75ms 是模型推理时间，不等于 EchoSync 端到端首音。当前链路只把 committed 译文送入 TTS，因此 HTTP streaming 是 MVP 默认路径；WebSocket TTS 更适合 LLM 文本边生成边输入，只有当真实日志显示 `tts_first_audio_ms` 已成为主要瓶颈时再升级，避免提前引入输入流切块和音频缓冲复杂度。
 
 2026-06-07 TTS 低延迟修订：整段 committed 译文再送 TTS 的体验不达标，尤其长段会出现“字幕已到但语音等整段合成”的体感落后。当前策略改为小句级 TTS：`TtsUtteranceSplitter` 在 committed 译文进入 TTS 前优先按逗号、顿号、分号这类停顿切成短 utterance，句号和长度阈值只做兜底；每个 utterance 使用独立 `segment_id_ttsNN` 推送 `tts.audio`，避免前端把多个小句追加到同一个 MediaSource 流里。为满足“视频连续说话时一句接一句”的体验，TTS worker 不再等待前一句完整合成后才请求后一句；它会先发空音频占位锁定顺序，再按 `ECHOSYNC_TTS_PREFETCH_CONCURRENCY` 受限并发预合成后续小句，Desktop 仍根据 segment/rev 串行播放，避免抢话。用户停止或客户端断开时 pipeline 取消会同步取消 TTS worker，减少停止后继续播报。默认播报语速略快：`EDGE_TTS_RATE=+15%`、`ELEVENLABS_SPEED=1.15`，先用供应商原生语速参数，不在本地重采样音频。真实优化效果必须继续看 `tts_first_audio_ms`、`tts_queue_wait_ms`、`tts_total_ms`、`tts_utterance_count` 和 Desktop 播放队列积压；如果小句级 HTTP streaming + 预合成仍追不上，再考虑 ElevenLabs WebSocket TTS 或端到端语音翻译。
@@ -649,7 +653,7 @@ echosync-log-summary path\to\agent.log
 
 ### 断点 3：错误终止、用户停止和长静音必须分层
 **原因**：实时链路如果在 `audio.start` 时先启动 pipeline、再校验 ASR provider，mock + 真实 PCM 会先发 `realtime.error`，随后空 pipeline 正常退出又发 `realtime.done`，桌面端会看到矛盾状态。另一个容易混淆的边界是：`audio.final` / Silero endpoint 只表达语音停顿，不表达用户停止；视频暂停造成的长静音也不是用户停止。
-**处理**：Agent 现在先应用会话级 ASR 配置和音频源校验，再启动 pipeline。`realtime.error` 表示非停止态终止，启动失败、provider 不匹配或运行中 pipeline 异常不再追加 `realtime.done`；`audio.end(reason="user_stop")` 是用户主动停止，停止期间晚到的 provider exception 只进日志，不发布到 caption hub。Voxtral 云端 realtime 路径已补 PCM silence keepalive，避免视频暂停/长静音被 provider timeout 误报成字幕错误。
+**处理**：Agent 现在先应用会话级 ASR 配置和音频源校验，再启动 pipeline。`realtime.error` 表示非停止态终止，启动失败、provider 不匹配或运行中 pipeline 异常不再追加 `realtime.done`；`audio.end(reason="user_stop")` 是用户主动停止输入，不等于取消推理，后端会先给 ASR/翻译/TTS 机会 drain 到最终 `segment.commit` 和 `realtime.done`。只有 WebSocket `client_disconnect` 才取消 pipeline。Voxtral 云端 realtime 路径已补 PCM silence keepalive，避免视频暂停/长静音被 provider timeout 误报成字幕错误。
 
 ### 断点 4：控制窗设置和字幕窗启动必须共享同一会话偏好
 **原因**：控制窗和字幕悬浮窗是两个独立 renderer。若 ASR、翻译、TTS、语言方向和音频源只保存在各自 React state 中，用户在控制窗选择 `edge-tts` 或 ElevenLabs 后，再从字幕窗按钮启动/切换音源，字幕窗会使用自己的默认 `server-default`，最终继承 Agent 默认 `tts_provider=disabled`，表现为“前端已选择 TTS，但最新会话没有任何 `tts.audio`”。
@@ -660,12 +664,12 @@ echosync-log-summary path\to\agent.log
 | 文件 | 变更 |
 |------|------|
 | `transport/caption_ws.py` | `run_caption_server()` 传 producer；WS handler 每次连接重新运行 producer |
-| `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；支持 `audio.final` 控制帧；`realtime.error` 与 `realtime.done` 保持互斥；`user_stop` 后的 provider late exception 不发布到字幕面板 |
+| `transport/realtime_ws.py` | 完整实时链路 WS 路由；启动前校验 mock/真实音频组合；支持 `audio.final` 控制帧；`realtime.error` 与 `realtime.done` 保持互斥；`user_stop` 优雅 drain，`client_disconnect` 才取消 pipeline |
 | `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数，订阅字幕事件和可选 `tts.audio` |
 | `services/media/ffmpeg_audio_source.py` | MP4/音频文件通过 ffmpeg stdout 流式读取并在线分帧，避免整文件解码阻塞首帧 |
 | `services/asr/factory.py` | FunASR 与 Voxtral 都按 `asr_latency_mode` 映射实际推理窗口/目标延迟 |
 | `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；Windows 系统声音启动 WASAPI sidecar 并排除 EchoSync 进程树；应用退出时清理重连计时器并关闭 WS |
-| `desktop/src/main/wasapi-sidecar-client.ts` | 启动 Rust sidecar，解析 stdout length-prefixed PCM binary frame，向 Agent 发送 `device_id=wasapi:exclude-process-tree:<pid>` 的 `audio.start`，并记录 sidecar JSONL metrics |
+| `desktop/src/main/wasapi-sidecar-client.ts` | 启动 Rust sidecar，解析 stdout length-prefixed PCM binary frame，向 Agent 发送 `device_id=wasapi:exclude-process-tree:<pid>` 的 `audio.start`；停止时先转发剩余 PCM，再发送 `audio.end` 并等待 `realtime.done`；记录 sidecar JSONL metrics |
 | `desktop/src/renderer/realtime-audio-client.ts` | 麦克风真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame + `audio.final` 控制帧；只在用户显式选择时覆盖 ASR/翻译/TTS provider；系统声不再由 renderer 采集 |
 | `desktop/src/shared/session-preferences.ts` | 控制窗和字幕窗共享同一会话偏好，避免从字幕窗启动时丢失控制窗选择的 TTS/ASR/翻译方案 |
 | `wasapi-sidecar/src/main.rs` | WASAPI Application Loopback 采集系统声，默认 `exclude-process-tree` 排除 EchoSync 进程树；本地 downmix/resample/PCM16 编码并输出每秒延迟 metrics |

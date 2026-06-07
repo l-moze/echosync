@@ -221,7 +221,7 @@ def with_session_asr_overrides(
     已知 provider 和延迟模式。
     """
 
-    updates: dict[str, str] = {}
+    updates: dict[str, object] = {}
     if asr_provider is not None:
         provider = str(asr_provider).strip().lower()
         if provider == "qwen-livetranslate":

@@ -4030,12 +4030,13 @@ function ZonedCaptionLane({
   const selectedChunks = lines.length > 0
     ? selectZonedCaptionLaneChunks(kind, lines, zonedStyle)
     : [];
-  const chunks = selectedChunks.length > 0
+  const chunks = lines.length > 0
     ? selectedChunks
     : [createZonedCaptionFallbackChunk(fallbackText)];
   const streamState = chunks.at(-1)?.state ?? "interim";
-  const isPlaceholder = chunks.every((chunk) => chunk.isPlaceholder);
-  const layoutKey = chunks.map((chunk) => `${chunk.key}:${chunk.text.length}`).join("|");
+  const isPlaceholder = chunks.length > 0 && chunks.every((chunk) => chunk.isPlaceholder);
+  const itemKey = chunks.map((chunk) => `${chunk.key}:${chunk.text.length}`).join("|");
+  const layoutKey = chunks.map((chunk) => `${chunk.key}:${chunk.text.length}:${zonedCaptionTextFingerprint(chunk.text)}`).join("|");
   useZonedCaptionLaneViewport(laneRef, streamRef, `${kind}:${layoutKey}`);
 
   return (
@@ -4046,7 +4047,7 @@ function ZonedCaptionLane({
     >
       <article
         className={`zonedCaptionStream ${streamState} current${isPlaceholder ? " placeholderText" : ""}`}
-        data-caption-item-key={layoutKey || "placeholder"}
+        data-caption-item-key={itemKey || "placeholder"}
         ref={streamRef}
       >
         <p
@@ -4187,6 +4188,14 @@ function resolveZonedCaptionLineHeight(style: CSSStyleDeclaration) {
 function cssPixelValue(value: string) {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function zonedCaptionTextFingerprint(text: string) {
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash * 31) + text.charCodeAt(index)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }
 
 type ZonedCaptionLaneChunk = {
