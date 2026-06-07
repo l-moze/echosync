@@ -34,6 +34,11 @@ LOOPBACK_TTS_GUARD_MESSAGE = (
     "安全限制：Windows 系统声音采集会包含扬声器输出，不能同时启用语音播报（TTS）。"
     "请将语音播报设为 disabled，或改用麦克风输入。"
 )
+REALTIME_METRICS_FIRST_LOG_INTERVAL_SEC = 1.0
+REALTIME_METRICS_LOG_INTERVAL_SEC = 10.0
+REALTIME_METRICS_WARN_TRANSPORT_P95_MS = 80.0
+REALTIME_METRICS_WARN_ASR_QUEUE_WAIT_P95_MS = 200.0
+REALTIME_METRICS_WARN_QUEUE_DEPTH = 8
 
 
 def create_realtime_router(
@@ -434,7 +439,8 @@ class _RealtimeWebSocketSession:
             session_id=self.session_id,
             trace_id=self.trace_id,
         )
-        logger.info(
+        logger.log(
+            _realtime_transport_metrics_log_level(snapshot),
             "audio_stream_metrics session_id=%s trace_id=%s frames=%d audio_ms=%d bytes=%d "
             "avg_transport_ms=%.1f p95_transport_ms=%.1f "
             "avg_asr_queue_wait_ms=%.1f p95_asr_queue_wait_ms=%.1f "
@@ -540,9 +546,16 @@ class _RealtimeTransportMetricsSnapshot:
 
 
 class _RealtimeTransportMetrics:
-    def __init__(self, *, log_interval_sec: float = 1.0) -> None:
+    def __init__(
+        self,
+        *,
+        log_interval_sec: float = REALTIME_METRICS_LOG_INTERVAL_SEC,
+        first_log_interval_sec: float = REALTIME_METRICS_FIRST_LOG_INTERVAL_SEC,
+    ) -> None:
         self.log_interval_sec = log_interval_sec
+        self.first_log_interval_sec = first_log_interval_sec
         self.last_log_at = time.perf_counter()
+        self.has_logged = False
         self.frames = 0
         self.audio_ms = 0
         self.bytes_received = 0
@@ -566,7 +579,8 @@ class _RealtimeTransportMetrics:
         self.transport_latencies_ms.append(_transport_latency_ms_from_low32(sent_at_ms, now_ms))
 
     def should_log(self) -> bool:
-        return time.perf_counter() - self.last_log_at >= self.log_interval_sec
+        interval_sec = self.log_interval_sec if self.has_logged else self.first_log_interval_sec
+        return time.perf_counter() - self.last_log_at >= interval_sec
 
     def snapshot_and_reset(
         self,
@@ -589,6 +603,7 @@ class _RealtimeTransportMetrics:
             queue_depth=queue_depth,
         )
         self.last_log_at = time.perf_counter()
+        self.has_logged = True
         self.frames = 0
         self.audio_ms = 0
         self.bytes_received = 0
@@ -596,6 +611,18 @@ class _RealtimeTransportMetrics:
         self.transport_latencies_ms = []
         self.asr_queue_waits_ms = []
         return snapshot
+
+
+def _realtime_transport_metrics_log_level(
+    snapshot: _RealtimeTransportMetricsSnapshot,
+) -> int:
+    if snapshot.p95_transport_latency_ms >= REALTIME_METRICS_WARN_TRANSPORT_P95_MS:
+        return logging.WARNING
+    if snapshot.p95_asr_queue_wait_ms >= REALTIME_METRICS_WARN_ASR_QUEUE_WAIT_P95_MS:
+        return logging.WARNING
+    if max(snapshot.max_queue_depth, snapshot.queue_depth) >= REALTIME_METRICS_WARN_QUEUE_DEPTH:
+        return logging.WARNING
+    return logging.INFO
 
 
 def _avg(values: list[float]) -> float:

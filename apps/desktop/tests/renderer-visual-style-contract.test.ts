@@ -274,6 +274,10 @@ describe("renderer visual style contract", () => {
     expect(overlayWindowSource).toContain("setSubtitleStyleWindowVisible(true)");
     expect(rendererSource).toContain("type OverlayChromeMenu");
     expect(overlayWindowSource).toContain("toggleChromeMenu");
+    expect(overlayWindowSource).toContain("minimizeOverlay");
+    expect(overlayWindowSource).toContain("requestOverlayClose");
+    expect(overlayWindowSource).toContain("OverlayExitConfirmDialog");
+    expect(overlayWindowSource).not.toContain("onClose={() => void window.echosyncDesktop?.setOverlayVisible(false)}");
     expect(overlayToolbarSource).toContain("overlayMenuTrigger");
     expect(overlayToolbarSource).toContain('activeMenu === "display"');
     expect(overlayToolbarSource).toContain("overlayDropdown top");
@@ -287,6 +291,9 @@ describe("renderer visual style contract", () => {
     expect(overlaySessionSource).toContain("onContentModeChange(mode.id)");
     expect(overlaySessionSource).toContain('activeMenu === "plan"');
     expect(overlaySessionSource).toContain('activeMenu === "language"');
+    expect(overlaySessionSource).toContain("function OverlayBottomMenuDock");
+    expect(overlaySessionSource).toContain("captionMenuDock");
+    expect(overlaySessionSource).toContain("dockedOverlayMenu");
     expect(overlaySessionSource).toContain("onPlanSelect(option.id)");
     expect(overlaySessionSource).toContain("onLanguageDirectionSelect(option.id)");
     expect(overlaySessionSource).toContain("languageDirectionOptions.map");
@@ -299,6 +306,11 @@ describe("renderer visual style contract", () => {
     expect(cssRule(".overlaySessionBar")).toContain("grid-template-columns: auto auto max-content minmax(96px, max-content) auto max-content");
     expect(cssRule(".overlayMenuTrigger")).toContain("min-height: 30px");
     expect(cssRule(".overlayDropdown")).toContain("animation: overlayMenuIn");
+    expect(cssRule(".floatingCaption.withChrome.hasBottomMenu")).toContain("grid-template-rows: auto minmax(0, 1fr) auto auto");
+    expect(cssRule(".captionMenuDock")).toContain("grid-row: 3");
+    expect(cssRule(".captionMenuDock .dockedOverlayMenu")).toContain("position: static");
+    expect(cssRule(".floatingCaption.withChrome.hasBottomMenu > .captionBottomChrome")).toContain("grid-row: 4");
+    expect(cssRule(".overlayExitConfirmScrim")).toContain("position: absolute");
     expect(cssRule(".captionContentSwitch")).toContain("max-width: 100%");
     expect(cssRule(".floatingCaption")).toContain("user-select: none");
     expect(cssRule(".floatingCaption")).toContain("-webkit-user-select: none");

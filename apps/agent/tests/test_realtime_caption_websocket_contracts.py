@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from dataclasses import replace
 from typing import Any
 
@@ -18,7 +19,9 @@ from echosync_agent.transport.realtime_ws import (
     AUDIO_FRAME_HEADER,
     AUDIO_FRAME_MAGIC,
     _RealtimeTransportMetrics,
+    _RealtimeTransportMetricsSnapshot,
     _RealtimeWebSocketSession,
+    _realtime_transport_metrics_log_level,
     _transport_latency_ms_from_low32,
 )
 
@@ -227,6 +230,68 @@ def test_realtime_transport_metrics_aggregates_and_resets_audio_frames() -> None
     assert metrics.frames == 0
     assert metrics.audio_ms == 0
     assert metrics.asr_queue_waits_ms == []
+
+
+def test_realtime_transport_metrics_throttles_normal_metric_logs_after_first_window() -> None:
+    metrics = _RealtimeTransportMetrics(log_interval_sec=10.0, first_log_interval_sec=1.0)
+
+    assert metrics.should_log() is False
+
+    metrics.last_log_at -= 1.1
+    assert metrics.should_log() is True
+    metrics.snapshot_and_reset(queue_depth=0, session_id="sess_metrics")
+
+    metrics.last_log_at -= 2.0
+    assert metrics.should_log() is False
+
+    metrics.last_log_at -= 8.1
+    assert metrics.should_log() is True
+
+
+def test_realtime_transport_metrics_raises_log_level_for_unhealthy_windows() -> None:
+    healthy = _RealtimeTransportMetricsSnapshot(
+        session_id="sess_metrics",
+        trace_id="sess_metrics",
+        frames=13,
+        audio_ms=1040,
+        bytes_received=33280,
+        avg_transport_latency_ms=1.8,
+        p95_transport_latency_ms=3.0,
+        avg_asr_queue_wait_ms=0.1,
+        p95_asr_queue_wait_ms=0.2,
+        max_queue_depth=1,
+        queue_depth=1,
+    )
+    slow_queue = _RealtimeTransportMetricsSnapshot(
+        session_id="sess_metrics",
+        trace_id="sess_metrics",
+        frames=13,
+        audio_ms=1040,
+        bytes_received=33280,
+        avg_transport_latency_ms=1.8,
+        p95_transport_latency_ms=3.0,
+        avg_asr_queue_wait_ms=180.0,
+        p95_asr_queue_wait_ms=260.0,
+        max_queue_depth=1,
+        queue_depth=1,
+    )
+    deep_queue = _RealtimeTransportMetricsSnapshot(
+        session_id="sess_metrics",
+        trace_id="sess_metrics",
+        frames=13,
+        audio_ms=1040,
+        bytes_received=33280,
+        avg_transport_latency_ms=1.8,
+        p95_transport_latency_ms=3.0,
+        avg_asr_queue_wait_ms=0.1,
+        p95_asr_queue_wait_ms=0.2,
+        max_queue_depth=9,
+        queue_depth=9,
+    )
+
+    assert _realtime_transport_metrics_log_level(healthy) == logging.INFO
+    assert _realtime_transport_metrics_log_level(slow_queue) == logging.WARNING
+    assert _realtime_transport_metrics_log_level(deep_queue) == logging.WARNING
 
 
 def test_transport_latency_uses_low_32_bit_timestamp() -> None:

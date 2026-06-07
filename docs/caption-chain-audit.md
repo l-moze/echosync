@@ -311,7 +311,7 @@ caption_lag_ms = caption_line.receivedAtMs - sessionStartedAtMs - caption_line.e
 
 | 事件名 | 触发点 | 用途 |
 |--------|--------|------|
-| `audio_stream_metrics` | Agent 实时音频入口 | 统计接收帧数、音频时长和 transport 侧吞吐。 |
+| `audio_stream_metrics` | Agent 实时音频入口 | 统计接收帧数、音频时长和 transport 侧吞吐；首条快速输出，正常链路后续 10 秒摘要一次，队列或传输异常时升为 WARNING。 |
 | `funasr_inference_chunk` | FunASR 适配器每次模型调用 | 统计一次 ASR 推理吃掉多少音频、聚合了多少传输帧、是否 endpoint final、ASR RTF。 |
 | `funasr_semantic_boundary` | FunASR soft/hard/stream-end endpoint | 判断 endpoint 来自上游静音、强制 hard timeout 还是流结束。 |
 | `translation_checkpoint_queued` | Engine 收到 stable/committed checkpoint | 判断翻译任务是否被 latest-wins 合并或排队；只有显式开启 partial 实验开关时，partial 才会进入这里。 |

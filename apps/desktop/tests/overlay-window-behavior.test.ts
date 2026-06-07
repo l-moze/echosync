@@ -78,6 +78,13 @@ describe("悬浮字幕窗主进程行为", () => {
     expect(state.ignoreMouse).toBe(false);
   });
 
+  it("恢复字幕窗时必须先还原 minimized 状态再显示", () => {
+    expect(mainSource).toContain("function revealWindowInactive");
+    expect(mainSource).toContain("window.isMinimized()");
+    expect(mainSource).toContain("window.restore()");
+    expect(mainSource).toContain("revealWindowInactive(window);");
+  });
+
   it("设置和控制 layer 必须强制可交互，回默认态再按锁定恢复穿透", () => {
     const controlsState = reduceOverlayWindowState(
       { visible: true, pinned: false, locked: true, ignoreMouse: true },
