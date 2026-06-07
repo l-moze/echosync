@@ -49,6 +49,28 @@ describe("字幕显示视觉合成器", () => {
     expect(third.lines[0].targetText).toBe("测试");
   });
 
+  it("active 实时行落后很多时会追帧，不把所有旧字符排成长队慢慢播放", () => {
+    const targetText = "这是一个正在高速流式返回的实时字幕片段，需要优先跟上当前视频节奏，而不是逐字偿还旧动画队列。";
+    let selection = selectDisplayCaptionLines(
+      createInitialCaptionDisplayBuffer(),
+      [line({ id: "seg_live", sourceText: "Streaming subtitle backlog test", targetText })],
+      1000
+    );
+
+    expect(selection.lines[0].targetText).toBe("这");
+
+    for (let tick = 1; tick <= 8; tick += 1) {
+      selection = selectDisplayCaptionLines(
+        selection.buffer,
+        [line({ id: "seg_live", sourceText: "Streaming subtitle backlog test", targetText })],
+        1000 + tick * 24
+      );
+    }
+
+    expect(selection.lines[0].targetText.length).toBeGreaterThan(24);
+    expect(selection.displayLag.max).toBeLessThanOrEqual(24);
+  });
+
   it("同一 segment 修订时保留公共前缀，只让新尾部进入可见队列", () => {
     const buffer: CaptionDisplayBuffer = {
       entries: {
@@ -153,6 +175,53 @@ describe("字幕显示视觉合成器", () => {
     expect(presentation.activeLine?.id).toBe("seg_prev");
     expect(presentation.settlingLines.map((settlingLine) => settlingLine.id)).toEqual(["seg_prev"]);
     expect(presentation.historyLines).toEqual([]);
+  });
+
+  it("上一句驻留超过前台保护时间后，新 active 行接管主字幕，避免旧 readable 行阻塞实时输出", () => {
+    const committed = selectDisplayCaptionLines(
+      createInitialCaptionDisplayBuffer(),
+      [
+        line({ id: "seg_prev", sourceText: "The previous sentence.", targetText: "上一句。", state: "locked" }),
+        line({ id: "seg_next", sourceText: "And now", targetText: "", state: "interim" })
+      ],
+      1000
+    );
+    const later = selectDisplayCaptionLines(
+      committed.buffer,
+      [
+        line({ id: "seg_prev", sourceText: "The previous sentence.", targetText: "上一句。", state: "locked" }),
+        line({ id: "seg_next", sourceText: "And now we continue.", targetText: "", state: "interim" })
+      ],
+      2600
+    );
+    const presentation = selectDisplayCaptionPresentation(later, "sentencePair");
+
+    expect(presentation.activeLine?.id).toBe("seg_next");
+    expect(presentation.settlingLines.map((settlingLine) => settlingLine.id)).toEqual(["seg_prev"]);
+  });
+
+  it("多个 readable 行同时存在时，只让最近刚提交的句子短暂占主字幕位", () => {
+    const first = selectDisplayCaptionLines(
+      createInitialCaptionDisplayBuffer(),
+      [
+        line({ id: "seg_old", sourceText: "Old sentence.", targetText: "较早的一句。", state: "locked" }),
+        line({ id: "seg_recent", sourceText: "Recent sentence.", targetText: "刚提交的一句。", state: "locked" }),
+        line({ id: "seg_live", sourceText: "Live", targetText: "", state: "interim" })
+      ],
+      1000
+    );
+    const later = selectDisplayCaptionLines(
+      first.buffer,
+      [
+        line({ id: "seg_old", sourceText: "Old sentence.", targetText: "较早的一句。", state: "locked" }),
+        line({ id: "seg_recent", sourceText: "Recent sentence.", targetText: "刚提交的一句。", state: "locked" }),
+        line({ id: "seg_live", sourceText: "Live text is arriving.", targetText: "", state: "interim" })
+      ],
+      2100
+    );
+    const presentation = selectDisplayCaptionPresentation(later, "sentencePair");
+
+    expect(presentation.activeLine?.id).toBe("seg_recent");
   });
 
   it("长双语字幕会按内容长度延长驻留时间，避免读到一半就上滚", () => {

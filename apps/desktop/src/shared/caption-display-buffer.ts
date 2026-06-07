@@ -31,7 +31,9 @@ export type CaptionDisplayBuffer = {
 export type CaptionDisplaySelection = {
   buffer: CaptionDisplayBuffer;
   desiredLines: CaptionLine[];
+  displayLag: CaptionDisplayLag;
   lines: CaptionLine[];
+  nowMs: number;
   pendingLineIds: string[];
 };
 
@@ -39,6 +41,13 @@ export type CaptionDisplayPresentation = {
   activeLine?: CaptionLine;
   settlingLines: CaptionLine[];
   historyLines: CaptionLine[];
+};
+
+export type CaptionDisplayLag = {
+  max: number;
+  sourceMax: number;
+  targetMax: number;
+  total: number;
 };
 
 type LaneTiming = {
@@ -67,6 +76,11 @@ const SOURCE_READ_MS_PER_GRAPHEME = 34;
 const TARGET_READ_MS_PER_GRAPHEME = 56;
 const SOURCE_READ_MS_CAP = 3200;
 const TARGET_READ_MS_CAP = 5200;
+const READABLE_FOREGROUND_GRACE_MS = 1300;
+const LIVE_SOURCE_CATCH_UP_TRIGGER = 42;
+const LIVE_TARGET_CATCH_UP_TRIGGER = 28;
+const LIVE_SOURCE_MAX_LAG = 34;
+const LIVE_TARGET_MAX_LAG = 18;
 const graphemeSegmenter = createGraphemeSegmenter();
 const GRAPHEME_CACHE_LIMIT = 2048;
 const graphemeCache = new Map<string, string[]>();
@@ -84,11 +98,18 @@ export function selectDisplayCaptionLines(
   const nextEntries: Record<string, CaptionDisplayEntry> = {};
   const visibleLines: CaptionLine[] = [];
   const pendingLineIds: string[] = [];
+  const displayLag: CaptionDisplayLag = {
+    max: 0,
+    sourceMax: 0,
+    targetMax: 0,
+    total: 0
+  };
 
   for (const line of desiredLines) {
     const previous = buffer.entries[line.id];
     const entry = updateEntry(previous, line, nowMs);
     nextEntries[line.id] = entry;
+    collectDisplayLag(displayLag, entry);
 
     const visibleLine = withVisibleText(line, entry);
     visibleLines.push(visibleLine);
@@ -105,7 +126,9 @@ export function selectDisplayCaptionLines(
   return {
     buffer: { entries: nextEntries },
     desiredLines,
+    displayLag,
     lines: visibleLines,
+    nowMs,
     pendingLineIds
   };
 }
@@ -124,8 +147,11 @@ export function selectDisplayCaptionPresentation(
     return entry?.phase === "past" && hasVisibleTextForMode(line, displayMode);
   });
 
+  const activeLine = selectActiveCaptionLineForDisplay(activeCandidates, displayMode);
+  const foregroundSettlingLine = selectForegroundSettlingLine(settlingLines, selection, activeLine, displayMode);
+
   return {
-    activeLine: settlingLines[0] ?? selectActiveCaptionLineForDisplay(activeCandidates, displayMode),
+    activeLine: foregroundSettlingLine ?? activeLine,
     settlingLines,
     historyLines
   };
@@ -199,7 +225,7 @@ function updateLane(
   const revisedUntilMs = revised ? nowMs + DEFAULT_TIMING.revisionDecayMs : previous.revisedUntilMs;
   const desiredTextForDisplay = selectDesiredTextForDisplay(previous, desiredText, flush, revised);
   if (desiredText === previous.desiredText) {
-    const visibleText = advanceVisibleText(previous.visibleText, desiredTextForDisplay, previous.lastTypedAtMs, nowMs, lane);
+    const visibleText = advanceVisibleText(previous.visibleText, desiredTextForDisplay, previous.lastTypedAtMs, nowMs, lane, !flush);
     return {
       desiredText,
       visibleText,
@@ -210,7 +236,7 @@ function updateLane(
 
   const commonPrefix = longestCommonPrefix(previous.visibleText, desiredTextForDisplay);
   const stablePrefix = previous.visibleText.slice(0, commonPrefix);
-  const visibleText = advanceVisibleText(stablePrefix, desiredTextForDisplay, previous.lastTypedAtMs, nowMs, lane);
+  const visibleText = advanceVisibleText(stablePrefix, desiredTextForDisplay, previous.lastTypedAtMs, nowMs, lane, !flush);
   return {
     desiredText: desiredTextForDisplay,
     visibleText,
@@ -224,7 +250,8 @@ function advanceVisibleText(
   desiredText: string,
   lastTypedAtMs: number,
   nowMs: number,
-  lane: CaptionDisplayLaneName
+  lane: CaptionDisplayLaneName,
+  liveCatchUp: boolean
 ): string {
   if (currentVisibleText === desiredText) {
     return currentVisibleText;
@@ -247,11 +274,28 @@ function advanceVisibleText(
   const interval = lane === "source" ? DEFAULT_TIMING.sourceIntervalMs : DEFAULT_TIMING.targetIntervalMs;
   const maxPerTick = lane === "source" ? DEFAULT_TIMING.maxSourceCharsPerTick : DEFAULT_TIMING.maxTargetCharsPerTick;
   const elapsedBudget = Math.floor(elapsedMs / interval);
-  if (elapsedBudget <= 0) {
+  const typewriterBudget = elapsedBudget <= 0 ? 0 : Math.min(elapsedBudget, maxPerTick, missing);
+  const catchUpLength = liveCatchUp ? calculateLiveCatchUpLength(desiredChars.length, currentChars.length, lane) : currentChars.length;
+  const nextLength = Math.max(currentChars.length + typewriterBudget, catchUpLength);
+  if (nextLength <= currentChars.length) {
     return currentVisibleText;
   }
-  const budget = Math.min(elapsedBudget, maxPerTick, missing);
-  return takeGraphemeSegments(desiredChars, currentChars.length + budget);
+  return takeGraphemeSegments(desiredChars, Math.min(nextLength, desiredChars.length));
+}
+
+function calculateLiveCatchUpLength(
+  desiredLength: number,
+  currentLength: number,
+  lane: CaptionDisplayLaneName
+): number {
+  const missing = desiredLength - currentLength;
+  const trigger = lane === "source" ? LIVE_SOURCE_CATCH_UP_TRIGGER : LIVE_TARGET_CATCH_UP_TRIGGER;
+  if (missing <= trigger) {
+    return currentLength;
+  }
+
+  const maxLag = lane === "source" ? LIVE_SOURCE_MAX_LAG : LIVE_TARGET_MAX_LAG;
+  return Math.max(currentLength, desiredLength - maxLag);
 }
 
 function initialGraphemeBudget(lane: CaptionDisplayLaneName): number {
@@ -312,6 +356,56 @@ function calculateReadableDwellMs(sourceText: string, targetText: string): numbe
   const sourceReadMs = Math.min(SOURCE_READ_MS_CAP, graphemes(sourceText).length * SOURCE_READ_MS_PER_GRAPHEME);
   const targetReadMs = Math.min(TARGET_READ_MS_CAP, graphemes(targetText).length * TARGET_READ_MS_PER_GRAPHEME);
   return clamp(READABLE_DWELL_BASE_MS + Math.max(sourceReadMs, targetReadMs), READABLE_DWELL_MIN_MS, READABLE_DWELL_MAX_MS);
+}
+
+function selectForegroundSettlingLine(
+  settlingLines: CaptionLine[],
+  selection: CaptionDisplaySelection,
+  activeLine: CaptionLine | undefined,
+  displayMode: CaptionLineDisplayMode
+): CaptionLine | undefined {
+  if (!activeLine || !hasVisibleTextForMode(activeLine, displayMode)) {
+    return selectNewestSettlingLine(settlingLines, selection);
+  }
+
+  return selectNewestSettlingLine(settlingLines, selection, READABLE_FOREGROUND_GRACE_MS);
+}
+
+function selectNewestSettlingLine(
+  settlingLines: CaptionLine[],
+  selection: CaptionDisplaySelection,
+  maxAgeMs?: number
+): CaptionLine | undefined {
+  let selectedLine: CaptionLine | undefined;
+  let selectedSettledAtMs = Number.NEGATIVE_INFINITY;
+  for (const line of settlingLines) {
+    const settledAtMs = selection.buffer.entries[line.id]?.settledAtMs;
+    if (settledAtMs === null || settledAtMs === undefined) {
+      continue;
+    }
+    if (maxAgeMs !== undefined && selection.nowMs - settledAtMs > maxAgeMs) {
+      continue;
+    }
+    if (settledAtMs >= selectedSettledAtMs) {
+      selectedLine = line;
+      selectedSettledAtMs = settledAtMs;
+    }
+  }
+
+  return selectedLine;
+}
+
+function collectDisplayLag(displayLag: CaptionDisplayLag, entry: CaptionDisplayEntry) {
+  const sourceLag = laneDisplayLag(entry.source);
+  const targetLag = laneDisplayLag(entry.target);
+  displayLag.sourceMax = Math.max(displayLag.sourceMax, sourceLag);
+  displayLag.targetMax = Math.max(displayLag.targetMax, targetLag);
+  displayLag.max = Math.max(displayLag.max, sourceLag, targetLag);
+  displayLag.total += sourceLag + targetLag;
+}
+
+function laneDisplayLag(lane: CaptionDisplayLane): number {
+  return Math.max(graphemes(lane.desiredText).length - graphemes(lane.visibleText).length, 0);
 }
 
 function clamp(value: number, min: number, max: number): number {

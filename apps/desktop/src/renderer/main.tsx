@@ -3081,16 +3081,20 @@ function OverlayWindow({
     const nowMs = Date.now();
     const selectDisplayMs = displaySelectionResult.selectDisplayMs;
     const presentationMs = displayPresentationResult.presentationMs;
+    const metricLogAgeMs = nowMs - overlayRenderMetricsLoggedAtRef.current;
     const shouldLog =
-      selectDisplayMs >= 2 ||
-      presentationMs >= 2 ||
-      nowMs - overlayRenderMetricsLoggedAtRef.current >= 1000;
+      ((selectDisplayMs >= 2 || presentationMs >= 2 || displaySelection.displayLag.max >= 16) && metricLogAgeMs >= 250) ||
+      metricLogAgeMs >= 1000;
     if (!shouldLog) {
       return;
     }
     overlayRenderMetricsLoggedAtRef.current = nowMs;
     log.debug("caption_overlay_render_metrics", {
       linesCount: lines.length,
+      displayLagMax: displaySelection.displayLag.max,
+      displayLagSourceMax: displaySelection.displayLag.sourceMax,
+      displayLagTargetMax: displaySelection.displayLag.targetMax,
+      displayLagTotal: displaySelection.displayLag.total,
       pendingLineCount: displaySelection.pendingLineIds.length,
       presentationMs: roundMetric(presentationMs),
       selectDisplayMs: roundMetric(selectDisplayMs),
@@ -3099,6 +3103,10 @@ function OverlayWindow({
     });
   }, [
     displayPresentationResult.presentationMs,
+    displaySelection.displayLag.max,
+    displaySelection.displayLag.sourceMax,
+    displaySelection.displayLag.targetMax,
+    displaySelection.displayLag.total,
     displaySelection.pendingLineIds.length,
     displaySelectionResult.selectDisplayMs,
     lines.length,

@@ -278,9 +278,17 @@ type RenderToken = {
 - 英文：20-35ms / grapheme，按词边界可轻微加速。
 - 中文：30-50ms / grapheme。
 - 如果 backlog 很大，允许每帧吐 2-4 个 grapheme 追赶，但不要整段瞬移。
+- 实时 active 行不能严格按 FIFO 偿还全部旧字符；当 source / target lane 的可见文本落后 desired 文本超过阈值时，必须进入 catch-up 模式，跳到接近最新尾部并保留少量可见追赶距离。否则长会话中前端会把后端已经到达的字幕排成旧字符队列，表现为“开始很跟手，越到后面越久才吐字”。
 - source lane 和 target lane 独立追赶；中文可以比英文慢半拍，但不能因为中文未到而阻塞英文生成。
 - final 到达时不能让当前块消失；可以把尚未显示完的尾部以更高预算追赶，随后进入可读驻留。
 - 用户切到复盘/历史页时可以 flush 当前队列；overlay 实时态不因 final 直接整段替换。
+
+2026-06-07 前端队列修正落地：
+
+- `caption-display-buffer` 增加 `displayLag` 指标，分别记录 source / target lane 的 desired-visible 字素积压，renderer 通过 `caption_overlay_render_metrics` 节流打印 `displayLagMax`、`displayLagSourceMax`、`displayLagTargetMax` 和 `displayLagTotal`。
+- active 行新增自适应 catch-up：译文积压超过约 28 个字素、源文积压超过约 42 个字素时，不再逐字播放全部旧队列，而是把可见文本追到最新尾部附近，保留少量打字机尾巴。
+- readable 行仍有可读驻留，但只在提交后的短前台保护期内抢主字幕位；保护期后如果新 active 行已有可见内容，主字幕切回 active，旧 readable 继续留在 settling/history 轨道。
+- 多个 readable 行同时存在时，前台保护选择最近提交的句子，避免长会话里更早的旧句重新挡住实时字幕。
 
 ### 局部修订
 
