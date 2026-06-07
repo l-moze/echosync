@@ -1,6 +1,7 @@
 export type OverlayWindowState = {
   visible: boolean;
   pinned: boolean;
+  locked: boolean;
   ignoreMouse: boolean;
 };
 
@@ -34,7 +35,9 @@ export type OverlayWindowEvent =
   | { type: "overlay.visible"; visible: boolean }
   | { type: "overlay.locked"; locked: boolean }
   | { type: "overlay.pinned"; pinned: boolean }
+  | { type: "overlay.layer"; layer: OverlayUiLayer }
   | { type: "overlay.wake_controls" }
+  | { type: "overlay.wake_settings" }
   | { type: "overlay.recentered" };
 
 export function reduceOverlayWindowState(state: OverlayWindowState, event: OverlayWindowEvent): OverlayWindowState {
@@ -43,14 +46,23 @@ export function reduceOverlayWindowState(state: OverlayWindowState, event: Overl
   }
 
   if (event.type === "overlay.locked") {
-    return { ...state, ignoreMouse: event.locked && !state.pinned };
+    return { ...state, locked: event.locked, ignoreMouse: event.locked && !state.pinned };
   }
 
   if (event.type === "overlay.pinned") {
-    return { ...state, pinned: event.pinned, ignoreMouse: event.pinned ? false : state.ignoreMouse };
+    return { ...state, pinned: event.pinned, ignoreMouse: event.pinned ? false : state.locked };
+  }
+
+  if (event.type === "overlay.layer") {
+    const interactiveLayer = event.layer === "controls" || event.layer === "settings" || event.layer === "pinned";
+    return { ...state, ignoreMouse: interactiveLayer ? false : state.locked && !state.pinned };
   }
 
   if (event.type === "overlay.wake_controls") {
+    return { ...state, visible: true, ignoreMouse: false };
+  }
+
+  if (event.type === "overlay.wake_settings") {
     return { ...state, visible: true, ignoreMouse: false };
   }
 

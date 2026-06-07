@@ -310,6 +310,82 @@ def test_realtime_session_applies_tts_provider_from_audio_start(monkeypatch: Any
     assert captured[0].tts_provider == "edge-tts"
 
 
+def test_realtime_session_rejects_windows_system_with_explicit_tts_provider(
+    monkeypatch: Any,
+) -> None:
+    build_calls: list[object] = []
+
+    def fake_build_demo_pipeline(**kwargs: Any) -> tuple[object, object]:
+        build_calls.append(kwargs["settings"])
+        return _NoopPipeline(), object()
+
+    monkeypatch.setattr(
+        "echosync_agent.transport.realtime_ws.build_demo_pipeline",
+        fake_build_demo_pipeline,
+    )
+
+    asyncio.run(_run_realtime_session_windows_system_explicit_tts_guard_test())
+
+    assert build_calls == []
+
+
+def test_realtime_session_rejects_windows_system_with_default_tts_provider(
+    monkeypatch: Any,
+) -> None:
+    build_calls: list[object] = []
+
+    def fake_build_demo_pipeline(**kwargs: Any) -> tuple[object, object]:
+        build_calls.append(kwargs["settings"])
+        return _NoopPipeline(), object()
+
+    monkeypatch.setattr(
+        "echosync_agent.transport.realtime_ws.build_demo_pipeline",
+        fake_build_demo_pipeline,
+    )
+
+    asyncio.run(_run_realtime_session_windows_system_default_tts_guard_test())
+
+    assert build_calls == []
+
+
+def test_realtime_session_allows_windows_system_when_tts_is_explicitly_disabled(
+    monkeypatch: Any,
+) -> None:
+    captured: list[Settings] = []
+
+    def fake_build_demo_pipeline(**kwargs: Any) -> tuple[object, object]:
+        captured.append(kwargs["settings"])
+        return _NoopPipeline(), object()
+
+    monkeypatch.setattr(
+        "echosync_agent.transport.realtime_ws.build_demo_pipeline",
+        fake_build_demo_pipeline,
+    )
+
+    asyncio.run(_run_realtime_session_windows_system_tts_disabled_test())
+
+    assert captured[0].tts_provider == "disabled"
+
+
+def test_realtime_session_allows_wasapi_exclude_self_with_tts_provider(
+    monkeypatch: Any,
+) -> None:
+    captured: list[Settings] = []
+
+    def fake_build_demo_pipeline(**kwargs: Any) -> tuple[object, object]:
+        captured.append(kwargs["settings"])
+        return _NoopPipeline(), object()
+
+    monkeypatch.setattr(
+        "echosync_agent.transport.realtime_ws.build_demo_pipeline",
+        fake_build_demo_pipeline,
+    )
+
+    asyncio.run(_run_realtime_session_wasapi_exclude_self_tts_allowed_test())
+
+    assert captured[0].tts_provider == "edge-tts"
+
+
 def test_session_asr_override_accepts_deepgram_provider() -> None:
     settings = replace(Settings.from_env(), asr_provider="mock")
 
@@ -735,6 +811,158 @@ async def _run_realtime_session_tts_provider_override_test() -> None:
     )
 
     await session.run()
+
+
+async def _run_realtime_session_windows_system_explicit_tts_guard_test() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="funasr",
+        translator_provider="mock",
+        tts_provider="disabled",
+        glossary_enabled=False,
+    )
+    websocket = _MemoryWebSocket(
+        [
+            {
+                "type": "audio.start",
+                "source_lang": "en",
+                "sample_rate": 16_000,
+                "channels": 1,
+                "source_kind": "windows_system",
+                "tts_provider": "edge-tts",
+            },
+        ]
+    )
+    hub = _MemoryCaptionHub()
+    session = _RealtimeWebSocketSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        session_id="sess_windows_tts_guard",
+        settings=settings,
+        caption_event_bus=hub,
+    )
+
+    await session.run()
+
+    assert [message["type"] for message in websocket.sent_messages] == ["realtime.error"]
+    assert websocket.sent_messages[0]["code"] == "preflight.loopback_tts_guard"
+    assert "安全限制" in websocket.sent_messages[0]["message"]
+    assert "语音播报" in websocket.sent_messages[0]["message"]
+    assert not [event for event in hub.events if event[0] == "realtime.done"]
+
+
+async def _run_realtime_session_windows_system_default_tts_guard_test() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="funasr",
+        translator_provider="mock",
+        tts_provider="edge-tts",
+        glossary_enabled=False,
+    )
+    websocket = _MemoryWebSocket(
+        [
+            {
+                "type": "audio.start",
+                "source_lang": "en",
+                "sample_rate": 16_000,
+                "channels": 1,
+                "source_kind": "windows_system",
+            },
+        ]
+    )
+    hub = _MemoryCaptionHub()
+    session = _RealtimeWebSocketSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        session_id="sess_windows_default_tts_guard",
+        settings=settings,
+        caption_event_bus=hub,
+    )
+
+    await session.run()
+
+    assert [message["type"] for message in websocket.sent_messages] == ["realtime.error"]
+    assert websocket.sent_messages[0]["code"] == "preflight.loopback_tts_guard"
+    assert "安全限制" in websocket.sent_messages[0]["message"]
+    assert "Windows 系统声音" in websocket.sent_messages[0]["message"]
+    assert not [event for event in hub.events if event[0] == "realtime.done"]
+
+
+async def _run_realtime_session_windows_system_tts_disabled_test() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="funasr",
+        translator_provider="mock",
+        tts_provider="edge-tts",
+        glossary_enabled=False,
+    )
+    websocket = _MemoryWebSocket(
+        [
+            {
+                "type": "audio.start",
+                "source_lang": "en",
+                "sample_rate": 16_000,
+                "channels": 1,
+                "source_kind": "windows_system",
+                "tts_provider": "disabled",
+            },
+            {"type": "audio.end"},
+        ]
+    )
+    session = _RealtimeWebSocketSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        session_id="sess_windows_tts_disabled",
+        settings=settings,
+        caption_event_bus=CaptionEventHub(),
+    )
+
+    await session.run()
+
+    assert websocket.sent_messages == [
+        {
+            "type": "realtime.done",
+            "session_id": "sess_windows_tts_disabled",
+            "trace_id": "sess_windows_tts_disabled",
+        }
+    ]
+
+
+async def _run_realtime_session_wasapi_exclude_self_tts_allowed_test() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="funasr",
+        translator_provider="mock",
+        tts_provider="disabled",
+        glossary_enabled=False,
+    )
+    websocket = _MemoryWebSocket(
+        [
+            {
+                "type": "audio.start",
+                "source_lang": "en",
+                "sample_rate": 16_000,
+                "channels": 1,
+                "source_kind": "windows_system",
+                "device_id": "wasapi:exclude-process-tree:1234",
+                "tts_provider": "edge-tts",
+            },
+            {"type": "audio.end"},
+        ]
+    )
+    session = _RealtimeWebSocketSession(
+        websocket=websocket,  # type: ignore[arg-type]
+        session_id="sess_wasapi_exclude_self_tts",
+        settings=settings,
+        caption_event_bus=CaptionEventHub(),
+    )
+
+    await session.run()
+
+    assert websocket.sent_messages == [
+        {
+            "type": "realtime.done",
+            "session_id": "sess_wasapi_exclude_self_tts",
+            "trace_id": "sess_wasapi_exclude_self_tts",
+        }
+    ]
 
 
 class _ClosingBeforeDoneWebSocket:

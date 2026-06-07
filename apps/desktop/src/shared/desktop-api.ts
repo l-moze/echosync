@@ -1,6 +1,8 @@
 import type { RealtimeEvent } from "./realtime-events";
 import type { DesktopAudioSource, DesktopAudioSourceId } from "./audio-source-catalog";
 import type { AgentCapabilities } from "./agent-capabilities";
+import type { AsrLatencyMode, AsrProviderId } from "./asr-provider-catalog";
+import type { SessionPreferencesState } from "./session-preferences";
 import type { SubtitleStyleState } from "./subtitle-style-state";
 import type {
   SessionRecord,
@@ -10,6 +12,8 @@ import type {
   SessionRecordListItem,
   SessionRecordSummary
 } from "./session-records";
+import type { TtsProviderId } from "./agent-capabilities";
+import type { TranslationProviderId } from "./translation-provider-catalog";
 
 export type DesktopWindowRole = "control" | "overlay" | "subtitle-style";
 
@@ -20,6 +24,16 @@ export type DesktopCaptureSnapshot = {
   state: DesktopCaptureState;
   message: string;
   sessionId?: string;
+};
+
+export type DesktopCaptureStartRequest = {
+  asrLatencyMode: AsrLatencyMode;
+  asrProvider?: AsrProviderId;
+  sessionId: string;
+  sourceId: DesktopAudioSourceId;
+  sourceLang?: string;
+  translationProvider?: TranslationProviderId;
+  ttsProvider?: TtsProviderId;
 };
 
 export type DesktopWindowBounds = {
@@ -43,9 +57,12 @@ export type DesktopApi = {
     getAudioUrl: (id: string) => Promise<string | null>;
   };
   getAgentCapabilities: () => Promise<AgentCapabilities>;
+  getCaptionSnapshot: (sessionId?: string) => Promise<RealtimeEvent[]>;
   listAudioSources: () => Promise<DesktopAudioSource[]>;
+  getSessionPreferences: () => Promise<SessionPreferencesState>;
+  updateSessionPreferences: (patch: Partial<SessionPreferencesState>) => Promise<SessionPreferencesState>;
   getCaptureState: () => Promise<DesktopCaptureSnapshot>;
-  startCapture: (sourceId: DesktopAudioSourceId, sessionId?: string) => Promise<DesktopCaptureSnapshot>;
+  startCapture: (request: DesktopCaptureStartRequest) => Promise<DesktopCaptureSnapshot>;
   stopCapture: () => Promise<DesktopCaptureSnapshot>;
   sendRealtimeEvent: (event: RealtimeEvent) => Promise<void>;
   setOverlayVisible: (visible: boolean) => Promise<void>;
@@ -57,6 +74,7 @@ export type DesktopApi = {
   setSubtitleStyleWindowVisible: (visible: boolean) => Promise<void>;
   updateSubtitleStyle: (patch: Partial<SubtitleStyleState>) => Promise<SubtitleStyleState>;
   wakeOverlayControls: () => Promise<void>;
+  wakeOverlaySettings: () => Promise<void>;
   recenterOverlay: () => Promise<void>;
   copyText: (text: string) => Promise<void>;
   minimize: () => Promise<void>;
@@ -65,6 +83,8 @@ export type DesktopApi = {
   onRealtimeEvent: (listener: (event: RealtimeEvent) => void) => () => void;
   onCaptureState: (listener: (snapshot: DesktopCaptureSnapshot) => void) => () => void;
   onSessionRecordChanged: (listener: (recordId: string) => void) => () => void;
+  onSessionPreferences: (listener: (preferences: SessionPreferencesState) => void) => () => void;
   onOverlayWake: (listener: () => void) => () => void;
+  onOverlaySettingsWake: (listener: () => void) => () => void;
   onSubtitleStyle: (listener: (style: SubtitleStyleState) => void) => () => void;
 };

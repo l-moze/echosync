@@ -29,6 +29,11 @@ AUDIO_FRAME_MAGIC = 0x46415345
 AUDIO_FRAME_VERSION = 1
 AUDIO_FRAME_FLAG_FINAL = 1 << 0
 AUDIO_FRAME_HEADER = struct.Struct("<IHHIIII")
+LOOPBACK_TTS_GUARD_ERROR_CODE = "preflight.loopback_tts_guard"
+LOOPBACK_TTS_GUARD_MESSAGE = (
+    "安全限制：Windows 系统声音采集会包含扬声器输出，不能同时启用语音播报（TTS）。"
+    "请将语音播报设为 disabled，或改用麦克风输入。"
+)
 
 
 def create_realtime_router(
@@ -214,10 +219,18 @@ class _RealtimeWebSocketSession:
                 self._stop_reason = "start_error"
                 await self._send_error(str(exc))
                 return True
+            if self._is_system_loopback_with_tts_feedback():
+                await self._send_error(
+                    LOOPBACK_TTS_GUARD_MESSAGE,
+                    code=LOOPBACK_TTS_GUARD_ERROR_CODE,
+                )
+                self._stop_reason = "start_error"
+                return True
             if self._is_mock_asr_receiving_real_audio():
                 await self._send_error(
                     "当前是 mock ASR，不能处理 Windows/麦克风/文件这类真实音频 PCM。"
-                    "请设置 ECHOSYNC_ASR_PROVIDER=voxtral、funasr 或 deepgram 后重启 Agent。"
+                    "请设置 ECHOSYNC_ASR_PROVIDER=voxtral、funasr、deepgram、qwen-asr "
+                    "或 qwen-livetranslate 后重启 Agent。"
                 )
                 self._stop_reason = "start_error"
                 return True
@@ -277,6 +290,20 @@ class _RealtimeWebSocketSession:
         if self.settings.asr_provider != "mock":
             return False
         return self.source_kind != AudioSourceKind.NETWORK_STREAM
+
+    def _is_system_loopback_with_tts_feedback(self) -> bool:
+        if self.source_kind != AudioSourceKind.WINDOWS_SYSTEM:
+            return False
+        if self._capture_excludes_echosync_audio():
+            return False
+        return self.settings.tts_provider != "disabled"
+
+    def _capture_excludes_echosync_audio(self) -> bool:
+        if self.device_id is None:
+            return False
+        return self.device_id.startswith("wasapi:exclude-process-tree:") or self.device_id.startswith(
+            "wasapi:include-process-tree:"
+        )
 
     def _apply_start_message(self, message: dict[str, Any]) -> None:
         self.settings = with_session_asr_overrides(
@@ -425,13 +452,15 @@ class _RealtimeWebSocketSession:
             snapshot.queue_depth,
         )
 
-    async def _send_error(self, message: str) -> None:
+    async def _send_error(self, message: str, *, code: str | None = None) -> None:
         payload = {
             "type": "realtime.error",
             "session_id": self.session_id,
             "trace_id": self.trace_id,
             "message": message,
         }
+        if code is not None:
+            payload["code"] = code
         try:
             await self.websocket.send_json(payload)
         except Exception:

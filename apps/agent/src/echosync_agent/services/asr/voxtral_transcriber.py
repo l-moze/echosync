@@ -37,6 +37,7 @@ class _FrameWindow:
     start_ms: int = 0
     end_ms: int = 0
     frame_seen: bool = False
+    last_text_end_ms: int = 0
 
 
 class VoxtralRealtimeTranscriber(Transcriber):
@@ -126,8 +127,14 @@ class VoxtralRealtimeTranscriber(Transcriber):
         window: _FrameWindow,
         stream_elapsed_ms: int,
     ) -> TranscriptSegment:
-        audio_ms = max(window.end_ms - window.start_ms, 1)
-        audio_lag_ms = max(stream_elapsed_ms - audio_ms, 0)
+        start_ms, end_ms = _text_delta_timing(
+            text=text,
+            target_streaming_delay_ms=self.config.target_streaming_delay_ms,
+            window=window,
+        )
+        provider_audio_ms = max(window.end_ms - window.start_ms, 1)
+        audio_ms = max(end_ms - start_ms, 1)
+        audio_lag_ms = max(stream_elapsed_ms - provider_audio_ms, 0)
         source_lang = window.source_lang
         if source_lang == "auto":
             source_lang = self.config.source_lang
@@ -136,8 +143,8 @@ class VoxtralRealtimeTranscriber(Transcriber):
             session_id=window.session_id,
             segment_id=new_segment_id(),
             rev=1,
-            start_ms=window.start_ms,
-            end_ms=window.end_ms,
+            start_ms=start_ms,
+            end_ms=end_ms,
             source_lang=source_lang,
             text=text,
             status=SegmentStatus.PARTIAL,
@@ -146,7 +153,8 @@ class VoxtralRealtimeTranscriber(Transcriber):
                 "asr_stream_elapsed_ms": float(stream_elapsed_ms),
                 "asr_audio_lag_ms": float(audio_lag_ms),
                 "asr_audio_window_ms": float(audio_ms),
-                "asr_stream_rtf": stream_elapsed_ms / audio_ms,
+                "asr_provider_audio_window_ms": float(provider_audio_ms),
+                "asr_stream_rtf": stream_elapsed_ms / provider_audio_ms,
             },
         )
 
@@ -194,6 +202,46 @@ def _update_window(window: _FrameWindow, frame: AudioFrame) -> None:
         window.frame_seen = True
     window.source_lang = frame.source_lang
     window.end_ms = frame.end_ms
+
+
+def _text_delta_timing(
+    *,
+    text: str,
+    target_streaming_delay_ms: int,
+    window: _FrameWindow,
+) -> tuple[int, int]:
+    provider_audio_ms = max(window.end_ms - window.start_ms, 1)
+    if provider_audio_ms <= _cumulative_window_threshold_ms(target_streaming_delay_ms):
+        window.last_text_end_ms = max(window.last_text_end_ms, window.end_ms)
+        return window.start_ms, max(window.end_ms, window.start_ms + 1)
+
+    estimated_audio_ms = _estimate_text_delta_audio_ms(text)
+    effective_end_ms = max(
+        window.start_ms + 1,
+        window.end_ms - max(target_streaming_delay_ms, 0),
+        window.last_text_end_ms + 1,
+    )
+    start_ms = max(window.last_text_end_ms, effective_end_ms - estimated_audio_ms)
+    if start_ms >= effective_end_ms:
+        start_ms = effective_end_ms - 1
+    window.last_text_end_ms = effective_end_ms
+    return start_ms, effective_end_ms
+
+
+def _cumulative_window_threshold_ms(target_streaming_delay_ms: int) -> int:
+    return max(10_000, max(target_streaming_delay_ms, 0) * 4)
+
+
+def _estimate_text_delta_audio_ms(text: str) -> int:
+    stripped = text.strip()
+    if not stripped:
+        return 240
+    if any("\u4e00" <= char <= "\u9fff" for char in stripped):
+        return min(max(len(stripped) * 180, 320), 2_400)
+    words = [part for part in stripped.replace("-", " ").split() if part]
+    if words:
+        return min(max(len(words) * 360, 360), 2_400)
+    return min(max(len(stripped) * 80, 240), 1_200)
 
 
 def _silence_pcm16le(*, sample_rate: int, duration_ms: int) -> bytes:

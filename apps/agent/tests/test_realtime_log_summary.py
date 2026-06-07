@@ -40,7 +40,9 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
                 "deepseek_first_delta_ms=105.0 deepseek_delta_count=4.0 "
                 "deepseek_prompt_chars=720.0 deepseek_prefix_chars=18.0 "
                 "glossary_required_terms=2.0 glossary_missing_required_terms=1.0 "
-                "glossary_repaired_required_terms=1.0 simul_policy_action=1.0"
+                "glossary_repaired_required_terms=1.0 "
+                "semantic_revision_latency_ms=860.0 "
+                "semantic_revision_changed_chars=12.0 simul_policy_action=1.0"
             ),
             (
                 "audio_stream_metrics session_id=sess trace_id=sess frames=12 audio_ms=960 "
@@ -55,7 +57,8 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
             ),
             (
                 "tts_synthesis_started session_id=sess segment_id=seg rev=1 "
-                "target_chars=8 tts_provider=ElevenLabsTtsSynthesizer"
+                "target_chars=8 tts_provider=ElevenLabsTtsSynthesizer "
+                "tts_queue_wait_ms=42.0"
             ),
             (
                 "tts_synthesis_first_audio session_id=sess segment_id=seg rev=1 "
@@ -95,6 +98,8 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
     assert summary.glossary_required_terms == [2.0]
     assert summary.glossary_missing_required_terms == [1.0]
     assert summary.glossary_repaired_required_terms == [1.0]
+    assert summary.semantic_revision_latency_ms == [860.0]
+    assert summary.semantic_revision_changed_chars == [12.0]
     assert summary.avg_audio_transport_ms == [4.0]
     assert summary.p95_audio_transport_ms == [8.0]
     assert summary.avg_asr_queue_wait_ms == [2.0]
@@ -105,6 +110,7 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
     assert summary.tts_finished == 1
     assert summary.tts_failed == 1
     assert summary.tts_first_audio_ms == [180.0]
+    assert summary.tts_queue_wait_ms == [42.0]
     assert summary.tts_total_ms == [380.0]
     assert summary.tts_audio_chunks == [3.0]
     assert summary.tts_audio_bytes == [12288.0]
@@ -134,7 +140,9 @@ def test_realtime_log_summary_formats_deepseek_and_glossary_metrics() -> None:
                     "deepseek_prompt_chars=720.0 deepseek_prefix_chars=18.0 "
                     "glossary_required_terms=2.0 "
                     "glossary_missing_required_terms=1.0 "
-                    "glossary_repaired_required_terms=1.0"
+                    "glossary_repaired_required_terms=1.0 "
+                    "semantic_revision_latency_ms=860.0 "
+                    "semantic_revision_changed_chars=12.0"
                 ),
                 (
                     "caption_event_published type=caption_update session_id=sess "
@@ -153,3 +161,5 @@ def test_realtime_log_summary_formats_deepseek_and_glossary_metrics() -> None:
     assert "glossary_required_total=3" in output
     assert "glossary_missing_required_total=1" in output
     assert "glossary_repaired_required_total=2" in output
+    assert "semantic_revision_latency_ms=n:1 avg:860.0" in output
+    assert "semantic_revision_changed_chars=n:1 avg:12.0" in output

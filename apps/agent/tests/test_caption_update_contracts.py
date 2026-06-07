@@ -3,6 +3,7 @@ from __future__ import annotations
 from echosync_agent.domain import SegmentCommit, SegmentStatus, TranslationSegment
 from echosync_agent.services.subtitle.caption_update import (
     caption_update_from_commit,
+    caption_update_from_final_translation,
     caption_update_from_translation,
 )
 
@@ -141,3 +142,33 @@ def test_caption_update_from_commit_is_final() -> None:
     assert event["source"]["stable_text"] == "The final caption is ready."
     assert event["target"]["stable_text"] == "最终字幕已经准备好了。"
     assert event["metrics"]["translation_latency_ms"] == 220.0
+
+
+def test_caption_update_from_final_translation_carries_semantic_revision_metrics() -> None:
+    event = caption_update_from_final_translation(
+        TranslationSegment(
+            session_id="sess_update",
+            segment_id="seg_repaired",
+            rev=9,
+            source_rev=8,
+            start_ms=0,
+            end_ms=2_400,
+            source_lang="en",
+            target_lang="zh-CN",
+            source_text="So this part of the UK has a seasonal economy.",
+            target_text="英国的这个地区更依赖季节性经济。",
+            status=SegmentStatus.COMMITTED,
+            stability=1.0,
+            source_stable_text="So this part of the UK has a seasonal economy.",
+            target_stable_text="英国的这个地区更依赖季节性经济。",
+            metrics={
+                "semantic_revision_latency_ms": 860.0,
+                "semantic_revision_changed_chars": 12.0,
+            },
+        )
+    )
+
+    assert event["state"] == "final"
+    assert event["revision"] == 9
+    assert event["target"]["full_text"] == "英国的这个地区更依赖季节性经济。"
+    assert event["metrics"]["semantic_revision_changed_chars"] == 12.0

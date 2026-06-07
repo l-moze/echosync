@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from echosync_agent.runtime.capabilities import build_realtime_capabilities
+from echosync_agent.runtime import capabilities as capabilities_module
+from echosync_agent.runtime.capabilities import (
+    ElevenLabsVoiceValidation,
+    build_realtime_capabilities,
+)
 from echosync_agent.runtime.settings import Settings
 
 
@@ -71,6 +75,74 @@ def test_capabilities_mark_funasr_unavailable_when_torch_is_missing() -> None:
     assert funasr["status"] == "missing_dependency"
     assert funasr["available"] is False
     assert "torch" in str(funasr["reason"])
+
+
+def test_capabilities_validate_elevenlabs_voice_before_marking_ready() -> None:
+    capabilities = build_realtime_capabilities(
+        _settings(
+            elevenlabs_api_key="test-key",
+            elevenlabs_voice_id="voice-ready",
+        ),
+        elevenlabs_voice_validator=lambda _settings: ElevenLabsVoiceValidation(
+            status="ready",
+            available=True,
+            voice_name="Anna Su",
+        ),
+    )
+
+    elevenlabs = _provider(capabilities["tts_providers"], "elevenlabs")
+    assert elevenlabs["status"] == "ready"
+    assert elevenlabs["available"] is True
+    assert elevenlabs["voice_name"] == "Anna Su"
+    assert elevenlabs["voice_id"] == "voice...eady(len=11)"
+
+
+def test_capabilities_mark_elevenlabs_unavailable_when_voice_id_is_not_accessible() -> None:
+    capabilities = build_realtime_capabilities(
+        _settings(
+            elevenlabs_api_key="test-key",
+            elevenlabs_voice_id="missing-voice",
+        ),
+        elevenlabs_voice_validator=lambda _settings: ElevenLabsVoiceValidation(
+            status="unavailable",
+            available=False,
+            reason="ELEVENLABS_VOICE_ID 不属于当前 ElevenLabs API key。",
+        ),
+    )
+
+    elevenlabs = _provider(capabilities["tts_providers"], "elevenlabs")
+    assert elevenlabs["status"] == "unavailable"
+    assert elevenlabs["available"] is False
+    assert "ELEVENLABS_VOICE_ID" in str(elevenlabs["reason"])
+
+
+def test_capabilities_mark_elevenlabs_unavailable_when_tts_probe_requires_paid_plan(
+    monkeypatch,
+) -> None:
+    capabilities_module._validate_elevenlabs_voice_cached.cache_clear()
+    monkeypatch.setattr(
+        capabilities_module,
+        "_get_elevenlabs_voice",
+        lambda **_kwargs: (200, {"name": "Chihiro Yoko"}),
+    )
+    monkeypatch.setattr(
+        capabilities_module,
+        "_probe_elevenlabs_tts",
+        lambda **_kwargs: (402, {"detail": {"code": "paid_plan_required"}}),
+    )
+
+    capabilities = build_realtime_capabilities(
+        _settings(
+            elevenlabs_api_key="test-key",
+            elevenlabs_voice_id="paid-plan-voice",
+        )
+    )
+
+    elevenlabs = _provider(capabilities["tts_providers"], "elevenlabs")
+    assert elevenlabs["status"] == "unavailable"
+    assert elevenlabs["available"] is False
+    assert elevenlabs["voice_name"] == "Chihiro Yoko"
+    assert "paid_plan_required" in str(elevenlabs["reason"])
 
 
 def _provider(providers: list[dict[str, object]], provider_id: str) -> dict[str, object]:

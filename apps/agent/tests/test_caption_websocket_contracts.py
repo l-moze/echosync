@@ -106,6 +106,9 @@ def test_caption_event_hub_logs_deepseek_and_glossary_metrics(caplog) -> None:
                         "glossary_required_terms": 2.0,
                         "glossary_missing_required_terms": 1.0,
                         "glossary_repaired_required_terms": 1.0,
+                        "semantic_revision_latency_ms": 860.0,
+                        "semantic_revision_changed_chars": 12.0,
+                        "semantic_revision_trigger_count": 2.0,
                     },
                 },
             )
@@ -126,6 +129,9 @@ def test_caption_event_hub_logs_deepseek_and_glossary_metrics(caplog) -> None:
     assert "glossary_required_terms=2.0" in message
     assert "glossary_missing_required_terms=1.0" in message
     assert "glossary_repaired_required_terms=1.0" in message
+    assert "semantic_revision_latency_ms=860.0" in message
+    assert "semantic_revision_changed_chars=12.0" in message
+    assert "semantic_revision_trigger_count=2.0" in message
 
 
 def test_caption_server_does_not_start_demo_producer_by_default(monkeypatch) -> None:

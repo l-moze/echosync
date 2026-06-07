@@ -205,7 +205,7 @@ describe("采集资源生命周期契约", () => {
 
   it("TTS 播放队列只在首次渲染时创建", () => {
     expect(rendererSource).toContain("const ttsPlaybackRef = useRef<TtsAudioPlaybackQueue | null>(null);");
-    expect(rendererSource).toContain("ttsPlaybackRef.current ??= createTtsAudioPlaybackQueue();");
+    expect(rendererSource).toContain("ttsPlaybackRef.current ??= createTtsAudioPlaybackQueue({ logger: log });");
     expect(rendererSource).toContain("const ttsPlayback = ttsPlaybackRef.current;");
   });
 

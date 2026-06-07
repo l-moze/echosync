@@ -10,24 +10,27 @@ from echosync_agent.services.tts.edge_tts_synthesizer import EdgeTtsSynthesizer
 from echosync_agent.services.tts.elevenlabs_synthesizer import ElevenLabsTtsSynthesizer
 from echosync_agent.services.tts.event_audio_sink import EventTranslatedAudioSink
 from echosync_agent.services.tts.factory import build_tts_synthesizer_from_settings
+from echosync_agent.services.tts.utterance_splitter import TtsUtteranceSplitter
 
 
 def test_tts_factory_builds_disabled_edge_and_elevenlabs_providers() -> None:
     assert build_tts_synthesizer_from_settings(_settings(tts_provider="disabled")) is None
-    assert isinstance(
-        build_tts_synthesizer_from_settings(_settings(tts_provider="edge-tts")),
-        EdgeTtsSynthesizer,
+    edge = build_tts_synthesizer_from_settings(
+        _settings(tts_provider="edge-tts", edge_tts_rate="+20%")
     )
-    assert isinstance(
-        build_tts_synthesizer_from_settings(
-            _settings(
-                tts_provider="elevenlabs",
-                elevenlabs_api_key="test-key",
-                elevenlabs_voice_id="voice-1",
-            )
-        ),
-        ElevenLabsTtsSynthesizer,
+    assert isinstance(edge, EdgeTtsSynthesizer)
+    assert edge.rate == "+20%"
+
+    elevenlabs = build_tts_synthesizer_from_settings(
+        _settings(
+            tts_provider="elevenlabs",
+            elevenlabs_api_key="test-key",
+            elevenlabs_voice_id="voice-1",
+            elevenlabs_speed=1.18,
+        )
     )
+    assert isinstance(elevenlabs, ElevenLabsTtsSynthesizer)
+    assert elevenlabs.speed == 1.18
 
 
 def test_tts_factory_rejects_elevenlabs_without_key_or_voice() -> None:
@@ -79,9 +82,32 @@ def test_elevenlabs_synthesizer_streams_audio_with_configured_request() -> None:
             "model": "eleven_multilingual_v2",
             "output_format": "mp3_44100_128",
             "optimize_streaming_latency": 2,
+            "speed": 1.15,
             "text": "你好，欢迎。",
         }
     ]
+
+
+def test_tts_utterance_splitter_splits_long_translation_into_small_independent_segments() -> None:
+    segment = _segment(
+        "第一句先快速播报。第二句继续播报，避免长段等待。第三句也要单独进入语音队列。"
+    )
+    utterances = TtsUtteranceSplitter(max_chars=18, min_chars=6).split(segment)
+
+    assert [item.target_text for item in utterances] == [
+        "第一句先快速播报。",
+        "第二句继续播报，",
+        "避免长段等待。",
+        "第三句也要单独进入语音队列。",
+    ]
+    assert [item.segment_id for item in utterances] == [
+        "seg_tts_tts01",
+        "seg_tts_tts02",
+        "seg_tts_tts03",
+        "seg_tts_tts04",
+    ]
+    assert utterances[0].metrics["tts_utterance_index"] == 1.0
+    assert utterances[-1].metrics["tts_utterance_count"] == 4.0
 
 
 def test_event_audio_sink_publishes_tts_audio_as_base64_event() -> None:
@@ -127,6 +153,52 @@ def test_event_audio_sink_publishes_tts_audio_as_base64_event() -> None:
     ]
 
 
+def test_event_audio_sink_publishes_nonfatal_tts_error_event() -> None:
+    async def run() -> InMemoryEventBus:
+        event_bus = InMemoryEventBus()
+        sink = EventTranslatedAudioSink(event_bus)
+        await sink.publish_error(
+            {
+                "session_id": "sess_tts",
+                "segment_id": "seg_tts",
+                "rev": 3,
+                "start_ms": 100,
+                "end_ms": 1200,
+                "target_lang": "zh-CN",
+                "provider": "ElevenLabsTtsSynthesizer",
+                "message": "ElevenLabs TTS failed: HTTP 404 voice_not_found",
+                "code": "tts.elevenlabs.voice_not_found",
+                "retryable": False,
+                "target_text": "你好，欢迎。",
+                "metrics": {"tts_failed": 1.0},
+            }
+        )
+        return event_bus
+
+    event_bus = asyncio.run(run())
+
+    assert event_bus.events == [
+        (
+            "tts.error",
+            {
+                "type": "tts.error",
+                "session_id": "sess_tts",
+                "segment_id": "seg_tts",
+                "rev": 3,
+                "start_ms": 100,
+                "end_ms": 1200,
+                "target_lang": "zh-CN",
+                "provider": "ElevenLabsTtsSynthesizer",
+                "message": "ElevenLabs TTS failed: HTTP 404 voice_not_found",
+                "code": "tts.elevenlabs.voice_not_found",
+                "retryable": False,
+                "target_text": "你好，欢迎。",
+                "metrics": {"tts_failed": 1.0},
+            },
+        )
+    ]
+
+
 async def _collect_bytes(chunks: AsyncIterator[bytes]) -> list[bytes]:
     return [chunk async for chunk in chunks]
 
@@ -144,6 +216,7 @@ class _FakeElevenLabsClient:
         model: str,
         output_format: str,
         optimize_streaming_latency: int | None,
+        speed: float,
         text: str,
     ) -> AsyncIterator[bytes]:
         self.requests.append(
@@ -153,6 +226,7 @@ class _FakeElevenLabsClient:
                 "model": model,
                 "output_format": output_format,
                 "optimize_streaming_latency": optimize_streaming_latency,
+                "speed": speed,
                 "text": text,
             }
         )

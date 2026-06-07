@@ -42,10 +42,13 @@ class RealtimeLogSummary:
     glossary_required_terms: list[float] = field(default_factory=list)
     glossary_missing_required_terms: list[float] = field(default_factory=list)
     glossary_repaired_required_terms: list[float] = field(default_factory=list)
+    semantic_revision_latency_ms: list[float] = field(default_factory=list)
+    semantic_revision_changed_chars: list[float] = field(default_factory=list)
     tts_started: int = 0
     tts_finished: int = 0
     tts_failed: int = 0
     tts_first_audio_ms: list[float] = field(default_factory=list)
+    tts_queue_wait_ms: list[float] = field(default_factory=list)
     tts_total_ms: list[float] = field(default_factory=list)
     tts_audio_chunks: list[float] = field(default_factory=list)
     tts_audio_bytes: list[float] = field(default_factory=list)
@@ -104,6 +107,14 @@ def summarize_log_lines(lines: Iterable[str]) -> RealtimeLogSummary:
                 summary.glossary_repaired_required_terms,
                 fields.get("glossary_repaired_required_terms"),
             )
+            _append_float(
+                summary.semantic_revision_latency_ms,
+                fields.get("semantic_revision_latency_ms"),
+            )
+            _append_float(
+                summary.semantic_revision_changed_chars,
+                fields.get("semantic_revision_changed_chars"),
+            )
         if "audio_stream_metrics" in line:
             _append_float(summary.avg_audio_transport_ms, fields.get("avg_transport_ms"))
             _append_float(summary.p95_audio_transport_ms, fields.get("p95_transport_ms"))
@@ -114,6 +125,7 @@ def summarize_log_lines(lines: Iterable[str]) -> RealtimeLogSummary:
             _append_float(summary.funasr_rtf, fields.get("rtf"))
         if "tts_synthesis_started" in line:
             summary.tts_started += 1
+            _append_float(summary.tts_queue_wait_ms, fields.get("tts_queue_wait_ms"))
         if "tts_synthesis_first_audio" in line:
             _append_float(summary.tts_first_audio_ms, fields.get("first_audio_ms"))
         if "tts_synthesis_finished" in line:
@@ -185,11 +197,20 @@ def format_summary(summary: RealtimeLogSummary) -> str:
             "glossary_repaired_required_total="
             f"{_sum_values(summary.glossary_repaired_required_terms):.0f}"
         ),
+        _format_distribution(
+            "semantic_revision_latency_ms",
+            summary.semantic_revision_latency_ms,
+        ),
+        _format_distribution(
+            "semantic_revision_changed_chars",
+            summary.semantic_revision_changed_chars,
+        ),
         (
             f"tts_started={summary.tts_started} "
             f"tts_finished={summary.tts_finished} tts_failed={summary.tts_failed}"
         ),
         _format_distribution("tts_first_audio_ms", summary.tts_first_audio_ms),
+        _format_distribution("tts_queue_wait_ms", summary.tts_queue_wait_ms),
         _format_distribution("tts_total_ms", summary.tts_total_ms),
         _format_distribution("tts_audio_chunks", summary.tts_audio_chunks),
         _format_distribution("tts_audio_bytes", summary.tts_audio_bytes),
@@ -249,10 +270,13 @@ def _merge(target: RealtimeLogSummary, source: RealtimeLogSummary) -> None:
     target.glossary_required_terms.extend(source.glossary_required_terms)
     target.glossary_missing_required_terms.extend(source.glossary_missing_required_terms)
     target.glossary_repaired_required_terms.extend(source.glossary_repaired_required_terms)
+    target.semantic_revision_latency_ms.extend(source.semantic_revision_latency_ms)
+    target.semantic_revision_changed_chars.extend(source.semantic_revision_changed_chars)
     target.tts_started += source.tts_started
     target.tts_finished += source.tts_finished
     target.tts_failed += source.tts_failed
     target.tts_first_audio_ms.extend(source.tts_first_audio_ms)
+    target.tts_queue_wait_ms.extend(source.tts_queue_wait_ms)
     target.tts_total_ms.extend(source.tts_total_ms)
     target.tts_audio_chunks.extend(source.tts_audio_chunks)
     target.tts_audio_bytes.extend(source.tts_audio_bytes)

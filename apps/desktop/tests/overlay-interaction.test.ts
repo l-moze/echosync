@@ -13,6 +13,8 @@ describe("字幕弹窗分层交互状态机", () => {
     expect(state.layer).toBe("default");
     expect(state.pointerMode).toBe("pass_through");
     expect(state.fallbackAwake).toBe(false);
+    expect(state.hoverIntentDelayMs).toBe(180);
+    expect(state.collapseDelayMs).toBe(760);
   });
 
   it("快速划过不会唤醒 Hover 控制", () => {
@@ -79,7 +81,7 @@ describe("字幕弹窗分层交互状态机", () => {
     expect(leaving.collapseStartedAtMs).toBe(1300);
   });
 
-  it("离开轻控制态超过宽限时间后才回到默认态", () => {
+  it("离开轻控制态未超过宽限时间时继续保留控制面板", () => {
     const leaving = reduceOverlayInteraction(
       {
         ...createInitialOverlayInteractionState(),
@@ -90,6 +92,24 @@ describe("字幕弹窗分层交互状态机", () => {
       {
         type: "collapse.timer.elapsed",
         atMs: 1700
+      }
+    );
+
+    expect(leaving.layer).toBe("controls");
+    expect(leaving.pointerMode).toBe("interactive");
+  });
+
+  it("离开轻控制态超过宽限时间后才回到默认态", () => {
+    const leaving = reduceOverlayInteraction(
+      {
+        ...createInitialOverlayInteractionState(),
+        layer: "controls",
+        pointerMode: "interactive",
+        collapseStartedAtMs: 1300
+      },
+      {
+        type: "collapse.timer.elapsed",
+        atMs: 2100
       }
     );
 
@@ -134,7 +154,7 @@ describe("字幕弹窗分层交互状态机", () => {
   it("兜底唤醒后离开字幕区会回到默认穿透态", () => {
     const awake = reduceOverlayInteraction(createInitialOverlayInteractionState(), { type: "fallback.wake" });
     const leaving = reduceOverlayInteraction(awake, { type: "pointer.left", atMs: 5000 });
-    const collapsed = reduceOverlayInteraction(leaving, { type: "collapse.timer.elapsed", atMs: 5400 });
+    const collapsed = reduceOverlayInteraction(leaving, { type: "collapse.timer.elapsed", atMs: 5800 });
 
     expect(collapsed.layer).toBe("default");
     expect(collapsed.pointerMode).toBe("pass_through");

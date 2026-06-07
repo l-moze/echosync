@@ -8,12 +8,14 @@ from echosync_agent.interfaces import (
     SubtitleSink,
     Transcriber,
     TranslatedAudioSink,
+    TranslationRepairEngine,
     Translator,
     TtsSynthesizer,
 )
 from echosync_agent.pipeline.engine_pipeline import EngineDrivenInterpretationPipeline
 from echosync_agent.services.engine import CascadedInterpretationEngine
 from echosync_agent.services.translation.terminology import Glossary
+from echosync_agent.services.tts.utterance_splitter import TtsUtteranceSplitter
 
 
 class RealtimeInterpretationPipeline:
@@ -33,6 +35,13 @@ class RealtimeInterpretationPipeline:
         glossary: Glossary | dict[str, str] | None = None,
         tts_synthesizer: TtsSynthesizer | None = None,
         audio_sink: TranslatedAudioSink | None = None,
+        tts_utterance_splitter: TtsUtteranceSplitter | None = None,
+        translation_repair_engine: TranslationRepairEngine | None = None,
+        translation_repair_timeout_ms: int = 1_500,
+        translation_repair_max_concurrency: int = 1,
+        translation_repair_mode: str = "suspect_only",
+        translation_repair_context_segments: int = 3,
+        tts_prefetch_concurrency: int = 2,
     ) -> None:
         engine = CascadedInterpretationEngine(
             transcriber=transcriber,
@@ -47,6 +56,14 @@ class RealtimeInterpretationPipeline:
             subtitle_sink=subtitle_sink,
             audio_sink=audio_sink,
             tts_synthesizer=tts_synthesizer,
+            tts_utterance_splitter=tts_utterance_splitter,
+            translation_repair_engine=translation_repair_engine,
+            translation_repair_timeout_ms=translation_repair_timeout_ms,
+            translation_repair_max_concurrency=translation_repair_max_concurrency,
+            translation_repair_mode=translation_repair_mode,
+            translation_repair_glossary=glossary,
+            translation_repair_context_segments=translation_repair_context_segments,
+            tts_prefetch_concurrency=tts_prefetch_concurrency,
         )
 
     async def run(self, frames: AsyncIterator[AudioFrame]) -> None:

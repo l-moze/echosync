@@ -321,13 +321,17 @@ caption_lag_ms = caption_line.receivedAtMs - sessionStartedAtMs - caption_line.e
 | `translation_checkpoint_finished` | 翻译任务结束 | 记录完整翻译耗时、delta 数和译文长度。 |
 | `tts_synthesis_started` | committed 译文进入 TTS 旁路 | 记录目标文本长度和 TTS provider，用来确认 TTS 只消费最终译文。 |
 | `tts_synthesis_first_audio` | TTS provider 返回首个音频包 | 记录 `tts_first_audio_ms`，这是语音播报体感延迟的核心指标。 |
+| `tts_synthesis_queued` / `tts_queue_wait_ms` | TTS 小句进入预合成窗口 / 真正开始合成 | 用于确认后句是否提前预合成；如果 `tts_queue_wait_ms` 持续升高，说明 TTS 供应商或并发窗口追不上视频节奏。 |
 | `tts_synthesis_finished` | TTS provider 流结束 | 记录 `tts_total_ms`、`tts_audio_chunks` 和 `tts_audio_bytes`，判断是首音慢还是完整合成慢。 |
 | `tts_synthesis_failed` | TTS provider 失败 | 统计 provider、网络或格式异常，避免只看 started/finished 差值猜原因。 |
 | `caption_event_published` | Agent 字幕事件发布到 `/v1/caption/events` | 发布级边界，记录 `published_at_ms`、投递耗时和随事件携带的模型指标；不用于请求级延迟分布统计。 |
 | `caption_event_renderer_received` | Desktop renderer 收到 `caption:event` | 用 `Date.now() - published_at_ms` 计算 Agent publish 到 renderer receive 的延迟。 |
 | `realtime_audio_capture_metrics` | Desktop renderer 音频采集/编码窗口 | 每个聚合窗口记录 Web Audio callback 数、输入/重采样样本、发出的 PCM frame 数、编码字节数、平均/p95 callback 间隔、平均/p95 处理耗时、平均/p95 PCM 编码耗时和最大 `socket.bufferedAmount`。 |
+| `wasapi_capture_metrics` | Rust WASAPI sidecar 原生系统声采集窗口 | sidecar stderr 每秒产出原始 JSONL；Electron 主进程只在首条、每 10 秒摘要或异常阈值触发时写入可见日志，避免正常采集时刷屏。 |
 
 `published_at_ms` 是 Agent 发布事件时写入的毫秒时间戳。Desktop renderer 不参与 ASR/翻译耗时计算，只负责补上 `agentToRendererMs`，这样可以把“模型慢”和“桌面事件转发慢”拆开看。日志转换集中在 `apps/desktop/src/shared/realtime-telemetry.ts`，React 组件只注入 `electron-log/renderer`，避免日志胶水污染字幕状态机。
+
+WASAPI 采集指标的 Electron 日志节流只影响控制台可见性，不影响 sidecar 内部每秒诊断输出。正常情况下看 `p95_wakeup_interval_ms`、`p95_stdout_write_ms`、`max_capture_queue_bytes` 的 10 秒摘要；若 p95 wakeup、stdout 写入或采集队列超过阈值，主进程会写 `warn` 级别的 `WASAPI 采集指标异常`。
 
 需要区分两类延迟：
 
@@ -603,6 +607,7 @@ before/after:
   translation_queue_wait_ms p50/p95
   translation_first_token_ms p50/p95
   tts_first_audio_ms p50/p95
+  tts_queue_wait_ms p50/p95
   tts_total_ms p50/p95
   realtime_audio_capture_metrics.p95ProcessingMs
   realtime_audio_capture_metrics.maxWebsocketBufferedAmount
@@ -624,6 +629,12 @@ echosync-log-summary path\to\agent.log
 
 2026-06-06 TTS 补充：ElevenLabs 官方延迟建议把 Flash 模型、streaming、地域就近和 voice 选择作为主要手段；Flash v2.5 的约 75ms 是模型推理时间，不等于 EchoSync 端到端首音。当前链路只把 committed 译文送入 TTS，因此 HTTP streaming 是 MVP 默认路径；WebSocket TTS 更适合 LLM 文本边生成边输入，只有当真实日志显示 `tts_first_audio_ms` 已成为主要瓶颈时再升级，避免提前引入输入流切块和音频缓冲复杂度。
 
+2026-06-07 TTS 低延迟修订：整段 committed 译文再送 TTS 的体验不达标，尤其长段会出现“字幕已到但语音等整段合成”的体感落后。当前策略改为小句级 TTS：`TtsUtteranceSplitter` 在 committed 译文进入 TTS 前按中英文标点和长度阈值切成短 utterance，每个 utterance 使用独立 `segment_id_ttsNN` 推送 `tts.audio`，避免前端把多个小句追加到同一个 MediaSource 流里。为满足“视频连续说话时一句接一句”的体验，TTS worker 不再等待前一句完整合成后才请求后一句；它会先发空音频占位锁定顺序，再按 `ECHOSYNC_TTS_PREFETCH_CONCURRENCY` 受限并发预合成后续小句，Desktop 仍根据 segment/rev 串行播放，避免抢话。用户停止或客户端断开时 pipeline 取消会同步取消 TTS worker，减少停止后继续播报。默认播报语速略快：`EDGE_TTS_RATE=+15%`、`ELEVENLABS_SPEED=1.15`，先用供应商原生语速参数，不在本地重采样音频。真实优化效果必须继续看 `tts_first_audio_ms`、`tts_queue_wait_ms`、`tts_total_ms`、`tts_utterance_count` 和 Desktop 播放队列积压；如果小句级 HTTP streaming + 预合成仍追不上，再考虑 ElevenLabs WebSocket TTS 或端到端语音翻译。
+
+2026-06-07 最新日志复查：`main.log` 中最新启动链路已经能看到 renderer/main/sidecar 三层配置贯通，`audio:start` 和 `wasapi-sidecar audio.start` 均携带 `ttsProvider=elevenlabs`，说明“控制窗选择 TTS 后从系统声启动丢失 provider”的问题不再是当前主因。上一段真实会话出现多条 `tts.audio`，`sentWindowCount=2`，且 `ttsFirstAudioMs` 约 0.8-2.6s，证明 Agent 已生成 TTS 并转发到 Desktop。真正缺口在 renderer 播放层：旧 `tts-audio-playback` 对 `Audio.play()` 失败、MIME 不支持 MediaSource、开始播放和播放结束都没有可见日志，导致“没声音”无法区分是浏览器拒播、格式不支持、输出设备还是队列状态。已补 `tts_playback_streaming_unsupported`、`tts_playback_blob_started`、`tts_playback_blob_failed`、`tts_playback_stream_started`、`tts_playback_stream_failed`，下一次实测必须结合这些 renderer 日志继续定位。
+
+同一批日志还暴露 Voxtral 时间戳问题：复盘记录 `sess_1780839906367` 中存在 `better.` 从 `112240ms` 延伸到 `368960ms` 的异常短文本长时间段，`diagnostics.hasTimingAnomaly=true`。根因是 Voxtral realtime text delta 没有词级时间戳，旧适配器把每个 delta 绑定到“从会话开始到当前采集窗口”的累计窗口；长静音或持续系统声会把一句短字幕拉成长达数分钟的时间帧。已在 Voxtral 适配器中加入增量时间窗估算：短窗口保留 provider 原始窗口，明显累计窗口则用 `target_streaming_delay_ms` 和文本长度估算短窗，同时保留 `asr_provider_audio_window_ms` 用于诊断。后续如果接入带词级时间戳的 ASR，应优先使用 provider timestamps 替代估算器。
+
 ## 已发现的断点
 
 ### 断点 1：producer 演示链路容易和真实链路混淆
@@ -631,12 +642,16 @@ echosync-log-summary path\to\agent.log
 **处理**：文档中统一标明：demo producer 只用于 UI 验证，真实桌面链路必须发送实时音频 frame。
 
 ### 断点 2：混音和文件源仍是边界而非完整实现
-**原因**：麦克风源已改用 `getUserMedia({ audio: true })`，Windows 系统声音走 `getDisplayMedia` loopback；Agent 端文件解码已经支持 ffmpeg 流式分帧，但 Desktop 文件回放入口和混音入口仍未形成完整产品链路。
+**原因**：麦克风源已改用 `getUserMedia({ audio: true })`，Windows 系统声音默认走 Rust WASAPI sidecar 的 `exclude-process-tree` Application Loopback；Agent 端文件解码已经支持 ffmpeg 流式分帧，但 Desktop 文件回放入口和混音入口仍未形成完整产品链路。
 **处理**：文档中区分“Agent 媒体解码能力”和“Desktop 文件回放 UI 能力”。混音和文件回放入口在 UI 中仍保持“后续/实验”口径，避免用户误以为完整可用。
 
 ### 断点 3：错误终止、用户停止和长静音必须分层
 **原因**：实时链路如果在 `audio.start` 时先启动 pipeline、再校验 ASR provider，mock + 真实 PCM 会先发 `realtime.error`，随后空 pipeline 正常退出又发 `realtime.done`，桌面端会看到矛盾状态。另一个容易混淆的边界是：`audio.final` / Silero endpoint 只表达语音停顿，不表达用户停止；视频暂停造成的长静音也不是用户停止。
 **处理**：Agent 现在先应用会话级 ASR 配置和音频源校验，再启动 pipeline。`realtime.error` 表示非停止态终止，启动失败、provider 不匹配或运行中 pipeline 异常不再追加 `realtime.done`；`audio.end(reason="user_stop")` 是用户主动停止，停止期间晚到的 provider exception 只进日志，不发布到 caption hub。Voxtral 云端 realtime 路径已补 PCM silence keepalive，避免视频暂停/长静音被 provider timeout 误报成字幕错误。
+
+### 断点 4：控制窗设置和字幕窗启动必须共享同一会话偏好
+**原因**：控制窗和字幕悬浮窗是两个独立 renderer。若 ASR、翻译、TTS、语言方向和音频源只保存在各自 React state 中，用户在控制窗选择 `edge-tts` 或 ElevenLabs 后，再从字幕窗按钮启动/切换音源，字幕窗会使用自己的默认 `server-default`，最终继承 Agent 默认 `tts_provider=disabled`，表现为“前端已选择 TTS，但最新会话没有任何 `tts.audio`”。
+**处理**：Desktop 主进程维护 `sessionPreferences`，通过 `session-preferences:get/update` 和 `session-preferences:state` 在控制窗、字幕窗之间同步会话偏好。启动链路新增三层日志：renderer `[realtime] 准备启动会话`、main `[audio:start] 收到桌面采集请求`、WASAPI `[wasapi-sidecar] 发送 Agent audio.start`，必须能看到同一个 `ttsProvider=edge-tts/elevenlabs`。
 
 ## 文件变更清单
 
@@ -647,8 +662,11 @@ echosync-log-summary path\to\agent.log
 | `runtime/assembly.py` | `build_demo_pipeline()` 接受 `caption_event_bus` 参数，订阅字幕事件和可选 `tts.audio` |
 | `services/media/ffmpeg_audio_source.py` | MP4/音频文件通过 ffmpeg stdout 流式读取并在线分帧，避免整文件解码阻塞首帧 |
 | `services/asr/factory.py` | FunASR 与 Voxtral 都按 `asr_latency_mode` 映射实际推理窗口/目标延迟 |
-| `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；应用退出时清理重连计时器并关闭 WS |
-| `desktop/src/renderer/realtime-audio-client.ts` | 真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame + `audio.final` 控制帧；只在用户显式选择时覆盖 ASR/翻译/TTS provider；麦克风走 `getUserMedia`，系统声走 `getDisplayMedia` |
+| `desktop/src/main/main.ts` | 启动时连接 `CAPTION_WS_URL`，断线 5s 重连；Windows 系统声音启动 WASAPI sidecar 并排除 EchoSync 进程树；应用退出时清理重连计时器并关闭 WS |
+| `desktop/src/main/wasapi-sidecar-client.ts` | 启动 Rust sidecar，解析 stdout length-prefixed PCM binary frame，向 Agent 发送 `device_id=wasapi:exclude-process-tree:<pid>` 的 `audio.start`，并记录 sidecar JSONL metrics |
+| `desktop/src/renderer/realtime-audio-client.ts` | 麦克风真实链路发送 `audio.start` + `pcm16.binary.v1` binary frame + `audio.final` 控制帧；只在用户显式选择时覆盖 ASR/翻译/TTS provider；系统声不再由 renderer 采集 |
+| `desktop/src/shared/session-preferences.ts` | 控制窗和字幕窗共享同一会话偏好，避免从字幕窗启动时丢失控制窗选择的 TTS/ASR/翻译方案 |
+| `wasapi-sidecar/src/main.rs` | WASAPI Application Loopback 采集系统声，默认 `exclude-process-tree` 排除 EchoSync 进程树；本地 downmix/resample/PCM16 编码并输出每秒延迟 metrics |
 | `desktop/src/renderer/tts-audio-playback.ts` | 优先用 MediaSource 追加播放 `tts.audio` 分片；Agent 音频分片立即以 `final=false` 推送，流结束再用空音频 `final=true` 结束包收尾；不支持对应 MIME 时回退到同一 segment/rev 等结束包后拼接 Blob；`clear()` 后忽略旧播放器晚到回调，避免新队列并发播放 |
 | `desktop/src/renderer/main.tsx` | 移除 demoEvents，新增 `hasRealEvents` 状态；收到当前会话 `realtime.error` 时停止本地音频并回收采集状态 |
 | `desktop/src/shared/subtitle-style-state.ts` | 字幕显示模式迁移为双语、主字幕、翻译字幕三态，兼容旧 `line/split` 配置 |
@@ -661,10 +679,10 @@ echosync-log-summary path\to\agent.log
 3. Desktop 已在开始同传前读取 `/v1/realtime/capabilities`，并阻止 mock+真实音频、缺 key、缺 SDK/本地依赖和未完整接入音频源这类组合；FunASR 会显式检查 `funasr`、`modelscope`、`torch`。后续还需要把能力结果做成更细的设置页和诊断页。
 
 ### P1：音频源分支补实
-1. Windows 系统声音继续使用 Electron display media loopback。
-2. 麦克风已改用 `getUserMedia({ audio: true })`，后续重点是权限错误和设备缺失提示。
+1. Windows 系统声音默认使用 WASAPI sidecar `exclude-process-tree`；下一步补目标进程/目标窗口采集和能力发现，不允许静默降级到完整系统 loopback。
+2. 麦克风已改用 `getUserMedia({ audio: true })`，后续重点是权限错误、设备缺失提示和把 renderer 音频处理迁移到 `AudioWorklet`。
 3. Agent 文件源已支持 ffmpeg 流式分帧；Desktop 文件回放入口未接完整前仍标记为实验状态。
-4. 后续把 `ScriptProcessorNode` 迁移到 `AudioWorklet`。
+4. TTS 回灌安全闸继续保守：只有 WASAPI 排除自身、目标进程/窗口采集或可确认输出设备隔离时，才允许 Windows 系统声音和 TTS 同时启用。
 
 ### P2：术语表 UI 集成
 后端 Glossary 已完成，前端需要：

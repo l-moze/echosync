@@ -36,6 +36,9 @@ voxtral = [
 deepgram = [
   "websockets>=12"
 ]
+qwen = [
+  "websockets>=12"
+]
 
 [build-system]
 requires = ["hatchling"]

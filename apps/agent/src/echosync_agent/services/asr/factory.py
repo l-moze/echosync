@@ -10,6 +10,10 @@ from echosync_agent.services.asr.deepgram_transcriber import (
 )
 from echosync_agent.services.asr.funasr_transcriber import FunAsrStreamingConfig, FunAsrTranscriber
 from echosync_agent.services.asr.mock_transcriber import MockTranscriber
+from echosync_agent.services.asr.qwen_realtime_transcriber import (
+    QwenRealtimeAsrConfig,
+    QwenRealtimeAsrTranscriber,
+)
 from echosync_agent.services.asr.semantic_chunker import FrameVadDetector
 from echosync_agent.services.asr.silero_vad_detector import (
     LiveKitSileroVadConfig,
@@ -78,6 +82,23 @@ def build_transcriber_from_settings(
                 ),
             )
         )
+    if settings.asr_provider == "qwen-asr":
+        if not settings.qwen_api_key:
+            raise ValueError("使用 Qwen ASR 时必须配置 DASHSCOPE_API_KEY 或 QWEN_API_KEY。")
+        return QwenRealtimeAsrTranscriber(
+            config=QwenRealtimeAsrConfig(
+                api_key=settings.qwen_api_key,
+                model=settings.qwen_asr_model,
+                base_url=settings.qwen_realtime_base_url,
+                language=settings.qwen_asr_language,
+                vad_silence_duration_ms=_qwen_vad_silence_ms_for_latency_mode(
+                    base_silence_ms=settings.qwen_asr_vad_silence_ms,
+                    latency_mode=settings.asr_latency_mode,
+                ),
+            )
+        )
+    if settings.asr_provider == "qwen-livetranslate":
+        raise ValueError("Qwen LiveTranslate 是端到端听译引擎，不应通过 ASR 工厂创建。")
     raise ValueError(f"不支持的 ASR 供应商：{settings.asr_provider}")
 
 
@@ -107,6 +128,14 @@ def _deepgram_endpointing_ms_for_latency_mode(
     if latency_mode == "accuracy":
         return max(base_endpointing_ms, 500)
     return base_endpointing_ms
+
+
+def _qwen_vad_silence_ms_for_latency_mode(*, base_silence_ms: int, latency_mode: str) -> int:
+    if latency_mode == "low_latency":
+        return max(300, min(base_silence_ms, 500))
+    if latency_mode == "accuracy":
+        return max(base_silence_ms, 1000)
+    return base_silence_ms
 
 
 def _build_funasr_vad_detector(

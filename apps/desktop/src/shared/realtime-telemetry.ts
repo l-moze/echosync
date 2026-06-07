@@ -18,6 +18,9 @@ export type RealtimeEventTelemetry = {
   targetTextLength?: number;
   patchOperationCount?: number;
   patchReason?: string;
+  provider?: string;
+  code?: string;
+  retryable?: boolean;
   message?: string;
   agentToRendererMs?: number;
   asrLatencyMs?: number;
@@ -38,6 +41,7 @@ export type RealtimeEventTelemetry = {
   ttsTotalMs?: number;
   ttsAudioChunks?: number;
   ttsAudioBytes?: number;
+  ttsFailed?: number;
 };
 
 export type RealtimeTelemetryLogger = {
@@ -70,6 +74,9 @@ export function buildRealtimeEventTelemetry(
     targetTextLength: targetText?.length,
     patchOperationCount: "operations" in event ? event.operations.length : undefined,
     patchReason: "reason" in event ? event.reason : undefined,
+    provider: "provider" in event ? event.provider : undefined,
+    code: "code" in event ? event.code : undefined,
+    retryable: "retryable" in event ? event.retryable : undefined,
     message: "message" in event ? event.message : undefined,
     agentToRendererMs:
       typeof event.published_at_ms === "number"
@@ -92,7 +99,8 @@ export function buildRealtimeEventTelemetry(
     ttsFirstAudioMs: metrics?.tts_first_audio_ms,
     ttsTotalMs: metrics?.tts_total_ms,
     ttsAudioChunks: metrics?.tts_audio_chunks,
-    ttsAudioBytes: metrics?.tts_audio_bytes
+    ttsAudioBytes: metrics?.tts_audio_bytes,
+    ttsFailed: metrics?.tts_failed
   };
 }
 
@@ -158,6 +166,9 @@ function targetTextFromEvent(event: RealtimeEvent): string | undefined {
   }
   if ("target" in event) {
     return event.target?.full_text;
+  }
+  if ("target_text" in event) {
+    return event.target_text;
   }
   return undefined;
 }

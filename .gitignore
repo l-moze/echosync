@@ -24,6 +24,7 @@ out/
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 
 # Test and tooling caches
 .pytest_cache/
@@ -36,3 +37,7 @@ coverage/
 
 # Local media fixtures for manual ASR evaluation
 vido/
+
+# Native sidecar build artifacts
+apps/wasapi-sidecar/target/
+apps/desktop/resources/wasapi-sidecar/*.exe

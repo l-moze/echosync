@@ -1,4 +1,5 @@
 import type { DesktopAudioSourceId } from "./audio-source-catalog";
+import { DESKTOP_AUDIO_SOURCES } from "./audio-source-catalog";
 import type { AgentCapabilities } from "./agent-capabilities";
 import { findAgentAsrProvider, findAgentTranslationProvider, findAgentTtsProvider } from "./agent-capabilities";
 import type { AsrLatencyMode, AsrProviderSelection } from "./asr-provider-catalog";
@@ -59,6 +60,11 @@ export function validateRealtimePreflight({
 
   const explicitTtsProvider = selectedTtsProviderId(ttsProvider);
   const resolvedTtsProvider = explicitTtsProvider ?? capabilities.defaults.tts_provider;
+  const source = DESKTOP_AUDIO_SOURCES.find((item) => item.id === sourceId);
+  const systemCaptureExcludesSelf = Boolean(source?.capabilities.includes("exclude-self"));
+  if (sourceId === "windows-system" && resolvedTtsProvider !== "disabled" && !systemCaptureExcludesSelf) {
+    return "安全限制：Windows 系统声音采集会包含扬声器输出，不能同时启用语音播报（TTS）。请将语音播报设为“关闭”，或改用麦克风输入。";
+  }
   const ttsCapability = findAgentTtsProvider(capabilities, resolvedTtsProvider);
   if (!ttsCapability) {
     return `同传服务不支持当前语音播报方案：${resolvedTtsProvider}`;

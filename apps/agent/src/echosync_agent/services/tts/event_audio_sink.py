@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from typing import Any
 
 from echosync_agent.domain import TranslatedAudioChunk
 from echosync_agent.interfaces import EventBus, TranslatedAudioSink
@@ -30,3 +31,21 @@ class EventTranslatedAudioSink(TranslatedAudioSink):
                 "metrics": dict(chunk.metrics),
             },
         )
+
+    async def publish_error(self, event: dict[str, Any]) -> None:
+        payload = {
+            "type": "tts.error",
+            "session_id": event["session_id"],
+            "segment_id": event["segment_id"],
+            "rev": event["rev"],
+            "start_ms": event["start_ms"],
+            "end_ms": event["end_ms"],
+            "target_lang": event["target_lang"],
+            "provider": event.get("provider", ""),
+            "message": event["message"],
+            "code": event.get("code", "tts.synthesis_failed"),
+            "retryable": bool(event.get("retryable", False)),
+            "target_text": event.get("target_text", ""),
+            "metrics": dict(event.get("metrics") or {}),
+        }
+        await self.event_bus.publish("tts.error", payload)

@@ -122,12 +122,45 @@ describe("实时同传启动预检", () => {
       capabilities: capabilities({
         elevenLabsTtsStatus: "missing_config"
       }),
-      sourceId: "windows-system",
+      sourceId: "microphone",
       ttsProvider: "elevenlabs",
       translationProvider: "mock"
     });
 
     expect(message).toContain("ELEVENLABS_VOICE_ID");
+  });
+
+  it("阻止 ElevenLabs voice_id 不属于当前 key 的语音播报会话", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "funasr",
+      capabilities: capabilities({
+        elevenLabsReason: "ELEVENLABS_VOICE_ID 不属于当前 ElevenLabs API key。",
+        elevenLabsTtsStatus: "unavailable"
+      }),
+      sourceId: "microphone",
+      ttsProvider: "elevenlabs",
+      translationProvider: "mock"
+    });
+
+    expect(message).toContain("ELEVENLABS_VOICE_ID");
+    expect(message).toContain("API key");
+  });
+
+  it("阻止当前套餐无法通过 API 使用 ElevenLabs voice 的语音播报会话", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "funasr",
+      capabilities: capabilities({
+        elevenLabsReason: "当前 ElevenLabs 账号或 voice 不允许通过 API 合成语音：paid_plan_required。",
+        elevenLabsTtsStatus: "unavailable"
+      }),
+      sourceId: "microphone",
+      ttsProvider: "elevenlabs",
+      translationProvider: "mock"
+    });
+
+    expect(message).toContain("paid_plan_required");
   });
 
   it("允许显式关闭不可用的后端默认语音播报", () => {
@@ -145,6 +178,47 @@ describe("实时同传启动预检", () => {
 
     expect(message).toBeNull();
   });
+
+  it("允许 WASAPI 排除自身音频后的 Windows 系统声音和显式语音播报同时启用", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "funasr",
+      capabilities: capabilities({}),
+      sourceId: "windows-system",
+      ttsProvider: "edge-tts",
+      translationProvider: "mock"
+    });
+
+    expect(message).toBeNull();
+  });
+
+  it("允许 WASAPI 排除自身音频后的 Windows 系统声音使用开启 TTS 的后端默认配置", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "funasr",
+      capabilities: capabilities({
+        defaultTtsProvider: "edge-tts"
+      }),
+      sourceId: "windows-system",
+      ttsProvider: "server-default",
+      translationProvider: "mock"
+    });
+
+    expect(message).toBeNull();
+  });
+
+  it("允许麦克风和语音播报同时启用", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "funasr",
+      capabilities: capabilities({}),
+      sourceId: "microphone",
+      ttsProvider: "edge-tts",
+      translationProvider: "mock"
+    });
+
+    expect(message).toBeNull();
+  });
 });
 
 function capabilities({
@@ -153,6 +227,7 @@ function capabilities({
   deepgramStatus = "ready",
   defaultAsrProvider = "funasr",
   defaultTtsProvider = "disabled",
+  elevenLabsReason,
   elevenLabsTtsStatus = "missing_key",
   voxtralStatus = "ready"
 }: {
@@ -161,6 +236,7 @@ function capabilities({
   deepgramStatus?: "ready" | "missing_key" | "missing_dependency" | "unavailable";
   defaultAsrProvider?: "mock" | "funasr" | "voxtral" | "deepgram";
   defaultTtsProvider?: "disabled" | "edge-tts" | "elevenlabs";
+  elevenLabsReason?: string;
   elevenLabsTtsStatus?: "ready" | "missing_key" | "missing_config" | "unavailable";
   voxtralStatus?: "ready" | "missing_key" | "missing_dependency" | "unavailable";
 }): AgentCapabilities {
@@ -271,11 +347,12 @@ function capabilities({
         label: "ElevenLabs",
         model: "eleven_multilingual_v2",
         reason:
-          elevenLabsTtsStatus === "missing_config"
+          elevenLabsReason ??
+          (elevenLabsTtsStatus === "missing_config"
             ? "缺少 ELEVENLABS_VOICE_ID。"
             : elevenLabsTtsStatus === "missing_key"
               ? "缺少 ELEVENLABS_API_KEY。"
-              : "",
+              : ""),
         status: elevenLabsTtsStatus
       }
     ]

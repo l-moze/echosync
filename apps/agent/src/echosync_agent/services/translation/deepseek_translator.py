@@ -222,6 +222,14 @@ class DeepSeekTranslator(Translator):
             "tasks, methods, datasets, demonstrations, models, and reasoning types. "
             "Smooth obvious speech fillers such as 'like' or 'kind of' without deleting the "
             "surrounding meaning. "
+            "For spoken discourse markers such as leading 'So' or 'Like', omit them unless "
+            "they are needed for logic; do not start every sentence with '所以' or '像'. "
+            "Use natural Simplified Chinese word order for zh-CN; never output Traditional "
+            "Chinese characters for zh-CN. "
+            "For short fragments, use recent context and current-segment revisions to produce "
+            "a natural continuation; do not invent first-person '我' for English 'we'. "
+            "Prefer idiomatic Mandarin over literal word-for-word structure, for example "
+            "translate busy places as '人多' or '热闹' when natural. "
             "For glossary terms marked required, use the target translation exactly. "
             "For glossary terms marked preferred, prefer the target translation when natural. "
             "Do not invent glossary terms that are not listed. "
@@ -280,6 +288,11 @@ class DeepSeekTranslator(Translator):
         metrics: dict[str, float] | None = None,
         context: CorrectionContext | None = None,
     ) -> TranslationSegment:
+        target_text, target_cleanup_metrics = _postprocess_target_text(
+            target_text,
+            source_text=segment.text,
+            target_lang=self.target_lang,
+        )
         target_text, glossary_metrics = _repair_required_glossary_copies(
             target_text,
             context,
@@ -298,7 +311,7 @@ class DeepSeekTranslator(Translator):
             status=segment.status,
             stability=segment.stability,
             speaker=segment.speaker,
-            metrics={**(metrics or {}), **glossary_metrics},
+            metrics={**(metrics or {}), **target_cleanup_metrics, **glossary_metrics},
         )
 
     def _build_user_prompt(self, source_text: str, context: CorrectionContext) -> str:
@@ -327,7 +340,7 @@ class DeepSeekTranslator(Translator):
         if recent:
             context_block = f"\n<context>\n{recent}\n</context>"
 
-        source_block = f"\n<source>{_xml_text(source_text)}</source>"
+        source_block = f"\n<source>{_xml_text(_normalize_source_for_prompt(source_text))}</source>"
         result = f"{context_block}{current_segment_block}{glossary_block}{source_block}"
         logger.debug("deepseek_prompt_len", extra={"prompt_chars": len(result)})
         return result
@@ -336,7 +349,7 @@ class DeepSeekTranslator(Translator):
     def _recent_context(context: CorrectionContext) -> str:
         lines = [
             "<item>"
-            f"<source>{_xml_text(item.source_text)}</source>"
+            f"<source>{_xml_text(_normalize_source_for_prompt(item.source_text))}</source>"
             f"<target>{_xml_text(item.target_text)}</target>"
             "</item>"
             for item in context.recent_segments[-context.max_revision_segments :]
@@ -347,7 +360,7 @@ class DeepSeekTranslator(Translator):
     def _current_segment_revision_context(context: CorrectionContext) -> str:
         lines = [
             "<item>"
-            f"<source>{_xml_text(item.source_text)}</source>"
+            f"<source>{_xml_text(_normalize_source_for_prompt(item.source_text))}</source>"
             f"<target>{_xml_text(item.target_text)}</target>"
             "</item>"
             for item in context.current_segment_revisions[-context.max_revision_segments :]
@@ -428,6 +441,126 @@ def _replace_source_copy_with_target(
     )
     repaired, count = pattern.subn(target, text)
     return repaired, count > 0
+
+
+def _postprocess_target_text(
+    target_text: str,
+    *,
+    source_text: str,
+    target_lang: str,
+) -> tuple[str, dict[str, float]]:
+    processed = target_text.strip()
+    metrics: dict[str, float] = {}
+
+    processed, trimmed = _trim_redundant_leading_so_translation(
+        processed,
+        source_text=source_text,
+    )
+    if trimmed:
+        metrics["target_discourse_marker_trimmed"] = 1.0
+
+    processed, normalized_chars = _normalize_target_locale(processed, target_lang)
+    if normalized_chars:
+        metrics["target_locale_normalized_chars"] = float(normalized_chars)
+
+    return processed, metrics
+
+
+def _trim_redundant_leading_so_translation(
+    target_text: str,
+    *,
+    source_text: str,
+) -> tuple[str, bool]:
+    source = source_text.lstrip()
+    if not re.match(r"(?i)^so(?:\s|[,.;:!?])", source):
+        return target_text, False
+    if re.match(r"(?i)^so\s+that(?:\s|[,.;:!?])", source):
+        return target_text, False
+    if not target_text.startswith("所以"):
+        return target_text, False
+    trimmed = target_text.removeprefix("所以").lstrip("，,、 ")
+    if not trimmed:
+        return target_text, False
+    return trimmed, True
+
+
+def _normalize_target_locale(text: str, target_lang: str) -> tuple[str, int]:
+    if not _is_simplified_chinese_target(target_lang):
+        return text, 0
+    normalized_chars = sum(1 for char in text if char in _ZH_CN_CHAR_MAP)
+    if normalized_chars == 0:
+        return text, 0
+    return text.translate(_ZH_CN_TRANSLATION_TABLE), normalized_chars
+
+
+def _is_simplified_chinese_target(target_lang: str) -> bool:
+    normalized = target_lang.lower().replace("_", "-")
+    return normalized in {"zh", "zh-cn", "zh-hans", "zh-hans-cn"}
+
+
+def _normalize_source_for_prompt(text: str) -> str:
+    normalized = text.strip()
+    if not normalized:
+        return normalized
+    normalized = re.sub(r"\b([A-Za-z]+)\s+'\s*([A-Za-z]+)\b", r"\1'\2", normalized)
+    normalized = re.sub(r"\s+([,.;:!?])", r"\1", normalized)
+    normalized = re.sub(r"([(\[])\s+", r"\1", normalized)
+    normalized = re.sub(r"\s+([)\]])", r"\1", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
+    return _repair_known_asr_word_splits(normalized)
+
+
+def _repair_known_asr_word_splits(text: str) -> str:
+    repairs = {
+        "c ider": "cider",
+        "C ider": "Cider",
+    }
+    repaired = text
+    for source, target in repairs.items():
+        repaired = repaired.replace(source, target)
+    return repaired
+
+
+_ZH_CN_CHAR_MAP = {
+    "國": "国",
+    "們": "们",
+    "這": "这",
+    "裡": "里",
+    "裏": "里",
+    "來": "来",
+    "時": "时",
+    "會": "会",
+    "個": "个",
+    "說": "说",
+    "對": "对",
+    "讓": "让",
+    "從": "从",
+    "學": "学",
+    "類": "类",
+    "實": "实",
+    "體": "体",
+    "開": "开",
+    "關": "关",
+    "經": "经",
+    "濟": "济",
+    "業": "业",
+    "遊": "游",
+    "觀": "观",
+    "樂": "乐",
+    "聽": "听",
+    "標": "标",
+    "錄": "录",
+    "語": "语",
+    "顯": "显",
+    "應": "应",
+    "該": "该",
+    "風": "风",
+    "區": "区",
+    "歡": "欢",
+    "愛": "爱",
+    "飲": "饮",
+}
+_ZH_CN_TRANSLATION_TABLE = str.maketrans(_ZH_CN_CHAR_MAP)
 
 
 def _default_client_factory(*, api_key: str, base_url: str) -> Any:

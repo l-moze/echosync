@@ -1,4 +1,10 @@
-import type { CaptionTextEvent, RealtimeEvent, SubtitleEvent, SubtitlePatchEvent } from "./realtime-events";
+import type {
+  CaptionTextEvent,
+  CaptionUpdateEvent,
+  RealtimeEvent,
+  SubtitleEvent,
+  SubtitlePatchEvent
+} from "./realtime-events";
 import type { OverlayLayer } from "./overlay-interaction";
 
 export type CaptionLineState = "interim" | "stable" | "revised" | "locked";
@@ -33,6 +39,10 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
 
   if (event.type === "translation.patch") {
     return applyPatch(lines, event, receivedAtMs);
+  }
+
+  if (event.type === "caption_update") {
+    return upsertCaptionUpdate(lines, event, receivedAtMs);
   }
 
   if (event.type === "segment.commit") {
@@ -286,6 +296,66 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
   return [...lines, nextLine];
 }
 
+function upsertCaptionUpdate(lines: CaptionLine[], event: CaptionUpdateEvent, receivedAtMs: number): CaptionLine[] {
+  const previousIndex = findLineIndexFromTail(lines, event.segment_id);
+  const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
+  const sourceText = event.source.full_text;
+  const targetText = event.target?.full_text ?? "";
+
+  if (!previousLine && !sourceText.trim() && !targetText.trim()) {
+    return lines;
+  }
+
+  if (previousLine?.state === "locked" && event.state !== "final") {
+    return lines;
+  }
+
+  if (previousLine && event.revision < previousLine.rev) {
+    if (previousLine.targetText.trim() === "" && targetText.trim() !== "" && countVisibleCharacters(sourceText) >= 8) {
+      const nextLine = withReceivedAt(
+        {
+          ...previousLine,
+          targetText,
+          stability: Math.max(previousLine.stability, captionUpdateStability(event))
+        },
+        receivedAtMs,
+        { previousLine, target: true }
+      );
+
+      return replaceLineAt(lines, previousIndex, nextLine);
+    }
+
+    return lines;
+  }
+
+  const target = selectCaptionUpdateTargetText(previousLine, event);
+  const nextLine: CaptionLine = withReceivedAt(
+    {
+      id: event.segment_id,
+      rev: event.revision,
+      state: mapCaptionUpdateState(event.state),
+      sourceText: selectCaptionUpdateSourceText(previousLine, event),
+      targetText: target.text,
+      stability: captionUpdateStability(event),
+      startMs: event.timing.start_ms,
+      endMs: event.timing.end_ms,
+      patchCount: previousLine?.patchCount ?? 0
+    },
+    receivedAtMs,
+    {
+      previousLine,
+      source: !previousLine || sourceText !== previousLine.sourceText,
+      target: target.accepted
+    }
+  );
+
+  if (previousIndex !== -1) {
+    return replaceLineAt(lines, previousIndex, nextLine);
+  }
+
+  return [...lines, nextLine];
+}
+
 function shouldHideSourceOnlyDraft(event: CaptionTextEvent): boolean {
   return event.status === "partial" && event.target_text.trim() === "";
 }
@@ -401,6 +471,34 @@ function mapStatus(status: SubtitleEvent["status"]): CaptionLineState {
   return "interim";
 }
 
+function mapCaptionUpdateState(state: CaptionUpdateEvent["state"]): CaptionLineState {
+  if (state === "final") {
+    return "locked";
+  }
+
+  if (state === "stable") {
+    return "stable";
+  }
+
+  return "interim";
+}
+
+function captionUpdateStability(event: CaptionUpdateEvent): number {
+  if (event.state === "final") {
+    return 1;
+  }
+
+  if (event.state === "stable") {
+    return 0.9;
+  }
+
+  if (event.source.stable_text?.trim() || event.target?.stable_text?.trim()) {
+    return 0.72;
+  }
+
+  return 0.5;
+}
+
 function countVisibleCharacters(text: string): number {
   return Array.from(text).filter((char) => char.trim() !== "").length;
 }
@@ -417,6 +515,14 @@ function selectTranslationSourceText(previousLine: CaptionLine | undefined, sour
   return sourceText;
 }
 
+function selectCaptionUpdateSourceText(previousLine: CaptionLine | undefined, event: CaptionUpdateEvent): string {
+  if (event.state === "final" || !previousLine) {
+    return event.source.full_text;
+  }
+
+  return selectTranslationSourceText(previousLine, event.source.full_text);
+}
+
 function selectTranslationTargetText(
   previousLine: CaptionLine | undefined,
   event: SubtitleEvent
@@ -431,6 +537,26 @@ function selectTranslationTargetText(
   }
 
   if (shouldHoldTransientTargetShrink(previousLine.targetText, nextTarget, event.status)) {
+    return { text: previousLine.targetText, accepted: false };
+  }
+
+  return { text: nextTarget, accepted: nextTarget !== previousLine.targetText };
+}
+
+function selectCaptionUpdateTargetText(
+  previousLine: CaptionLine | undefined,
+  event: CaptionUpdateEvent
+): { text: string; accepted: boolean } {
+  const nextTarget = event.target?.full_text ?? "";
+  if (!previousLine) {
+    return { text: nextTarget, accepted: Boolean(nextTarget.trim()) };
+  }
+
+  if (!nextTarget.trim()) {
+    return { text: previousLine.targetText, accepted: false };
+  }
+
+  if (event.state !== "final" && shouldHoldTransientTargetShrink(previousLine.targetText, nextTarget, "stable")) {
     return { text: previousLine.targetText, accepted: false };
   }
 

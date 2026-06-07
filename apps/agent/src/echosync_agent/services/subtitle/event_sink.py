@@ -43,6 +43,9 @@ class EventSubtitleSink(SubtitleSink):
         await self.event_bus.publish("segment.commit", _payload("segment.commit", commit))
         await self.event_bus.publish("caption_update", caption_update_from_commit(commit))
 
+    async def publish_caption_update(self, event: dict[str, Any]) -> None:
+        await self.event_bus.publish("caption_update", event)
+
 
 def _payload(event_type: str, value: object) -> dict[str, Any]:
     data = _jsonable(asdict(value))

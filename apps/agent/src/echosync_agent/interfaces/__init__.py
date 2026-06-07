@@ -6,6 +6,7 @@ from echosync_agent.interfaces.subtitle_sink import SubtitleSink
 from echosync_agent.interfaces.transcriber import Transcriber
 from echosync_agent.interfaces.translated_audio_sink import TranslatedAudioSink
 from echosync_agent.interfaces.translator import StreamingTranslator, Translator
+from echosync_agent.interfaces.translation_repair import TranslationRepairEngine
 from echosync_agent.interfaces.tts import TtsSynthesizer
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "Transcriber",
     "StreamingTranslator",
     "Translator",
+    "TranslationRepairEngine",
     "TtsSynthesizer",
 ]

@@ -5,10 +5,11 @@ export type DesktopAudioCaptureKind = "microphone" | "system" | "mixed" | "file"
 export type DesktopAudioCaptureMethod =
   | "browser-microphone"
   | "electron-display-media-loopback"
+  | "native-wasapi-process-loopback"
   | "native-wasapi-mixed"
   | "file-decode";
 
-export type DesktopAudioCapability = "mic" | "loopback" | "mix" | "replay";
+export type DesktopAudioCapability = "mic" | "loopback" | "exclude-self" | "mix" | "replay";
 
 export type DesktopAudioSource = {
   id: DesktopAudioSourceId;
@@ -37,8 +38,8 @@ export const DESKTOP_AUDIO_SOURCES: DesktopAudioSource[] = [
     label: "Windows 系统声音",
     description: "采集电脑正在播放的直播、会议或网课声音。",
     captureKind: "system",
-    captureMethod: "electron-display-media-loopback",
-    capabilities: ["loopback"],
+    captureMethod: "native-wasapi-process-loopback",
+    capabilities: ["loopback", "exclude-self"],
     sampleRate: 16000,
     channels: 1
   },

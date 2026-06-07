@@ -21,7 +21,6 @@ describe("首页同传启动器文案", () => {
       HOME_LAUNCHER_COPY.title,
       HOME_LAUNCHER_COPY.description,
       HOME_LAUNCHER_COPY.primaryAction,
-      HOME_LAUNCHER_COPY.previewAction,
       HOME_LAUNCHER_COPY.preferencesAction,
       buildHomeReadinessSummary({
         audioActive: true,
@@ -56,16 +55,14 @@ describe("首页同传启动器文案", () => {
   it("普通偏好设置保持简单，高级能力只出现在高级入口", () => {
     expect(PREFERENCE_SETTINGS_NAV.map((item) => item.label)).toEqual([
       "常规",
-      "字幕",
-      "同传质量",
-      "记录与隐私"
+      "模型",
+      "术语",
+      "字幕窗口",
+      "记录隐私"
     ]);
     expect(PREFERENCE_ADVANCED_ENTRY.label).toBe("高级");
     expect(ADVANCED_SETTINGS_NAV.map((item) => item.label)).toEqual([
-      "引擎详情",
-      "故障处理",
-      "性能诊断",
-      "开发者"
+      "开发者调试"
     ]);
   });
 

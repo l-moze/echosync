@@ -7,7 +7,7 @@ export type CaptionEventBuffer = {
   snapshot: (sessionId?: string) => RealtimeEvent[];
 };
 
-export function createCaptionEventBuffer(maxEvents = 50): CaptionEventBuffer {
+export function createCaptionEventBuffer(maxEvents = 1000): CaptionEventBuffer {
   const events: RealtimeEvent[] = [];
 
   return {

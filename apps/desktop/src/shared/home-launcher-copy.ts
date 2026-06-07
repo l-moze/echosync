@@ -12,7 +12,6 @@ export const HOME_LAUNCHER_COPY = {
   title: "实时双语字幕",
   description: "为当前音频生成低延迟字幕覆盖层。",
   primaryAction: "开始同传",
-  previewAction: "打开字幕窗预览",
   preferencesAction: "偏好设置"
 } as const;
 
@@ -24,29 +23,27 @@ export type HomeReadinessState = {
 };
 
 export type EngineSettingsNavItem = {
-  id: "general" | "captions" | "quality" | "privacy";
+  id: "general" | "models" | "terminology" | "captions" | "privacy";
   label: string;
 };
 
 export type AdvancedSettingsNavItem = {
-  id: "engine" | "fallback" | "diagnostics" | "developer";
+  id: "developer";
   label: string;
 };
 
 export const PREFERENCE_SETTINGS_NAV: EngineSettingsNavItem[] = [
   { id: "general", label: "常规" },
-  { id: "captions", label: "字幕" },
-  { id: "quality", label: "同传质量" },
-  { id: "privacy", label: "记录与隐私" }
+  { id: "models", label: "模型" },
+  { id: "terminology", label: "术语" },
+  { id: "captions", label: "字幕窗口" },
+  { id: "privacy", label: "记录隐私" }
 ];
 
 export const PREFERENCE_ADVANCED_ENTRY = { label: "高级" } as const;
 
 export const ADVANCED_SETTINGS_NAV: AdvancedSettingsNavItem[] = [
-  { id: "engine", label: "引擎详情" },
-  { id: "fallback", label: "故障处理" },
-  { id: "diagnostics", label: "性能诊断" },
-  { id: "developer", label: "开发者" }
+  { id: "developer", label: "开发者调试" }
 ];
 
 export const SUBTITLE_WINDOW_SETTINGS_ITEMS = [

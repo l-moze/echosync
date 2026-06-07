@@ -9,16 +9,17 @@ describe("桌面音频源目录", () => {
     expect(ids).toEqual(["microphone", "windows-system", "mixed", "file"]);
   });
 
-  it("Windows 系统声音通过 loopback 能力声明，不侵入 Agent 管道", () => {
+  it("Windows 系统声音默认走 WASAPI 原生 loopback 并排除自身音频", () => {
     const systemSource = DESKTOP_AUDIO_SOURCES.find((source) => source.id === "windows-system");
 
     expect(systemSource).toMatchObject({
       label: "Windows 系统声音",
       captureKind: "system",
-      captureMethod: "electron-display-media-loopback",
+      captureMethod: "native-wasapi-process-loopback",
       sampleRate: 16000,
       channels: 1
     });
     expect(systemSource?.capabilities).toContain("loopback");
+    expect(systemSource?.capabilities).toContain("exclude-self");
   });
 });

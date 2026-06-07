@@ -226,6 +226,127 @@ describe("桌面字幕状态机", () => {
     expect(lines[0].targetText).toBe("最终字幕仍然应该显示。");
   });
 
+  it("caption_update 可以独立创建源文草稿，避免 unified 字幕事件被前端丢弃", () => {
+    const lines = applyRealtimeEvent([], {
+      type: "caption_update",
+      session_id: "sess_demo",
+      segment_id: "seg_unified_source",
+      revision: 1,
+      state: "interim",
+      source: {
+        full_text: "The unified caption event is arriving",
+        language: "en",
+        stable_text: "The unified caption event",
+        unstable_text: "is arriving"
+      },
+      timing: {
+        start_ms: 0,
+        end_ms: 1300
+      }
+    });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      id: "seg_unified_source",
+      rev: 1,
+      sourceText: "The unified caption event is arriving",
+      state: "interim",
+      targetText: ""
+    });
+  });
+
+  it("caption_update 可以独立更新译文并按 final 锁定字幕", () => {
+    const partial = applyRealtimeEvent([], {
+      type: "caption_update",
+      session_id: "sess_demo",
+      segment_id: "seg_unified_final",
+      revision: 2,
+      state: "stable",
+      source: {
+        full_text: "The final caption comes through unified events.",
+        language: "en"
+      },
+      target: {
+        full_text: "最终字幕通过统一事件到达。",
+        language: "zh-CN"
+      },
+      timing: {
+        start_ms: 0,
+        end_ms: 2200
+      }
+    });
+
+    const final = applyRealtimeEvent(partial, {
+      type: "caption_update",
+      session_id: "sess_demo",
+      segment_id: "seg_unified_final",
+      revision: 3,
+      state: "final",
+      source: {
+        full_text: "The final caption comes through unified events.",
+        language: "en"
+      },
+      target: {
+        full_text: "最终字幕通过统一事件到达。",
+        language: "zh-CN"
+      },
+      timing: {
+        start_ms: 0,
+        end_ms: 2200
+      }
+    });
+
+    expect(partial[0]).toMatchObject({
+      rev: 2,
+      state: "stable",
+      targetText: "最终字幕通过统一事件到达。"
+    });
+    expect(final[0]).toMatchObject({
+      rev: 3,
+      state: "locked",
+      targetText: "最终字幕通过统一事件到达。"
+    });
+  });
+
+  it("caption_update final 可覆盖较短最终修订，不被临时防回退规则拦截", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_unified_shrink",
+        rev: 4,
+        state: "stable",
+        sourceText: "This old draft is too long.",
+        targetText: "这是一段过长的临时译文，需要最终裁剪。",
+        stability: 0.9,
+        startMs: 0,
+        endMs: 1800,
+        patchCount: 0
+      }
+    ];
+
+    const final = applyRealtimeEvent(initialLines, {
+      type: "caption_update",
+      session_id: "sess_demo",
+      segment_id: "seg_unified_shrink",
+      revision: 5,
+      state: "final",
+      source: {
+        full_text: "This old draft is too long.",
+        language: "en"
+      },
+      target: {
+        full_text: "最终裁剪。",
+        language: "zh-CN"
+      },
+      timing: {
+        start_ms: 0,
+        end_ms: 1800
+      }
+    });
+
+    expect(final[0].state).toBe("locked");
+    expect(final[0].targetText).toBe("最终裁剪。");
+  });
+
   it("保留已有行上的源文 partial 更新，避免隐藏当前段进展", () => {
     const initialLines: CaptionLine[] = [
       {
@@ -671,6 +792,53 @@ describe("桌面字幕状态机", () => {
     });
 
     expect(lines).toEqual(initialLines);
+  });
+
+  it("允许慢速语义修复通过 final caption_update 更新 locked 行", () => {
+    const initialLines: CaptionLine[] = [
+      {
+        id: "seg_semantic_repair",
+        rev: 2,
+        state: "locked",
+        sourceText: "So this part of the UK has more of a seasonal economy.",
+        targetText: "所以这部分英国，更像季节性经济。",
+        stability: 1,
+        startMs: 0,
+        endMs: 1800,
+        patchCount: 0
+      }
+    ];
+
+    const lines = applyRealtimeEvent(initialLines, {
+      type: "caption_update",
+      session_id: "sess_demo",
+      segment_id: "seg_semantic_repair",
+      revision: 3,
+      state: "final",
+      source: {
+        full_text: "So this part of the UK has more of a seasonal economy.",
+        language: "en"
+      },
+      target: {
+        full_text: "英国的这个地区更依赖季节性经济。",
+        language: "zh-CN"
+      },
+      timing: {
+        start_ms: 0,
+        end_ms: 1800
+      },
+      metrics: {
+        semantic_revision_latency_ms: 860,
+        semantic_revision_changed_chars: 12
+      }
+    });
+
+    expect(lines[0]).toMatchObject({
+      rev: 3,
+      state: "locked",
+      targetText: "英国的这个地区更依赖季节性经济。",
+      stability: 1
+    });
   });
 
   it("translation.partial 标记 committed 时不提前锁行，segment.commit 前仍允许修订补丁", () => {

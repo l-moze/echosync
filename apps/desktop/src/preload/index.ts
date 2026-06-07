@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import type { DesktopApi, DesktopCaptureSnapshot } from "../shared/desktop-api";
 import type { RealtimeEvent } from "../shared/realtime-events";
+import type { SessionPreferencesState } from "../shared/session-preferences";
 import type { SubtitleStyleState } from "../shared/subtitle-style-state";
 
 const desktopApi: DesktopApi = {
@@ -18,9 +19,12 @@ const desktopApi: DesktopApi = {
     getAudioUrl: (id) => ipcRenderer.invoke("session-records:get-audio-url", id)
   },
   getAgentCapabilities: () => ipcRenderer.invoke("agent:get-capabilities"),
+  getCaptionSnapshot: (sessionId) => ipcRenderer.invoke("caption:snapshot", sessionId),
   listAudioSources: () => ipcRenderer.invoke("audio:list-sources"),
+  getSessionPreferences: () => ipcRenderer.invoke("session-preferences:get"),
+  updateSessionPreferences: (patch) => ipcRenderer.invoke("session-preferences:update", patch),
   getCaptureState: () => ipcRenderer.invoke("audio:get-state"),
-  startCapture: (sourceId, sessionId) => ipcRenderer.invoke("audio:start", sourceId, sessionId),
+  startCapture: (request) => ipcRenderer.invoke("audio:start", request),
   stopCapture: () => ipcRenderer.invoke("audio:stop"),
   sendRealtimeEvent: (event) => ipcRenderer.invoke("caption:event", event),
   setOverlayVisible: (visible) => ipcRenderer.invoke("overlay:visible", visible),
@@ -32,6 +36,7 @@ const desktopApi: DesktopApi = {
   setSubtitleStyleWindowVisible: (visible) => ipcRenderer.invoke("subtitle-style:visible", visible),
   updateSubtitleStyle: (patch) => ipcRenderer.invoke("subtitle-style:update", patch),
   wakeOverlayControls: () => ipcRenderer.invoke("overlay:wake-controls"),
+  wakeOverlaySettings: () => ipcRenderer.invoke("overlay:wake-settings"),
   recenterOverlay: () => ipcRenderer.invoke("overlay:recenter"),
   copyText: (text) => ipcRenderer.invoke("clipboard:copy-text", text),
   minimize: () => ipcRenderer.invoke("window:minimize"),
@@ -52,10 +57,20 @@ const desktopApi: DesktopApi = {
     ipcRenderer.on("session-records:changed", handler);
     return () => ipcRenderer.off("session-records:changed", handler);
   },
+  onSessionPreferences: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, preferences: SessionPreferencesState) => listener(preferences);
+    ipcRenderer.on("session-preferences:state", handler);
+    return () => ipcRenderer.off("session-preferences:state", handler);
+  },
   onOverlayWake: (listener) => {
     const handler = () => listener();
     ipcRenderer.on("overlay:wake-controls", handler);
     return () => ipcRenderer.off("overlay:wake-controls", handler);
+  },
+  onOverlaySettingsWake: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on("overlay:wake-settings", handler);
+    return () => ipcRenderer.off("overlay:wake-settings", handler);
   },
   onSubtitleStyle: (listener) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: SubtitleStyleState) => listener(payload);

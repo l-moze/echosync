@@ -6,6 +6,7 @@
   "scripts": {
     "dev:web": "npm --prefix apps/web run dev",
     "dev:desktop": "npm --prefix apps/desktop run dev",
+    "build:wasapi-sidecar": "cargo build --manifest-path apps/wasapi-sidecar/Cargo.toml --release",
     "build:desktop": "npm --prefix apps/desktop run build",
     "test:desktop": "npm --prefix apps/desktop test",
     "typecheck:desktop": "npm --prefix apps/desktop run typecheck",

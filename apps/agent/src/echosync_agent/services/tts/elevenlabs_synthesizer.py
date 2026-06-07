@@ -32,6 +32,7 @@ class ElevenLabsStreamingClient:
         model: str,
         output_format: str,
         optimize_streaming_latency: int | None,
+        speed: float,
         text: str,
     ) -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
@@ -45,6 +46,7 @@ class ElevenLabsStreamingClient:
                     model=model,
                     output_format=output_format,
                     optimize_streaming_latency=optimize_streaming_latency,
+                    speed=speed,
                     text=text,
                 ):
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
@@ -73,6 +75,7 @@ class ElevenLabsStreamingClient:
         model: str,
         output_format: str,
         optimize_streaming_latency: int | None,
+        speed: float,
         text: str,
     ) -> AsyncIterator[bytes]:
         parsed = urlparse(self.base_url)
@@ -89,6 +92,9 @@ class ElevenLabsStreamingClient:
             {
                 "text": text,
                 "model_id": model,
+                "voice_settings": {
+                    "speed": _clamp_speed(speed),
+                },
             }
         ).encode("utf-8")
         headers = {
@@ -123,6 +129,7 @@ class ElevenLabsTtsSynthesizer(TtsSynthesizer):
     model: str = "eleven_flash_v2_5"
     output_format: str = "mp3_44100_128"
     optimize_streaming_latency: int | None = None
+    speed: float = 1.15
     client: ElevenLabsStreamingClient | None = None
 
     async def synthesize(self, segment: TranslationSegment) -> AsyncIterator[bytes]:
@@ -133,6 +140,11 @@ class ElevenLabsTtsSynthesizer(TtsSynthesizer):
             model=self.model,
             output_format=self.output_format,
             optimize_streaming_latency=self.optimize_streaming_latency,
+            speed=self.speed,
             text=segment.target_text,
         ):
             yield chunk
+
+
+def _clamp_speed(speed: float) -> float:
+    return min(max(float(speed), 0.7), 1.2)

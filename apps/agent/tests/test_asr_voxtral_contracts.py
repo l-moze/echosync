@@ -130,6 +130,38 @@ def test_voxtral_stream_preserves_delta_spacing_for_transcript_assembly() -> Non
     assert segments[0].text == " hello"
 
 
+def test_voxtral_stream_does_not_attach_short_delta_to_long_cumulative_window() -> None:
+    class FakeRealtimeAudio:
+        async def transcribe_stream(self, **kwargs: Any) -> AsyncIterator[object]:
+            async for _chunk in kwargs["audio_stream"]:
+                pass
+            yield FakeTextDelta("better.")
+            yield FakeDone()
+
+    transcriber = VoxtralRealtimeTranscriber(
+        config=VoxtralRealtimeConfig(
+            api_key="test-key",
+            target_streaming_delay_ms=1_000,
+        ),
+        client_factory=lambda _api_key: _client(FakeRealtimeAudio()),
+        event_types={
+            "session_created": FakeSessionCreated,
+            "text_delta": FakeTextDelta,
+            "done": FakeDone,
+            "error": FakeRealtimeError,
+        },
+    )
+
+    segments = asyncio.run(_collect(transcriber.stream(_frames_after_long_gap())))
+
+    assert len(segments) == 1
+    assert segments[0].text == "better."
+    assert segments[0].start_ms >= 298_000
+    assert segments[0].end_ms == 299_000
+    assert segments[0].end_ms - segments[0].start_ms <= 2_400
+    assert segments[0].metrics["asr_provider_audio_window_ms"] == 300_000.0
+
+
 def test_voxtral_stream_raises_runtime_error_for_realtime_error_event() -> None:
     class FakeRealtimeAudio:
         async def transcribe_stream(self, **kwargs: Any) -> AsyncIterator[object]:
@@ -277,6 +309,30 @@ async def _frames_with_empty_final_marker() -> AsyncIterator[AudioFrame]:
         channels=1,
         start_ms=600,
         end_ms=600,
+        source_lang="en",
+        is_final=True,
+    )
+
+
+async def _frames_after_long_gap() -> AsyncIterator[AudioFrame]:
+    yield AudioFrame(
+        session_id="sess_voxtral",
+        seq=1,
+        pcm=b"\x01\x00",
+        sample_rate=16_000,
+        channels=1,
+        start_ms=0,
+        end_ms=600,
+        source_lang="en",
+    )
+    yield AudioFrame(
+        session_id="sess_voxtral",
+        seq=2,
+        pcm=b"\x02\x00",
+        sample_rate=16_000,
+        channels=1,
+        start_ms=299_400,
+        end_ms=300_000,
         source_lang="en",
         is_final=True,
     )

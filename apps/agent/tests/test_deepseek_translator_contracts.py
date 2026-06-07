@@ -94,6 +94,49 @@ def test_deepseek_system_prompt_requires_complete_semantics_not_summary() -> Non
     assert "final content words" in prompt
 
 
+def test_deepseek_system_prompt_requires_natural_spoken_mandarin() -> None:
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://example.invalid/v1",
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+
+    prompt = translator._system_prompt()
+
+    assert "Simplified Chinese" in prompt
+    assert "Traditional Chinese" in prompt
+    assert "leading 'So'" in prompt
+    assert "do not start every sentence with '所以'" in prompt
+    assert "natural continuation" in prompt
+    assert "do not invent first-person '我' for English 'we'" in prompt
+    assert "idiomatic Mandarin" in prompt
+
+
+def test_deepseek_user_prompt_normalizes_realtime_asr_spacing_artifacts() -> None:
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://example.invalid/v1",
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+    recent = translation_segment(
+        source_text="Here in Cornwall we are famous for our c ider.",
+        target_text="在康沃尔，我们以苹果酒闻名。",
+    )
+    context = CorrectionContext(recent_segments=(recent,))
+
+    prompt = translator._build_user_prompt(
+        "So a seasonal economy is where in the summer, it 's really busy.",
+        context,
+    )
+
+    assert "<source>Here in Cornwall we are famous for our cider.</source>" in prompt
+    assert "<source>So a seasonal economy is where in the summer, it's really busy.</source>" in prompt
+    assert "it 's" not in prompt
+    assert "c ider" not in prompt
+
+
 def test_deepseek_streaming_request_disables_thinking_and_reuses_client() -> None:
     client = FakeOpenAIClient([FakeChunk("大家好"), FakeChunk("", usage=FakeUsage(hit=9, miss=3))])
     factory = RecordingClientFactory({"https://api.deepseek.com/v1": client})
@@ -287,6 +330,80 @@ def test_deepseek_repairs_required_glossary_source_copy_without_extra_request() 
     assert results[-1].metrics["glossary_repaired_required_terms"] == 1.0
     assert results[-1].metrics["glossary_missing_required_terms"] == 0.0
     assert len(client.calls) == 1
+
+
+def test_deepseek_normalizes_zh_cn_traditional_characters_without_extra_request() -> None:
+    client = FakeOpenAIClient([FakeChunk("另一件事是，在英國我們喜歡喝酒。")])
+    factory = RecordingClientFactory({"https://api.deepseek.com/v1": client})
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://api.deepseek.com/v1",
+        client_factory=factory,
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+
+    results = asyncio.run(
+        collect(
+            translator.stream_translate(
+                transcript_segment(text="Another thing is in the UK we love to drink."),
+                CorrectionContext(recent_segments=()),
+            )
+        )
+    )
+
+    assert results[-1].target_text == "另一件事是，在英国我们喜欢喝酒。"
+    assert results[-1].metrics["target_locale_normalized_chars"] == 3.0
+    assert len(client.calls) == 1
+
+
+def test_deepseek_trims_redundant_leading_so_translation_without_extra_request() -> None:
+    client = FakeOpenAIClient([FakeChunk("所以这部分英国更像季节性经济。")])
+    factory = RecordingClientFactory({"https://api.deepseek.com/v1": client})
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://api.deepseek.com/v1",
+        client_factory=factory,
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+
+    results = asyncio.run(
+        collect(
+            translator.stream_translate(
+                transcript_segment(text="So this part of the UK has more of like a seasonal economy."),
+                CorrectionContext(recent_segments=()),
+            )
+        )
+    )
+
+    assert results[-1].target_text == "这部分英国更像季节性经济。"
+    assert results[-1].metrics["target_discourse_marker_trimmed"] == 1.0
+    assert len(client.calls) == 1
+
+
+def test_deepseek_keeps_so_that_translation_prefix() -> None:
+    client = FakeOpenAIClient([FakeChunk("所以我们可以泛化到新的任务。")])
+    factory = RecordingClientFactory({"https://api.deepseek.com/v1": client})
+    translator = DeepSeekTranslator(
+        api_key="test",
+        base_url="https://api.deepseek.com/v1",
+        client_factory=factory,
+        model="deepseek-test",
+        target_lang="zh-CN",
+    )
+
+    results = asyncio.run(
+        collect(
+            translator.stream_translate(
+                transcript_segment(text="So that we can generalize to new tasks."),
+                CorrectionContext(recent_segments=()),
+            )
+        )
+    )
+
+    assert results[-1].target_text == "所以我们可以泛化到新的任务。"
+    assert "target_discourse_marker_trimmed" not in results[-1].metrics
 
 
 def test_deepseek_reports_required_glossary_miss_when_not_safely_repairable() -> None:

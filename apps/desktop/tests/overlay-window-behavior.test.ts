@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -10,22 +12,25 @@ import {
 } from "../src/main/overlay-window-state";
 import { OVERLAY_WINDOW_PRESET } from "../src/main/window-config";
 
+const mainSource = readFileSync(resolve(__dirname, "../src/main/main.ts"), "utf8");
+
 describe("悬浮字幕窗主进程行为", () => {
   it("锁定穿透时忽略鼠标并转发 hover 事件给系统", () => {
     const state = reduceOverlayWindowState(
-      { visible: false, pinned: false, ignoreMouse: false },
+      { visible: false, pinned: false, locked: false, ignoreMouse: false },
       {
         type: "overlay.locked",
         locked: true
       }
     );
 
+    expect(state.locked).toBe(true);
     expect(state.ignoreMouse).toBe(true);
   });
 
   it("Pin 后必须保持可交互", () => {
     const state = reduceOverlayWindowState(
-      { visible: true, pinned: false, ignoreMouse: true },
+      { visible: true, pinned: false, locked: true, ignoreMouse: true },
       {
         type: "overlay.pinned",
         pinned: true
@@ -36,9 +41,22 @@ describe("悬浮字幕窗主进程行为", () => {
     expect(state.ignoreMouse).toBe(false);
   });
 
+  it("取消 Pin 后按锁定意图恢复穿透", () => {
+    const state = reduceOverlayWindowState(
+      { visible: true, pinned: true, locked: true, ignoreMouse: false },
+      {
+        type: "overlay.pinned",
+        pinned: false
+      }
+    );
+
+    expect(state.pinned).toBe(false);
+    expect(state.ignoreMouse).toBe(true);
+  });
+
   it("fallback 唤醒后显示弹窗并取消穿透", () => {
     const state = reduceOverlayWindowState(
-      { visible: false, pinned: false, ignoreMouse: true },
+      { visible: false, pinned: false, locked: true, ignoreMouse: true },
       {
         type: "overlay.wake_controls"
       }
@@ -46,6 +64,40 @@ describe("悬浮字幕窗主进程行为", () => {
 
     expect(state.visible).toBe(true);
     expect(state.ignoreMouse).toBe(false);
+  });
+
+  it("快捷键唤醒设置态后显示弹窗并取消穿透", () => {
+    const state = reduceOverlayWindowState(
+      { visible: false, pinned: false, locked: true, ignoreMouse: true },
+      {
+        type: "overlay.wake_settings"
+      }
+    );
+
+    expect(state.visible).toBe(true);
+    expect(state.ignoreMouse).toBe(false);
+  });
+
+  it("设置和控制 layer 必须强制可交互，回默认态再按锁定恢复穿透", () => {
+    const controlsState = reduceOverlayWindowState(
+      { visible: true, pinned: false, locked: true, ignoreMouse: true },
+      {
+        type: "overlay.layer",
+        layer: "controls"
+      }
+    );
+    const settingsState = reduceOverlayWindowState(controlsState, {
+      type: "overlay.layer",
+      layer: "settings"
+    });
+    const defaultState = reduceOverlayWindowState(settingsState, {
+      type: "overlay.layer",
+      layer: "default"
+    });
+
+    expect(controlsState.ignoreMouse).toBe(false);
+    expect(settingsState.ignoreMouse).toBe(false);
+    expect(defaultState.ignoreMouse).toBe(true);
   });
 
   it("样式设置不应该撑大字幕 overlay 窗口", () => {
@@ -75,6 +127,14 @@ describe("悬浮字幕窗主进程行为", () => {
   it("字幕 overlay 窗口不使用系统 resize 边框和系统阴影", () => {
     expect(OVERLAY_WINDOW_PRESET.resizable).toBe(false);
     expect(OVERLAY_WINDOW_PRESET.hasShadow).toBe(false);
+  });
+
+  it("Ctrl+Shift+S 直达设置态，Alt+Shift+S 保留控制态兼容", () => {
+    expect(mainSource).toContain('globalShortcut.register("CommandOrControl+Shift+S"');
+    expect(mainSource).toContain("wakeOverlaySettings()");
+    expect(mainSource).toContain('sendToWindow(window, "overlay:wake-settings")');
+    expect(mainSource).toContain('globalShortcut.register("Alt+Shift+S"');
+    expect(mainSource).toContain("wakeOverlayControls()");
   });
 
   it("用户调整后的 overlay 尺寸在各 layer 之间共享，并按 layer 最小尺寸夹取", () => {

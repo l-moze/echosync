@@ -39,14 +39,21 @@ describe("renderer visual style contract", () => {
     expect(selectedRule).toContain("var(--brand-sync)");
   });
 
-  it("separates the title bar overlay action from fixed-size window chrome buttons", () => {
-    const overlayActionRule = cssRule(".windowActions button:first-child");
-    const chromeButtonRule = cssRule(".windowActions button:not(:first-child)");
+  it("keeps the title bar focused on fixed-size window chrome buttons", () => {
+    const chromeButtonRule = cssRule(".windowActions button");
+    const activeDashboardSource = rendererSource.slice(
+      rendererSource.indexOf("function ActiveDashboard"),
+      rendererSource.indexOf("function FinishedDashboard")
+    );
 
-    expect(overlayActionRule).toContain("min-width: 84px");
-    expect(overlayActionRule).toContain("border-radius: 999px");
+    expect(rendererSource).not.toContain("title=\"显示字幕窗\"");
+    expect(activeDashboardSource).toContain("onShowOverlay");
+    expect(activeDashboardSource).toContain("恢复悬浮窗");
+    expect(stylesheet).not.toContain(".windowActions button:first-child");
+    expect(stylesheet).not.toContain(".windowActions button:not(:first-child)");
     expect(chromeButtonRule).toContain("width: 32px");
     expect(chromeButtonRule).toContain("height: 32px");
+    expect(chromeButtonRule).toContain("border-radius: 8px");
   });
 
   it("keeps the home launcher inside the first viewport instead of letting the shell crop", () => {
@@ -64,16 +71,21 @@ describe("renderer visual style contract", () => {
     const surfaceRule = cssRule(".launcherSurface");
     const rowRule = cssRule(".launcherRow");
     const titleRule = cssRule(".launcherIntro h1");
-    const previewRule = cssRule(".subtitlePreview");
-    const bubbleRule = cssRule(".previewCaptionBubble");
+    const languageRule = cssRule(".languageDirectionGroup");
 
     expect(surfaceRule).toContain("gap: 12px");
     expect(surfaceRule).toContain("padding: 22px 30px 18px");
     expect(rowRule).toContain("min-height: 48px");
     expect(titleRule).toContain("font-size: 30px");
-    expect(previewRule).toContain("gap: 8px");
-    expect(bubbleRule).toContain("min-height: 104px");
-    expect(bubbleRule).toContain("padding: 18px 24px");
+    expect(languageRule).toContain("max-width: 286px");
+    expect(rendererSource).toContain("languageDirectionOptions.map");
+    expect(rendererSource).toContain("onLanguageDirectionSelect(option.id)");
+    expect(rendererSource).toContain("value={languageDirection.label}");
+    expect(rendererSource).not.toContain("HOME_LAUNCHER_COPY.previewAction");
+    expect(rendererSource).not.toContain("subtitlePreview");
+    expect(rendererSource).not.toContain("免费 1 小时");
+    expect(stylesheet).not.toContain(".subtitlePreview");
+    expect(stylesheet).not.toContain(".previewCaptionBubble");
   });
 
   it("treats the record window as a stable desktop panel with scannable rows", () => {
@@ -90,18 +102,31 @@ describe("renderer visual style contract", () => {
   it("bounds record detail content so transcript and summary panes scroll independently", () => {
     const detailWindowRule = cssRule(".recordWindow.detail");
     const detailPanelRule = cssRule(".recordDetailPanel");
+    const detailHeaderRule = cssRule(".recordDetailPanel > header");
+    const detailActionsRule = cssRule(".recordDetailActions");
+    const audioRule = cssRule(".recordAudioPlayer");
+    const audioControlsRule = cssRule(".recordAudioControls");
+    const audioTimeRule = cssRule(".recordAudioPlayer time");
     const detailLayoutRule = cssRule(".recordDetailLayout");
     const transcriptRule = cssRule(".recordTranscriptList");
     const segmentRule = cssRule(".recordSegmentPair");
     const segmentTextRule = cssRule(".recordSegmentPair p");
     const summaryRule = cssRule(".recordSummaryAside");
     const summarySectionRule = cssRule(".recordSummaryAside section");
+    const summaryListItemRule = cssRule(".recordSummaryList li");
     const summaryErrorRule = cssRule(".recordSummaryError");
 
     expect(detailWindowRule).toContain("height: min(820px, calc(100vh - 92px))");
     expect(detailWindowRule).toContain("grid-template-rows: auto minmax(0, 1fr)");
     expect(detailPanelRule).toContain("grid-template-rows: auto auto minmax(0, 1fr)");
     expect(detailPanelRule).toContain("overflow: hidden");
+    expect(detailHeaderRule).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, auto)");
+    expect(detailActionsRule).toContain("flex-wrap: wrap");
+    expect(detailActionsRule).toContain("min-width: 0");
+    expect(audioRule).toContain("grid-template-columns: minmax(0, 1fr) max-content");
+    expect(audioRule).toContain("overflow: hidden");
+    expect(audioControlsRule).toContain("grid-template-columns: max-content minmax(0, 1fr)");
+    expect(audioTimeRule).toContain("white-space: nowrap");
     expect(detailLayoutRule).toContain("height: 100%");
     expect(detailLayoutRule).toContain("min-height: 0");
     expect(transcriptRule).toContain("min-height: 0");
@@ -116,6 +141,7 @@ describe("renderer visual style contract", () => {
     expect(summaryRule).toContain("overflow-y: auto");
     expect(summaryRule).toContain("overflow-x: hidden");
     expect(summarySectionRule).toContain("min-width: 0");
+    expect(summaryListItemRule).toContain("overflow-wrap: anywhere");
     expect(summaryErrorRule).toContain("overflow-wrap: anywhere");
   });
 
@@ -189,16 +215,105 @@ describe("renderer visual style contract", () => {
       rendererSource.indexOf("function EngineChoiceRow"),
       rendererSource.indexOf("function engineOptionLabel")
     );
+    const advancedSettingsSource = rendererSource.slice(
+      rendererSource.indexOf('className="developerSettings advancedSettings"'),
+      rendererSource.indexOf("function PreferenceMiniCard")
+    );
 
     expect(settingsPanelSource).toContain("providerChoiceState");
     expect(settingsPanelSource).toContain("findAgentAsrProvider");
     expect(settingsPanelSource).toContain("findAgentTranslationProvider");
     expect(settingsPanelSource).toContain("findAgentTtsProvider");
+    expect(settingsPanelSource).toContain('activeSection === "models"');
+    expect(settingsPanelSource).toContain('activeSection === "terminology"');
+    expect(settingsPanelSource).toContain('activeSection === "captions"');
+    expect(settingsPanelSource).toContain("PreferenceMiniCard");
     expect(engineChoiceSource).toContain("disabled={option.disabled}");
     expect(engineChoiceSource).toContain("title={option.description}");
+    expect(settingsPanelSource).toContain("terminologyImportPanel");
+    expect(settingsPanelSource).toContain("导入术语");
+    expect(settingsPanelSource).toContain("术语库");
+    expect(settingsPanelSource).toContain("翻译模型");
+    expect(settingsPanelSource).toContain("onChange={(event) => setTerminologyFileName");
+    expect(cssRule(".terminologyImportPanel")).toContain("grid-template-columns: minmax(0, 1fr) auto");
+    expect(cssRule(".terminologyImportButton input")).toContain("opacity: 0");
+    expect(cssRule(".engineSettingsPanel > nav")).toContain("grid-template-columns: repeat(5, minmax(0, 1fr))");
+    expect(advancedSettingsSource).toContain("advancedDebugBlock");
+    expect(advancedSettingsSource).toContain("开发者调试");
+    expect(advancedSettingsSource).toContain("调试识别");
+    expect(advancedSettingsSource).toContain("调试翻译");
+    expect(advancedSettingsSource).not.toContain('label="语音识别"');
+    expect(advancedSettingsSource).not.toContain('label="翻译"');
+    expect(advancedSettingsSource).not.toContain("故障处理");
+    expect(advancedSettingsSource).not.toContain("性能诊断");
+    expect(advancedSettingsSource).not.toContain("延迟日志");
+    expect(cssRule(".advancedDebugBlock")).toContain("display: grid");
   });
 
-  it("keeps overlay caption history as one clipped bottom-anchored rail", () => {
+  it("keeps overlay toolbar and session controls focused on the expected subtitle workflow", () => {
+    const overlayWindowSource = rendererSource.slice(
+      rendererSource.indexOf("function OverlayWindow"),
+      rendererSource.indexOf("type OverlayResizeDirection")
+    );
+    const overlayToolbarSource = rendererSource.slice(
+      rendererSource.indexOf("function OverlayToolbar"),
+      rendererSource.indexOf("function OverlaySessionBar")
+    );
+    const overlaySessionSource = rendererSource.slice(
+      rendererSource.indexOf("function OverlaySessionBar"),
+      rendererSource.indexOf("function SubtitleStyleWindow")
+    );
+    const captionTextRule = /\.overlaySource,\s*\.floatingCaption h1,\s*\.overlayTarget\s*\{([^}]*)\}/.exec(stylesheet)?.[1] ?? "";
+    const compactChromeSourceRule = /\.overlayStage\.layer-controls \.floatingCaption \.overlaySource,\s*\.overlayStage\.layer-settings \.floatingCaption \.overlaySource\s*\{([^}]*)\}/.exec(stylesheet)?.[1] ?? "";
+    const compactChromeTargetRule = /\.overlayStage\.layer-controls \.floatingCaption h1,\s*\.overlayStage\.layer-settings \.floatingCaption h1\s*\{([^}]*)\}/.exec(stylesheet)?.[1] ?? "";
+
+    expect(overlayWindowSource).toContain("interaction.hoverIntentDelayMs + 20");
+    expect(overlayWindowSource).toContain("interaction.collapseDelayMs + 40");
+    expect(overlayWindowSource).toContain("onOverlaySettingsWake");
+    expect(overlayWindowSource).toContain("openSubtitleSettings");
+    expect(overlayWindowSource).toContain("setSubtitleStyleWindowVisible(true)");
+    expect(rendererSource).toContain("type OverlayChromeMenu");
+    expect(overlayWindowSource).toContain("toggleChromeMenu");
+    expect(overlayToolbarSource).toContain("overlayMenuTrigger");
+    expect(overlayToolbarSource).toContain('activeMenu === "display"');
+    expect(overlayToolbarSource).toContain("overlayDropdown top");
+    expect(overlayToolbarSource).toContain("role=\"menuitemradio\"");
+    expect(overlayToolbarSource).toContain("ToolbarIcon name={isInteractionLocked ? \"unlock\" : \"lock\"}");
+    expect(overlayToolbarSource).toContain("ToolbarIcon name=\"minimize\"");
+    expect(overlayToolbarSource).not.toContain("onWakeHome");
+    expect(overlayToolbarSource).not.toContain("onRecenter");
+    expect(overlaySessionSource).toContain("Windows 系统声音");
+    expect(overlaySessionSource).toContain("captionContentModes.map");
+    expect(overlaySessionSource).toContain("onContentModeChange(mode.id)");
+    expect(overlaySessionSource).toContain('activeMenu === "plan"');
+    expect(overlaySessionSource).toContain('activeMenu === "language"');
+    expect(overlaySessionSource).toContain("onPlanSelect(option.id)");
+    expect(overlaySessionSource).toContain("onLanguageDirectionSelect(option.id)");
+    expect(overlaySessionSource).toContain("languageDirectionOptions.map");
+    expect(overlaySessionSource).not.toContain("onPlanSettings");
+    expect(cssRule(".overlayToolbar")).toContain("grid-template-columns: auto minmax(0, 1fr) auto");
+    expect(cssRule(".overlayIconGroup button")).toContain("width: 30px");
+    expect(cssRule(".overlayIconGroup button")).toContain("height: 30px");
+    expect(cssRule(".overlayIconGroup button.unlockButton")).toContain("min-width: 66px");
+    expect(cssRule(".overlaySessionBar")).toContain("display: grid");
+    expect(cssRule(".overlaySessionBar")).toContain("grid-template-columns: auto auto max-content minmax(96px, max-content) auto max-content");
+    expect(cssRule(".overlayMenuTrigger")).toContain("min-height: 30px");
+    expect(cssRule(".overlayDropdown")).toContain("animation: overlayMenuIn");
+    expect(cssRule(".captionContentSwitch")).toContain("max-width: 100%");
+    expect(cssRule(".floatingCaption")).toContain("user-select: none");
+    expect(cssRule(".floatingCaption")).toContain("-webkit-user-select: none");
+    expect(cssRule(".captionText")).toContain("user-select: none");
+    expect(cssRule(".captionText")).toContain("-webkit-user-select: none");
+    expect(cssRule(".overlayCaptionHistory")).toContain("user-select: none");
+    expect(cssRule(".overlayCaptionHistory")).toContain("-webkit-user-select: none");
+    expect(captionTextRule).toContain("user-select: none");
+    expect(captionTextRule).toContain("-webkit-user-select: none");
+    expect(compactChromeSourceRule).toContain("font-size: min(var(--source-size, 18px), 16px)");
+    expect(compactChromeTargetRule).toContain("font-size: min(var(--target-size, 30px), 26px)");
+    expect(stylesheet).not.toContain("displayModePicker");
+  });
+
+  it("keeps overlay captions in one top-anchored middle rail with complete visible rows", () => {
     const overlaySource = rendererSource.slice(
       rendererSource.indexOf("function OverlayWindow"),
       rendererSource.indexOf("type OverlayResizeDirection")
@@ -206,21 +321,29 @@ describe("renderer visual style contract", () => {
     const historyTextRule = /\.historyLine \.overlaySource,\s*\.historyLine h1,\s*\.historyLine \.overlayTarget\s*\{([^}]*)\}/.exec(stylesheet)?.[1] ?? "";
 
     expect(overlaySource).toContain("combinedHistoryLines");
-    expect(overlaySource).toContain("<OverlayCaptionHistory lines={combinedHistoryLines}");
+    expect(overlaySource).toContain("captionRailLines");
+    expect(overlaySource).toContain("<OverlayCaptionHistory");
+    expect(overlaySource).toContain("contentMode={captionContentMode}");
+    expect(overlaySource).toContain("lines={captionRailLines}");
     expect(overlaySource).not.toContain("variant=\"settling\"");
-    expect(rendererSource).toContain("scrollTranscriptToBottom(historyRef.current, \"smooth\")");
-    expect(cssRule(".floatingCaption.hasHistory")).toContain("grid-template-rows: minmax(0, 1fr) auto");
-    expect(cssRule(".floatingCaption.withChrome.hasHistory")).toContain("grid-template-rows: auto minmax(0, 1fr) auto auto");
+    expect(rendererSource).toContain("useCompleteCaptionItemVisibility(historyRef, \".historyLine\", lineRenderKey)");
+    expect(rendererSource).toContain("scrollCaptionRailToStableEdge(historyRef.current, \".historyLine\", \"smooth\")");
+    expect(cssRule(".floatingCaption.withChrome > .overlayCaptionHistory")).toContain("grid-row: 2");
+    expect(cssRule(".floatingCaption.withChrome > .overlayCaptionHistory")).toContain("height: 100%");
+    expect(cssRule(".overlayCaptionHistory")).toContain("align-content: start");
     expect(cssRule(".overlayCaptionHistory")).toContain("scroll-behavior: smooth");
     expect(cssRule(".overlayCaptionHistory")).toContain("overflow-anchor: none");
     expect(cssRule(".overlayStage.layer-default .overlayCaptionHistory")).toContain("max-height: none");
     expect(cssRule(".overlayStage.layer-default .overlayCaptionHistory")).toContain("height: 100%");
+    expect(cssRule(".historyLine.clipped,\n.zonedCaptionLine.clipped")).toContain("visibility: hidden");
     expect(cssRule(".historyLine")).not.toContain("animation");
     expect(stylesheet).not.toContain("@keyframes historyLineLift");
     expect(historyTextRule).toContain("overflow: hidden");
     expect(historyTextRule).toContain("-webkit-box-orient: vertical");
     expect(cssRule(".historyLine .overlaySource")).toContain("-webkit-line-clamp: 1");
+    expect(cssRule(".historyLine .overlaySource")).toContain("font-size: clamp(12px, calc(var(--source-size, 18px) - 4px), 14px)");
     expect(cssRule(".historyLine h1")).toContain("-webkit-line-clamp: 1");
+    expect(cssRule(".historyLine h1")).toContain("font-size: clamp(17px, calc(var(--target-size, 30px) - 10px), 21px)");
   });
 
   it("renders caption text as paired blocks and gives zoned mode real source/target regions", () => {
@@ -234,12 +357,18 @@ describe("renderer visual style contract", () => {
     expect(captionTextSource).toContain("useBufferedBlocks");
     expect(captionTextSource).toContain("splitPending");
     expect(captionTextSource).toContain("captionTextBlock");
-    expect(cssRule(".captionText")).toContain("align-content: end");
+    expect(cssRule(".captionText")).toContain("align-content: start");
     expect(cssRule(".captionTextBlock")).toContain("display: grid");
     expect(cssRule(".captionTextBlock")).toContain("transition: transform 220ms");
-    expect(cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending .overlaySource")).toContain("display: -webkit-box");
-    expect(cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending .overlaySource")).toContain("-webkit-line-clamp: 3");
-    expect(cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending h1")).toContain("-webkit-line-clamp: 3");
+    const splitPendingSourceRule = cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending .overlaySource");
+    const splitPendingTargetRule = cssRule(".captionText.mode-sentencePair .captionTextBlock.splitPending h1");
+    for (const rule of [splitPendingSourceRule, splitPendingTargetRule]) {
+      expect(rule).toContain("display: -webkit-box");
+      expect(rule).toContain("-webkit-box-orient: vertical");
+      expect(rule).toContain("overflow: hidden");
+      expect(rule).toContain("-webkit-line-clamp: 3");
+      expect(rule).toContain("line-clamp: 3");
+    }
     expect(cssRule(".captionText.mode-zonedPair")).toContain("height: 100%");
     expect(cssRule(".captionText.mode-zonedPair .captionTextBlock")).toContain("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)");
     expect(cssRule(".captionText.mode-zonedPair .overlaySource")).toContain("-webkit-line-clamp: 3");

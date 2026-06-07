@@ -66,6 +66,7 @@ import {
   type StartupUiState,
   type SessionUiEvent
 } from "../shared/session-ui-state";
+import type { SessionPreferencesState } from "../shared/session-preferences";
 import { shouldSurfaceRealtimeError } from "../shared/realtime-error-policy";
 import { selectSessionClockMs } from "../shared/session-clock";
 import {
@@ -112,8 +113,8 @@ import {
   type SessionArchiveDraft
 } from "../shared/session-archive";
 import { logRealtimeEventTelemetry } from "../shared/realtime-telemetry";
+import type { TtsErrorEvent } from "../shared/realtime-events";
 import {
-  ADVANCED_SETTINGS_NAV,
   HOME_LAUNCHER_COPY,
   PREFERENCE_ADVANCED_ENTRY,
   PREFERENCE_SETTINGS_NAV,
@@ -130,6 +131,28 @@ import { resolveDesktopWindowRole } from "./window-role";
 import "./styles.css";
 
 const fontOptions = ["System", "Inter", "Segoe UI", "Microsoft YaHei"];
+type LanguageDirectionId = "en-zh" | "zh-en" | "ja-zh" | "ko-zh";
+type LanguageDirectionOption = {
+  id: LanguageDirectionId;
+  label: string;
+  shortLabel: string;
+  sourceLang: string;
+  targetLang: string;
+};
+const languageDirectionOptions: LanguageDirectionOption[] = [
+  { id: "en-zh", label: "English → 中文", shortLabel: "英 → 中", sourceLang: "en", targetLang: "zh-CN" },
+  { id: "zh-en", label: "中文 → English", shortLabel: "中 → 英", sourceLang: "zh-CN", targetLang: "en" },
+  { id: "ja-zh", label: "日本語 → 中文", shortLabel: "日 → 中", sourceLang: "ja", targetLang: "zh-CN" },
+  { id: "ko-zh", label: "한국어 → 中文", shortLabel: "韩 → 中", sourceLang: "ko", targetLang: "zh-CN" }
+];
+type CaptionContentMode = "source" | "target" | "bilingual";
+const captionContentModes: Array<{ id: CaptionContentMode; label: string }> = [
+  { id: "source", label: "原文" },
+  { id: "target", label: "译文" },
+  { id: "bilingual", label: "双语" }
+];
+type OverlayChromeMenu = "display" | "plan" | "language" | null;
+const LANGUAGE_DIRECTION_STORAGE_KEY = "echosync.languageDirection";
 type NavigationConfirmReason = "active_session" | "startup_cancel" | "dirty_export" | null;
 type SessionArchiveSaveStatus = {
   message: string;
@@ -139,11 +162,39 @@ const TRANSCRIPT_REVIEW_STACKED_WIDTH_PX = 720;
 const REVIEW_TIMELINE_THRESHOLD_MS = 2500;
 const REVIEW_TIMELINE_COMPACT_GAP_MS = 500;
 
+function languageDirectionForId(id: string | null | undefined): LanguageDirectionOption {
+  return languageDirectionOptions.find((option) => option.id === id) ?? languageDirectionOptions[0];
+}
+
+function readStoredLanguageDirectionId(): LanguageDirectionId {
+  try {
+    return languageDirectionForId(window.localStorage.getItem(LANGUAGE_DIRECTION_STORAGE_KEY)).id;
+  } catch {
+    return languageDirectionOptions[0].id;
+  }
+}
+
 function releaseSessionArchive(archive: SessionArchiveDraft | null) {
   if (!archive?.audio?.objectUrl) {
     return;
   }
   URL.revokeObjectURL(archive.audio.objectUrl);
+}
+
+function createNativeWasapiRealtimeClient(): RealtimeAudioClient {
+  const sessionId = createNativeRealtimeSessionId();
+  return {
+    sessionId,
+    start: () => Promise.resolve(),
+    stop: () => Promise.resolve(null)
+  };
+}
+
+function createNativeRealtimeSessionId() {
+  if (globalThis.crypto?.randomUUID) {
+    return `sess_${globalThis.crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  }
+  return `sess_${Date.now().toString(36)}`;
 }
 
 function buildSessionRecordTimeline({
@@ -254,10 +305,12 @@ async function buildSessionRecordDraftInput(
   {
     averageCaptionLagMs,
     endedAt,
+    languageDirection,
     startedAt
   }: {
     averageCaptionLagMs?: number;
     endedAt: string;
+    languageDirection: LanguageDirectionOption;
     startedAt: string;
   }
 ): Promise<SessionRecordDraftInput> {
@@ -268,8 +321,8 @@ async function buildSessionRecordDraftInput(
     startedAt,
     endedAt,
     durationMs: archive.durationMs,
-    sourceLang: "en",
-    targetLang: "zh-CN",
+    sourceLang: languageDirection.sourceLang,
+    targetLang: languageDirection.targetLang,
     averageCaptionLagMs,
     audio: archive.audio?.blob
       ? {
@@ -339,6 +392,7 @@ function App() {
   const [translationProvider, setTranslationProvider] =
     useState<TranslationProviderSelection>("server-default");
   const [ttsProvider, setTtsProvider] = useState<TtsProviderSelection>("server-default");
+  const [languageDirectionId, setLanguageDirectionId] = useState<LanguageDirectionId>(readStoredLanguageDirectionId);
   const [agentCapabilities, setAgentCapabilities] = useState<AgentCapabilities | null>(null);
   const [agentCapabilitiesError, setAgentCapabilitiesError] = useState<string | null>(null);
   const [overlayLocked, setOverlayLocked] = useState(false);
@@ -365,8 +419,50 @@ function App() {
   const terminalRealtimeErrorRef = useRef<string | null>(null);
   const stoppingSessionIdsRef = useRef<Set<string>>(new Set());
   const ttsPlaybackRef = useRef<TtsAudioPlaybackQueue | null>(null);
-  ttsPlaybackRef.current ??= createTtsAudioPlaybackQueue();
+  ttsPlaybackRef.current ??= createTtsAudioPlaybackQueue({ logger: log });
   const ttsPlayback = ttsPlaybackRef.current;
+  const languageDirection = languageDirectionForId(languageDirectionId);
+
+  function updateSessionPreferences(patch: Partial<SessionPreferencesState>) {
+    void window.echosyncDesktop?.updateSessionPreferences(patch).catch((error) => {
+      log.warn("[session-preferences] 同步会话偏好失败:", error);
+    });
+  }
+
+  function selectSource(nextSourceId: DesktopAudioSourceId) {
+    setSourceId(nextSourceId);
+    updateSessionPreferences({ sourceId: nextSourceId });
+  }
+
+  function selectAsrLatencyMode(nextMode: AsrLatencyMode) {
+    setAsrLatencyMode(nextMode);
+    updateSessionPreferences({ asrLatencyMode: nextMode });
+  }
+
+  function selectAsrProvider(nextProvider: AsrProviderSelection) {
+    setAsrProvider(nextProvider);
+    updateSessionPreferences({ asrProvider: nextProvider });
+  }
+
+  function selectTranslationProvider(nextProvider: TranslationProviderSelection) {
+    setTranslationProvider(nextProvider);
+    updateSessionPreferences({ translationProvider: nextProvider });
+  }
+
+  function selectTtsProvider(nextProvider: TtsProviderSelection) {
+    setTtsProvider(nextProvider);
+    updateSessionPreferences({ ttsProvider: nextProvider });
+  }
+
+  function selectLanguageDirection(nextId: LanguageDirectionId) {
+    setLanguageDirectionId(nextId);
+    updateSessionPreferences({ languageDirectionId: nextId });
+    try {
+      window.localStorage.setItem(LANGUAGE_DIRECTION_STORAGE_KEY, nextId);
+    } catch {
+      // Non-persistent renderer contexts can still use the in-memory selection.
+    }
+  }
 
   const setSessionArchiveDraft = useCallback((nextArchive: SessionArchiveDraft | null) => {
     const currentArchive = sessionArchiveRef.current;
@@ -401,7 +497,7 @@ function App() {
     ) => {
       try {
         setSessionArchiveSaveStatus({ message: "正在保存到会议记录...", state: "saving" });
-        const input = await buildSessionRecordDraftInput(archive, { averageCaptionLagMs, endedAt, startedAt });
+        const input = await buildSessionRecordDraftInput(archive, { averageCaptionLagMs, endedAt, languageDirection, startedAt });
         await window.echosyncDesktop?.sessionRecords.saveDraft(input);
         await refreshSessionRecords();
         setSessionArchiveSaveStatus({ message: "已保存到会议记录", state: "saved" });
@@ -410,7 +506,7 @@ function App() {
         setSessionArchiveSaveStatus({ message: "保存失败，可先复制导出文本", state: "failed" });
       }
     },
-    [refreshSessionRecords]
+    [languageDirection, refreshSessionRecords]
   );
 
   useEffect(() => {
@@ -429,6 +525,30 @@ function App() {
       releaseSessionArchive(sessionArchiveRef.current);
       sessionArchiveRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    const applyPreferences = (preferences: SessionPreferencesState) => {
+      setAsrLatencyMode(preferences.asrLatencyMode);
+      setAsrProvider(preferences.asrProvider);
+      setSourceId(preferences.sourceId);
+      setTranslationProvider(preferences.translationProvider);
+      setTtsProvider(preferences.ttsProvider);
+      const nextLanguageDirectionId = languageDirectionForId(preferences.languageDirectionId).id;
+      setLanguageDirectionId(nextLanguageDirectionId);
+      try {
+        window.localStorage.setItem(LANGUAGE_DIRECTION_STORAGE_KEY, nextLanguageDirectionId);
+      } catch {
+        // 非持久化 renderer 上下文仍可使用主进程同步过来的内存状态。
+      }
+    };
+    const remove = window.echosyncDesktop?.onSessionPreferences(applyPreferences);
+    void window.echosyncDesktop?.getSessionPreferences().then((preferences) => {
+      if (preferences) {
+        applyPreferences(preferences);
+      }
+    });
+    return () => remove?.();
   }, []);
 
   useEffect(() => {
@@ -472,6 +592,24 @@ function App() {
         if (role === "control") {
           void ttsPlayback.enqueue(event);
         }
+        setRealtimeError(null);
+        setHasRealEvents(true);
+        return;
+      }
+      if (event.type === "tts.error") {
+        if (role === "control") {
+          ttsPlayback.skip(event);
+        }
+        const notice = formatTtsErrorNotice(event);
+        log.warn("tts_error_received", {
+          code: event.code,
+          message: event.message,
+          provider: event.provider,
+          retryable: event.retryable,
+          segmentId: event.segment_id,
+          sessionId: event.session_id
+        });
+        setRealtimeError(notice);
         setHasRealEvents(true);
         return;
       }
@@ -551,12 +689,36 @@ function App() {
       setSnapshot(currentSnapshot);
       setSourceId(currentSnapshot.sourceId);
       activeSessionIdRef.current = currentSnapshot.sessionId ?? null;
+      if (currentSnapshot.sessionId) {
+        void replayCaptionSnapshot(currentSnapshot.sessionId);
+      }
     });
     return () => {
       removeCaptionListener?.();
       removeCaptureListener?.();
     };
   }, []);
+
+  async function replayCaptionSnapshot(sessionId: string) {
+    try {
+      const snapshotEvents = await window.echosyncDesktop?.getCaptionSnapshot(sessionId);
+      if (!snapshotEvents?.length) {
+        return;
+      }
+      const events = snapshotEvents.filter((event) => isRealtimeEventForActiveSession(activeSessionIdRef.current, event, sessionId));
+      if (!events.length) {
+        return;
+      }
+      setLines((current) => events.reduce((nextLines, event) => applyRealtimeEvent(nextLines, event), current));
+      setHasRealEvents(true);
+      log.info("caption_event_renderer_snapshot_replayed", {
+        eventCount: events.length,
+        sessionId
+      });
+    } catch (error) {
+      log.warn("caption_event_renderer_snapshot_failed", error);
+    }
+  }
 
   useEffect(() => {
     void refreshAgentCapabilities();
@@ -661,17 +823,39 @@ function App() {
       return;
     }
     dispatchSessionUi({ type: "startup.phase.changed", phase: "preparing_audio", atMs: Date.now() });
-    const client = createRealtimeAudioClient({
+    const selectedAsrProvider = selectedAsrProviderId(asrProvider);
+    const selectedTranslationProvider = selectedTranslationProviderId(translationProvider);
+    const selectedTtsProvider = selectedTtsProviderId(ttsProvider);
+    log.info("[realtime] 准备启动会话", {
       asrLatencyMode,
-      asrProvider: selectedAsrProviderId(asrProvider),
-      sourceId: nextSourceId,
-      telemetryLogger: log,
-      translationProvider: selectedTranslationProviderId(translationProvider),
-      ttsProvider: selectedTtsProviderId(ttsProvider)
+      asrProvider: selectedAsrProvider ?? "server-default",
+      languageDirection: languageDirection.id,
+      sessionSourceId: nextSourceId,
+      translationProvider: selectedTranslationProvider ?? "server-default",
+      ttsProvider: selectedTtsProvider ?? "server-default"
     });
+    const client = nextSourceId === "windows-system"
+      ? createNativeWasapiRealtimeClient()
+      : createRealtimeAudioClient({
+          asrLatencyMode,
+          asrProvider: selectedAsrProvider,
+          sourceId: nextSourceId,
+          sourceLang: languageDirection.sourceLang,
+          telemetryLogger: log,
+          translationProvider: selectedTranslationProvider,
+          ttsProvider: selectedTtsProvider
+        });
     realtimeClientRef.current = client;
     activeSessionIdRef.current = client.sessionId;
-    const nextSnapshot = await window.echosyncDesktop?.startCapture(nextSourceId, client.sessionId);
+    const nextSnapshot = await window.echosyncDesktop?.startCapture({
+      asrLatencyMode,
+      asrProvider: selectedAsrProvider,
+      sessionId: client.sessionId,
+      sourceId: nextSourceId,
+      sourceLang: languageDirection.sourceLang,
+      translationProvider: selectedTranslationProvider,
+      ttsProvider: selectedTtsProvider
+    });
     if (nextSnapshot) {
       try {
         dispatchSessionUi({ type: "startup.phase.changed", phase: "connecting_agent", atMs: Date.now() });
@@ -871,10 +1055,15 @@ function App() {
     return (
       <OverlayWindow
         activeLine={activeLine}
+        agentCapabilities={agentCapabilities}
+        languageDirection={languageDirection}
         lines={lines}
+        onLanguageDirectionSelect={selectLanguageDirection}
         onSourceStart={(nextSourceId) => void startCapture(nextSourceId)}
         onStop={() => void stopCapture()}
+        onTranslationProviderSelect={selectTranslationProvider}
         snapshot={snapshot}
+        translationProvider={translationProvider}
       />
     );
   }
@@ -888,24 +1077,32 @@ function App() {
       <AppTitleBar
         canNavigateBack={sessionUi.lifecycle !== "idle" || sessionUi.startup.phase !== "idle"}
         pageTitle={pageTitleForSession(sessionUi)}
-        statusLabel={snapshot.state === "listening" ? "同传中" : hasRealEvents ? "同传服务已连接" : "免费 1 小时"}
+        statusLabel={
+          realtimeError ??
+          (snapshot.state === "listening"
+            ? "同传中"
+            : hasRealEvents
+              ? "同传服务已连接"
+              : "待开始")
+        }
         onBack={requestReturnHome}
-        onShowOverlay={() => window.echosyncDesktop?.setOverlayVisible(true)}
       />
 
       <section className="homeShell">
         <ControlCenter
           activeLine={activeLine}
           currentSource={currentSource}
+          languageDirection={languageDirection}
           lines={lines}
-          onShowOverlay={() => window.echosyncDesktop?.setOverlayVisible(true)}
-          onSourceSelect={(nextSourceId) => setSourceId(nextSourceId)}
-          onAsrLatencyModeSelect={setAsrLatencyMode}
-          onAsrProviderSelect={setAsrProvider}
-          onTranslationProviderSelect={setTranslationProvider}
-          onTtsProviderSelect={setTtsProvider}
+          onLanguageDirectionSelect={selectLanguageDirection}
+          onSourceSelect={selectSource}
+          onAsrLatencyModeSelect={selectAsrLatencyMode}
+          onAsrProviderSelect={selectAsrProvider}
+          onTranslationProviderSelect={selectTranslationProvider}
+          onTtsProviderSelect={selectTtsProvider}
           onReturnHome={requestReturnHome}
           onSessionRecordsChanged={refreshSessionRecords}
+          onShowOverlay={() => void window.echosyncDesktop?.wakeOverlayControls()}
           onStart={() => void startCapture()}
           onStop={() => void stopCapture()}
           overlayLocked={overlayLocked}
@@ -946,13 +1143,11 @@ function App() {
 function AppTitleBar({
   canNavigateBack,
   onBack,
-  onShowOverlay,
   pageTitle,
   statusLabel
 }: {
   canNavigateBack: boolean;
   onBack: () => void;
-  onShowOverlay: () => void;
   pageTitle: string;
   statusLabel: string;
 }) {
@@ -971,9 +1166,6 @@ function AppTitleBar({
       </div>
       <div className="centerPill">{statusLabel}</div>
       <div className="windowActions">
-        <button title="显示字幕窗" onClick={onShowOverlay}>
-          实时字幕
-        </button>
         <button title="最小化" onClick={() => window.echosyncDesktop?.minimize()}>
           -
         </button>
@@ -1100,6 +1292,21 @@ function pageTitleForSession(sessionUi: ReturnType<typeof createInitialSessionUi
   return "EchoSync";
 }
 
+function formatTtsErrorNotice(event: TtsErrorEvent) {
+  if (event.code) {
+    return `语音合成失败：${event.code}`;
+  }
+  return `语音合成失败：${compactStatusMessage(event.message)}`;
+}
+
+function compactStatusMessage(message: string, maxChars = 36) {
+  const compacted = message.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxChars) {
+    return compacted;
+  }
+  return `${compacted.slice(0, maxChars)}...`;
+}
+
 function ControlCenter({
   activeLine,
   agentCapabilities,
@@ -1107,15 +1314,17 @@ function ControlCenter({
   asrLatencyMode,
   asrProvider,
   currentSource,
+  languageDirection,
   lines,
-  onShowOverlay,
   onAsrLatencyModeSelect,
   onAsrProviderSelect,
+  onLanguageDirectionSelect,
   onSourceSelect,
   onTranslationProviderSelect,
   onTtsProviderSelect,
   onReturnHome,
   onSessionRecordsChanged,
+  onShowOverlay,
   onStart,
   onStop,
   overlayLocked,
@@ -1135,15 +1344,17 @@ function ControlCenter({
   asrLatencyMode: AsrLatencyMode;
   asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
+  languageDirection: LanguageDirectionOption;
   lines: CaptionLine[];
-  onShowOverlay: () => void;
   onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
+  onLanguageDirectionSelect: (directionId: LanguageDirectionId) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onTtsProviderSelect: (provider: TtsProviderSelection) => void;
   onReturnHome: () => void;
   onSessionRecordsChanged: () => Promise<void>;
+  onShowOverlay: () => void;
   onStart: () => void;
   onStop: () => void;
   overlayLocked: boolean;
@@ -1166,9 +1377,10 @@ function ControlCenter({
           asrLatencyMode={asrLatencyMode}
           asrProvider={asrProvider}
           currentSource={currentSource}
-          onShowOverlay={onShowOverlay}
+          languageDirection={languageDirection}
           onAsrLatencyModeSelect={onAsrLatencyModeSelect}
           onAsrProviderSelect={onAsrProviderSelect}
+          onLanguageDirectionSelect={onLanguageDirectionSelect}
           onSourceSelect={onSourceSelect}
           onTranslationProviderSelect={onTranslationProviderSelect}
           onTtsProviderSelect={onTtsProviderSelect}
@@ -1188,6 +1400,7 @@ function ControlCenter({
           asrLatencyMode={asrLatencyMode}
           asrProvider={asrProvider}
           lines={lines}
+          onShowOverlay={onShowOverlay}
           onStop={onStop}
           overlayLocked={overlayLocked}
           dispatchSessionUi={dispatchSessionUi}
@@ -1217,9 +1430,10 @@ function IdleDashboard({
   asrLatencyMode,
   asrProvider,
   currentSource,
-  onShowOverlay,
+  languageDirection,
   onAsrLatencyModeSelect,
   onAsrProviderSelect,
+  onLanguageDirectionSelect,
   onSourceSelect,
   onTranslationProviderSelect,
   onTtsProviderSelect,
@@ -1236,9 +1450,10 @@ function IdleDashboard({
   asrLatencyMode: AsrLatencyMode;
   asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
-  onShowOverlay: () => void;
+  languageDirection: LanguageDirectionOption;
   onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
+  onLanguageDirectionSelect: (directionId: LanguageDirectionId) => void;
   onSourceSelect: (sourceId: DesktopAudioSourceId) => void;
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onTtsProviderSelect: (provider: TtsProviderSelection) => void;
@@ -1285,7 +1500,20 @@ function IdleDashboard({
               ))}
             </div>
           </LauncherRow>
-          <LauncherRow label="目标语言" value="English → 中文" />
+          <LauncherRow label="目标语言" value={languageDirection.label}>
+            <div className="choiceGroup languageDirectionGroup" role="group" aria-label="目标语言">
+              {languageDirectionOptions.map((option) => (
+                <button
+                  className={option.id === languageDirection.id ? "selected" : ""}
+                  key={option.id}
+                  onClick={() => onLanguageDirectionSelect(option.id)}
+                  title={option.label}
+                >
+                  {option.shortLabel}
+                </button>
+              ))}
+            </div>
+          </LauncherRow>
           <LauncherRow label="质量模式" value={asrLatencyModeLabel(asrLatencyMode)}>
             <div className="choiceGroup qualityGroup">
               {ASR_LATENCY_OPTIONS.map((mode) => (
@@ -1303,16 +1531,7 @@ function IdleDashboard({
 
         <div className="launcherActions">
           <button className="primary launcherPrimary" onClick={onStart}>{HOME_LAUNCHER_COPY.primaryAction}</button>
-          <button className="subtleAction" onClick={onShowOverlay}>{HOME_LAUNCHER_COPY.previewAction}</button>
         </div>
-
-        <section className="subtitlePreview" aria-label="字幕窗预览">
-          <span className="previewBadge">字幕窗预览</span>
-          <div className="previewCaptionBubble">
-            <p>The speaker is explaining how live captions work.</p>
-            <strong>演讲者正在解释实时字幕的工作方式。</strong>
-          </div>
-        </section>
 
         <PreflightAudioVisualizer sessionUi={sessionUi} />
 
@@ -1331,6 +1550,7 @@ function IdleDashboard({
         asrProvider={asrProvider}
         currentSource={currentSource}
         isOpen={preferencesOpen}
+        languageDirection={languageDirection}
         onAsrLatencyModeSelect={onAsrLatencyModeSelect}
         onAsrProviderSelect={onAsrProviderSelect}
         onClose={() => setPreferencesOpen(false)}
@@ -1373,6 +1593,7 @@ function PreferenceSettingsPanel({
   asrProvider,
   currentSource,
   isOpen,
+  languageDirection,
   onAsrLatencyModeSelect,
   onAsrProviderSelect,
   onClose,
@@ -1386,6 +1607,7 @@ function PreferenceSettingsPanel({
   asrProvider: AsrProviderSelection;
   currentSource: DesktopAudioSource;
   isOpen: boolean;
+  languageDirection: LanguageDirectionOption;
   onAsrLatencyModeSelect: (mode: AsrLatencyMode) => void;
   onAsrProviderSelect: (provider: AsrProviderSelection) => void;
   onClose: () => void;
@@ -1394,8 +1616,9 @@ function PreferenceSettingsPanel({
   translationProvider: TranslationProviderSelection;
   ttsProvider: TtsProviderSelection;
 }) {
-  const [activeSection, setActiveSection] = useState<"general" | "captions" | "quality" | "privacy">("general");
+  const [activeSection, setActiveSection] = useState<(typeof PREFERENCE_SETTINGS_NAV)[number]["id"]>("general");
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [terminologyFileName, setTerminologyFileName] = useState<string | null>(null);
 
   if (!isOpen) {
     return null;
@@ -1404,6 +1627,12 @@ function PreferenceSettingsPanel({
   const asrOptions = ASR_PROVIDER_OPTIONS.filter((provider) => provider.id !== "mock");
   const translationOptions = TRANSLATION_PROVIDER_OPTIONS.filter((provider) => provider.id !== "mock");
   const ttsOptions = TTS_PROVIDER_OPTIONS;
+  const asrStatus = asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider).replace("后端默认", "自动");
+  const translationStatus = translationProviderLabel(
+    translationProvider,
+    agentCapabilities?.defaults.translation_provider
+  ).replace("通用模型", "自动");
+  const ttsStatus = ttsProviderLabel(ttsProvider, agentCapabilities?.defaults.tts_provider);
   const providerChoiceState = {
     asr: (providerId: typeof asrOptions[number]["providerId"], fallbackDescription: string) => {
       if (!providerId || !agentCapabilities) {
@@ -1467,54 +1696,129 @@ function PreferenceSettingsPanel({
         <section className="engineSettingsGroup">
           <h3>常规</h3>
           <PreferenceRow label="默认音频源" value={currentSource.label} />
-          <PreferenceRow label="默认语言方向" value="English → 中文" />
-          <PreferenceRow label="启动时打开字幕窗" value="开启" />
-        </section>
-      ) : null}
-      {activeSection === "captions" ? (
-        <section className="engineSettingsGroup">
-          <h3>字幕</h3>
-          <PreferenceRow label="显示模式" value="逐句对照" />
-          <PreferenceRow label="字号" value="跟随字幕窗口" />
-          <PreferenceRow label="位置" value="由字幕窗口控制" />
-        </section>
-      ) : null}
-      {activeSection === "quality" ? (
-        <section className="engineSettingsGroup">
-          <h3>同传质量</h3>
+          <PreferenceRow label="默认语言方向" value={languageDirection.label} />
+          <PreferenceRow label="默认同传节奏" value={asrLatencyModeLabel(asrLatencyMode)} />
           <div className="choiceGroup qualityGroup">
             {ASR_LATENCY_OPTIONS.map((mode) => (
               <button
                 className={mode.id === asrLatencyMode ? "selected" : ""}
                 key={mode.id}
                 onClick={() => onAsrLatencyModeSelect(mode.id)}
+                title={mode.description}
               >
                 {mode.label}
               </button>
             ))}
           </div>
-          <PreferenceRow
-            label="语音播报"
-            value={ttsProviderLabel(ttsProvider, agentCapabilities?.defaults.tts_provider)}
+          <PreferenceRow label="启动时打开字幕窗" value="开启" />
+        </section>
+      ) : null}
+      {activeSection === "models" ? (
+        <section className="engineSettingsGroup">
+          <div className="settingsSectionLead">
+            <h3>模型方案</h3>
+            <p>把识别、翻译和播报拆成可扫描的方案，后续可以扩展多套翻译模型。</p>
+          </div>
+          <div className="modelPlanGrid" aria-label="模型方案">
+            <PreferenceMiniCard
+              label="当前方案"
+              title={translationStatus}
+              values={[`识别 ${asrStatus}`, `播报 ${ttsStatus}`]}
+            />
+            <PreferenceMiniCard
+              label="预留方案"
+              title="GPT-4o 翻译"
+              values={["会议长上下文", "等待接口接入"]}
+            />
+          </div>
+          <EngineChoiceRow
+            label="语音识别"
+            options={asrOptions.map((option) => {
+              const providerId = option.providerId ?? agentCapabilities?.defaults.asr_provider;
+              const choiceState = providerChoiceState.asr(providerId, option.description);
+              return {
+                id: option.id,
+                description: choiceState.description,
+                disabled: choiceState.disabled,
+                label: engineOptionLabel(option.label, option.id),
+                selected: option.id === asrProvider,
+                onSelect: () => onAsrProviderSelect(option.id)
+              };
+            })}
+            status={asrStatus}
           />
-          <div className="choiceGroup qualityGroup">
-            {ttsOptions.map((option) => {
+          <EngineChoiceRow
+            label="翻译模型"
+            options={translationOptions.map((option) => {
+              const providerId = option.providerId ?? agentCapabilities?.defaults.translation_provider;
+              const choiceState = providerChoiceState.translation(providerId, option.description);
+              return {
+                id: option.id,
+                description: choiceState.description,
+                disabled: choiceState.disabled,
+                label: engineOptionLabel(option.label, option.id),
+                selected: option.id === translationProvider,
+                onSelect: () => onTranslationProviderSelect(option.id)
+              };
+            })}
+            status={translationStatus}
+          />
+          <EngineChoiceRow
+            label="语音播报"
+            options={ttsOptions.map((option) => {
               const providerId = option.providerId ?? agentCapabilities?.defaults.tts_provider;
               const choiceState = providerChoiceState.tts(providerId, option.description);
-              return (
-                <button
-                  className={option.id === ttsProvider ? "selected" : ""}
-                  disabled={choiceState.disabled}
-                  key={option.id}
-                  onClick={() => onTtsProviderSelect(option.id)}
-                  title={choiceState.description}
-                >
-                  {option.label}
-                </button>
-              );
+              return {
+                id: option.id,
+                description: choiceState.description,
+                disabled: choiceState.disabled,
+                label: engineOptionLabel(option.label, option.id),
+                selected: option.id === ttsProvider,
+                onSelect: () => onTtsProviderSelect(option.id)
+              };
             })}
+            status={ttsStatus}
+          />
+        </section>
+      ) : null}
+      {activeSection === "terminology" ? (
+        <section className="engineSettingsGroup">
+          <section className="terminologyImportPanel">
+            <div>
+              <h4>术语库</h4>
+              <p>导入会议、产品、品牌或行业词汇，翻译模型优先采用这些固定表达。</p>
+            </div>
+            <label className="terminologyImportButton">
+              导入术语
+              <input
+                accept=".csv,.txt,.json"
+                aria-label="导入术语文件"
+                onChange={(event) => setTerminologyFileName(event.currentTarget.files?.[0]?.name ?? null)}
+                type="file"
+              />
+            </label>
+          </section>
+          <div className="terminologyStatusLine">
+            <span>{terminologyFileName ? `已选择 ${terminologyFileName}` : "支持 CSV、TXT、JSON，推荐一行一个术语或术语对。"}</span>
           </div>
-          <PreferenceRow label="引擎" value={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider).replace("通用模型", "自动")} />
+          <div className="terminologyFormats" aria-label="术语导入格式">
+            <span>产品名 → 固定译名</span>
+            <span>缩写 → 完整解释</span>
+            <span>禁译词 → 原样保留</span>
+          </div>
+        </section>
+      ) : null}
+      {activeSection === "captions" ? (
+        <section className="engineSettingsGroup">
+          <div className="settingsSectionLead">
+            <h3>字幕窗口</h3>
+            <p>字幕窗口只管理显示体验，不承载模型、日志或接口配置。</p>
+          </div>
+          <PreferenceRow label="默认显示模式" value="逐句对照" />
+          <PreferenceRow label="分区对照" value="上下独立滚动" />
+          <PreferenceRow label="字幕选中" value="禁止选中文本" />
+          <PreferenceRow label="悬浮栏收起" value="延迟淡出" />
+          <PreferenceRow label="字号与透明度" value="在字幕窗设置" />
         </section>
       ) : null}
       {activeSection === "privacy" ? (
@@ -1523,6 +1827,7 @@ function PreferenceSettingsPanel({
           <PreferenceRow label="保存原始音频" value="本次会话后询问" />
           <PreferenceRow label="保存双语记录" value="开启" />
           <PreferenceRow label="自动清理" value="关闭" />
+          <PreferenceRow label="诊断信息" value="按需导出" />
         </section>
       ) : null}
       <details
@@ -1532,47 +1837,11 @@ function PreferenceSettingsPanel({
       >
         <summary>{PREFERENCE_ADVANCED_ENTRY.label}</summary>
         {advancedOpen ? (
-          <>
-            <nav aria-label="高级设置分组">
-              {ADVANCED_SETTINGS_NAV.map((item) => (
-                <span key={item.id}>{item.label}</span>
-              ))}
-            </nav>
-            <EngineChoiceRow
-              label="语音识别"
-              options={asrOptions.map((option) => {
-                const providerId = option.providerId ?? agentCapabilities?.defaults.asr_provider;
-                const choiceState = providerChoiceState.asr(providerId, option.description);
-                return {
-                  id: option.id,
-                  description: choiceState.description,
-                  disabled: choiceState.disabled,
-                  label: engineOptionLabel(option.label, option.id),
-                  selected: option.id === asrProvider,
-                  onSelect: () => onAsrProviderSelect(option.id)
-                };
-              })}
-              status={asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider).replace("后端默认", "自动")}
-            />
-            <EngineChoiceRow
-              label="翻译"
-              options={translationOptions.map((option) => {
-                const providerId = option.providerId ?? agentCapabilities?.defaults.translation_provider;
-                const choiceState = providerChoiceState.translation(providerId, option.description);
-                return {
-                  id: option.id,
-                  description: choiceState.description,
-                  disabled: choiceState.disabled,
-                  label: engineOptionLabel(option.label, option.id),
-                  selected: option.id === translationProvider,
-                  onSelect: () => onTranslationProviderSelect(option.id)
-                };
-              })}
-              status={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider).replace("通用模型", "自动")}
-            />
-            <PreferenceRow label="故障处理" value="故障时尽量继续生成字幕" />
-            <PreferenceRow label="性能诊断" value="按需导出诊断报告" />
-            <PreferenceRow label="延迟日志" value="按需开启" />
+          <section className="advancedDebugBlock" aria-label="开发者调试">
+            <div className="settingsSectionLead">
+              <h3>开发者调试</h3>
+              <p>只保留链路调试项；模型、术语、字幕窗口和记录隐私在上方分组维护。</p>
+            </div>
             <PreferenceRow label="WebSocket 地址" value="由桌面端管理" />
             <PreferenceRow label="事件调试" value="开发者模式" />
             <div className="choiceGroup">
@@ -1580,19 +1849,39 @@ function PreferenceSettingsPanel({
                 className={asrProvider === "mock" ? "selected" : ""}
                 onClick={() => onAsrProviderSelect("mock")}
               >
-                Mock 引擎
+                调试识别
               </button>
               <button
                 className={translationProvider === "mock" ? "selected" : ""}
                 onClick={() => onTranslationProviderSelect("mock")}
               >
-                Mock 翻译
+                调试翻译
               </button>
             </div>
-          </>
+          </section>
         ) : null}
       </details>
     </aside>
+  );
+}
+
+function PreferenceMiniCard({
+  label,
+  title,
+  values
+}: {
+  label: string;
+  title: string;
+  values: string[];
+}) {
+  return (
+    <article className="preferenceMiniCard">
+      <span>{label}</span>
+      <strong>{title}</strong>
+      {values.map((value) => (
+        <small key={value}>{value}</small>
+      ))}
+    </article>
   );
 }
 
@@ -1648,6 +1937,7 @@ function ActiveDashboard({
   asrLatencyMode,
   asrProvider,
   lines,
+  onShowOverlay,
   onStop,
   overlayLocked,
   dispatchSessionUi,
@@ -1660,6 +1950,7 @@ function ActiveDashboard({
   asrLatencyMode: AsrLatencyMode;
   asrProvider: AsrProviderSelection;
   lines: CaptionLine[];
+  onShowOverlay: () => void;
   onStop: () => void;
   overlayLocked: boolean;
   dispatchSessionUi: (event: SessionUiEvent) => void;
@@ -1672,6 +1963,9 @@ function ActiveDashboard({
       <section className="dashboardPanel">
         <div className="activeToolbar">
           <span className="centerPill">同传中</span>
+          <button onClick={onShowOverlay} title="恢复字幕悬浮窗">
+            恢复悬浮窗
+          </button>
           <button onClick={onStop}>停止并复盘</button>
           <button className={overlayLocked ? "selected" : ""} onClick={toggleOverlayLocked}>
             {overlayLocked ? "穿透中" : "允许交互"}
@@ -2979,25 +3273,36 @@ function SessionRecordTable({
 
 function OverlayWindow({
   activeLine,
+  agentCapabilities,
+  languageDirection,
   lines,
+  onLanguageDirectionSelect,
   onSourceStart,
   onStop,
-  snapshot
+  onTranslationProviderSelect,
+  snapshot,
+  translationProvider
 }: {
   activeLine?: CaptionLine;
+  agentCapabilities: AgentCapabilities | null;
+  languageDirection: LanguageDirectionOption;
   lines: CaptionLine[];
+  onLanguageDirectionSelect: (directionId: LanguageDirectionId) => void;
   onSourceStart: (sourceId: DesktopAudioSourceId) => void;
   onStop: () => void;
+  onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   snapshot: DesktopCaptureSnapshot;
+  translationProvider: TranslationProviderSelection;
 }) {
   const isListening = snapshot.state === "listening";
   const [interaction, setInteraction] = useState(createInitialOverlayInteractionState);
   const { subtitleStyle, updateSubtitleStyle } = useSharedSubtitleStyle();
   const isPinned = interaction.layer === "pinned";
-  const showChrome = interaction.layer === "controls" || interaction.layer === "settings" || isPinned;
+  const [overlayExitConfirmOpen, setOverlayExitConfirmOpen] = useState(false);
   const [displayBuffer, setDisplayBuffer] = useState<CaptionDisplayBuffer>(createInitialCaptionDisplayBuffer);
   const displayBufferRef = useRef<CaptionDisplayBuffer>(displayBuffer);
   const overlayRenderMetricsLoggedAtRef = useRef(0);
+  const overlayRenderMetricsEventName = "caption_overlay_render_metrics";
   const [displayNowMs, setDisplayNowMs] = useState(() => Date.now());
   const [sessionStartedAtMs, setSessionStartedAtMs] = useState<number | null>(null);
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
@@ -3014,6 +3319,7 @@ function OverlayWindow({
     };
   }, [displayBuffer, displayNowMs, overlayDisplayLines]);
   const displaySelection = displaySelectionResult.selection;
+  const pendingLineCount = displaySelection.pendingLineIds.length;
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
   const displayPresentationResult = useMemo(() => {
     const presentationStartedAt = performance.now();
@@ -3038,7 +3344,41 @@ function OverlayWindow({
     () => [...historyLines, ...settlingLines],
     [historyLines, settlingLines]
   );
+  const zonedCaptionLines = useMemo(
+    () => selectOverlayCaptionRailLines(combinedHistoryLines, captionLineForDisplay),
+    [captionLineForDisplay, combinedHistoryLines]
+  );
   const [overlayInteractionLocked, setOverlayInteractionLocked] = useState(false);
+  const [subtitleSettingsOpen, setSubtitleSettingsOpen] = useState(false);
+  const [chromeMenu, setChromeMenu] = useState<OverlayChromeMenu>(null);
+  const [captionContentMode, setCaptionContentMode] = useState<CaptionContentMode>("bilingual");
+  const bottomMenuOpen = chromeMenu === "plan" || chromeMenu === "language";
+  const showChrome = interaction.layer === "controls" || interaction.layer === "settings" || isPinned || overlayExitConfirmOpen || bottomMenuOpen;
+  const showZonedCaptionRail = displayMode === "zonedPair" && captionContentMode === "bilingual";
+  const captionRailLines = useMemo(
+    () => selectOverlayCaptionRailLines(combinedHistoryLines, captionLineForDisplay),
+    [captionLineForDisplay, combinedHistoryLines]
+  );
+  const hasCaptionHistory = false;
+  const planLabel = translationProviderLabel(
+    translationProvider,
+    agentCapabilities?.defaults.translation_provider
+  ).replace("通用模型", "自动");
+  const translationPlanOptions = useMemo(
+    () => TRANSLATION_PROVIDER_OPTIONS.filter((option) => option.id !== "mock").map((option) => {
+      const providerId = option.providerId ?? agentCapabilities?.defaults.translation_provider;
+      const capabilities = agentCapabilities;
+      const provider = providerId && capabilities ? findAgentTranslationProvider(capabilities, providerId) : null;
+      return {
+        id: option.id,
+        description: option.id === "server-default" ? "使用当前默认翻译方案" : provider?.reason || option.description,
+        disabled: provider ? !provider.available : false,
+        label: engineOptionLabel(option.label, option.id),
+        selected: option.id === translationProvider
+      };
+    }),
+    [agentCapabilities, translationProvider]
+  );
   const subtitleVars = {
     "--subtitle-bg-opacity": subtitleStyle.backgroundOpacity,
     "--subtitle-blur": `${subtitleStyle.backgroundBlur}px`,
@@ -3064,7 +3404,7 @@ function OverlayWindow({
   }, [overlayDisplayLines]);
 
   useEffect(() => {
-    if (displaySelection.pendingLineIds.length === 0) {
+    if (pendingLineCount === 0) {
       return;
     }
     const timer = window.setTimeout(() => {
@@ -3075,7 +3415,7 @@ function OverlayWindow({
       setDisplayNowMs(nowMs);
     }, 24);
     return () => window.clearTimeout(timer);
-  }, [displaySelection.pendingLineIds.length, displayNowMs, overlayDisplayLines]);
+  }, [displayNowMs, overlayDisplayLines, pendingLineCount]);
 
   useEffect(() => {
     const nowMs = Date.now();
@@ -3089,13 +3429,13 @@ function OverlayWindow({
       return;
     }
     overlayRenderMetricsLoggedAtRef.current = nowMs;
-    log.debug("caption_overlay_render_metrics", {
+    log.debug(overlayRenderMetricsEventName, {
       linesCount: lines.length,
       displayLagMax: displaySelection.displayLag.max,
       displayLagSourceMax: displaySelection.displayLag.sourceMax,
       displayLagTargetMax: displaySelection.displayLag.targetMax,
       displayLagTotal: displaySelection.displayLag.total,
-      pendingLineCount: displaySelection.pendingLineIds.length,
+      pendingLineCount,
       presentationMs: roundMetric(presentationMs),
       selectDisplayMs: roundMetric(selectDisplayMs),
       sessionId: snapshot.sessionId,
@@ -3107,7 +3447,7 @@ function OverlayWindow({
     displaySelection.displayLag.sourceMax,
     displaySelection.displayLag.targetMax,
     displaySelection.displayLag.total,
-    displaySelection.pendingLineIds.length,
+    pendingLineCount,
     displaySelectionResult.selectDisplayMs,
     lines.length,
     overlayDisplayLines.length,
@@ -3117,6 +3457,13 @@ function OverlayWindow({
   useEffect(() => {
     const remove = window.echosyncDesktop?.onOverlayWake(() => {
       dispatchOverlay({ type: "fallback.wake" });
+    });
+    return () => remove?.();
+  }, []);
+
+  useEffect(() => {
+    const remove = window.echosyncDesktop?.onOverlaySettingsWake(() => {
+      void openSubtitleSettings();
     });
     return () => remove?.();
   }, []);
@@ -3156,6 +3503,63 @@ function OverlayWindow({
     }
   }
 
+  async function toggleSubtitleSettings() {
+    const nextOpen = !subtitleSettingsOpen;
+    setOverlayExitConfirmOpen(false);
+    if (nextOpen) {
+      await openSubtitleSettings();
+      return;
+    }
+
+    setChromeMenu(null);
+    setSubtitleSettingsOpen(false);
+    dispatchOverlay({ type: "settings.closed" });
+    await window.echosyncDesktop?.setSubtitleStyleWindowVisible(false);
+  }
+
+  async function openSubtitleSettings() {
+    setOverlayExitConfirmOpen(false);
+    setChromeMenu(null);
+    setSubtitleSettingsOpen(true);
+    dispatchOverlay({ type: "settings.opened" });
+    await window.echosyncDesktop?.setSubtitleStyleWindowVisible(true);
+  }
+
+  function toggleChromeMenu(nextMenu: Exclude<OverlayChromeMenu, null>) {
+    setOverlayExitConfirmOpen(false);
+    setSubtitleSettingsOpen(false);
+    void window.echosyncDesktop?.setSubtitleStyleWindowVisible(false);
+    setChromeMenu((currentMenu) => {
+      const shouldClose = currentMenu === nextMenu;
+      dispatchOverlay(shouldClose ? { type: "settings.closed" } : { type: "settings.opened" });
+      return shouldClose ? null : nextMenu;
+    });
+  }
+
+  function closeChromeMenu() {
+    setChromeMenu((currentMenu) => {
+      if (currentMenu) {
+        dispatchOverlay({ type: "settings.closed" });
+      }
+      return null;
+    });
+  }
+
+  function selectOverlayDisplayMode(nextDisplayMode: SubtitleDisplayMode) {
+    updateSubtitleStyle({ displayMode: nextDisplayMode });
+    closeChromeMenu();
+  }
+
+  function selectOverlayTranslationProvider(nextProvider: TranslationProviderSelection) {
+    onTranslationProviderSelect(nextProvider);
+    closeChromeMenu();
+  }
+
+  function selectOverlayLanguageDirection(nextDirectionId: LanguageDirectionId) {
+    onLanguageDirectionSelect(nextDirectionId);
+    closeChromeMenu();
+  }
+
   async function toggleOverlayCapture() {
     if (isListening) {
       onStop();
@@ -3164,8 +3568,52 @@ function OverlayWindow({
     onSourceStart(snapshot.sourceId);
   }
 
+  async function minimizeOverlay() {
+    setOverlayExitConfirmOpen(false);
+    closeChromeMenu();
+    setSubtitleSettingsOpen(false);
+    await window.echosyncDesktop?.setSubtitleStyleWindowVisible(false);
+    await window.echosyncDesktop?.setOverlayVisible(false);
+  }
+
+  async function requestOverlayClose() {
+    closeChromeMenu();
+    setSubtitleSettingsOpen(false);
+    await window.echosyncDesktop?.setSubtitleStyleWindowVisible(false);
+    if (snapshot.state === "listening" || snapshot.state === "requesting") {
+      setOverlayExitConfirmOpen(true);
+      if (!isPinned) {
+        dispatchOverlay({ type: "settings.opened" });
+      }
+      return;
+    }
+    await window.echosyncDesktop?.setOverlayVisible(false);
+  }
+
+  function cancelOverlayExit() {
+    setOverlayExitConfirmOpen(false);
+    if (!isPinned) {
+      dispatchOverlay({ type: "settings.closed" });
+    }
+  }
+
+  async function confirmOverlayExit() {
+    setOverlayExitConfirmOpen(false);
+    closeChromeMenu();
+    setSubtitleSettingsOpen(false);
+    await window.echosyncDesktop?.setSubtitleStyleWindowVisible(false);
+    if (snapshot.state === "listening" || snapshot.state === "requesting") {
+      onStop();
+    }
+    await window.echosyncDesktop?.setOverlayVisible(false);
+  }
+
   async function selectMicrophoneCapture() {
     onSourceStart("microphone");
+  }
+
+  async function selectSystemCapture() {
+    onSourceStart("windows-system");
   }
 
   return (
@@ -3177,25 +3625,35 @@ function OverlayWindow({
         onMouseEnter={() => {
           const atMs = Date.now();
           dispatchOverlay({ type: "pointer.entered", atMs });
-          window.setTimeout(() => dispatchOverlay({ type: "hover.timer.elapsed", atMs: Date.now() }), 220);
+          window.setTimeout(
+            () => dispatchOverlay({ type: "hover.timer.elapsed", atMs: Date.now() }),
+            interaction.hoverIntentDelayMs + 20
+          );
         }}
         onMouseLeave={() => {
           const atMs = Date.now();
           dispatchOverlay({ type: "pointer.left", atMs });
-          window.setTimeout(() => dispatchOverlay({ type: "collapse.timer.elapsed", atMs: Date.now() }), 340);
+          window.setTimeout(
+            () => dispatchOverlay({ type: "collapse.timer.elapsed", atMs: Date.now() }),
+            interaction.collapseDelayMs + 40
+          );
         }}
       >
         <section
-          className={`floatingCaption captionWindow ${showChrome ? "withChrome" : ""} ${combinedHistoryLines.length > 0 ? "hasHistory" : ""} mode-${displayMode} outline-${subtitleStyle.outlineStyle}`}
+          className={`floatingCaption captionWindow ${showChrome ? "withChrome" : ""} ${hasCaptionHistory ? "hasHistory" : ""} ${bottomMenuOpen ? "hasBottomMenu" : ""} ${overlayExitConfirmOpen ? "hasExitConfirm" : ""} mode-${displayMode} outline-${subtitleStyle.outlineStyle}`}
           style={subtitleVars}
         >
           {showChrome ? (
             <div className="captionTopChrome">
               <OverlayToolbar
+                displayMode={displayMode}
+                activeMenu={chromeMenu}
                 isPinned={isPinned}
-                isSettingsOpen={false}
+                isSettingsOpen={subtitleSettingsOpen}
                 isInteractionLocked={overlayInteractionLocked}
+                onDisplayModeChange={selectOverlayDisplayMode}
                 onInteractionLockToggle={() => void toggleOverlayInteractionLock()}
+                onMenuToggle={toggleChromeMenu}
                 onPinToggle={() => {
                   const nextPinned = !isPinned;
                   dispatchOverlay(nextPinned ? { type: "pin.enabled" } : { type: "pin.disabled" });
@@ -3204,15 +3662,30 @@ function OverlayWindow({
                   }
                   void window.echosyncDesktop?.setOverlayPinned(nextPinned);
                 }}
-                onRecenter={() => void window.echosyncDesktop?.recenterOverlay()}
-                onSettingsToggle={() => void window.echosyncDesktop?.setSubtitleStyleWindowVisible(true)}
-                onWakeHome={() => void window.echosyncDesktop?.wakeOverlayControls()}
-                onClose={() => void window.echosyncDesktop?.setOverlayVisible(false)}
+                onMinimize={() => void minimizeOverlay()}
+                onSettingsToggle={() => void toggleSubtitleSettings()}
+                onClose={() => void requestOverlayClose()}
               />
             </div>
           ) : null}
-          {combinedHistoryLines.length > 0 ? <OverlayCaptionHistory lines={combinedHistoryLines} subtitleStyle={subtitleStyle} /> : null}
-          <CaptionText line={captionLineForDisplay} subtitleStyle={subtitleStyle} useBufferedBlocks />
+          {showZonedCaptionRail ? (
+            <ZonedCaptionRail lines={zonedCaptionLines} subtitleStyle={subtitleStyle} />
+          ) : (
+            <OverlayCaptionHistory
+              contentMode={captionContentMode}
+              lines={captionRailLines}
+              subtitleStyle={subtitleStyle}
+            />
+          )}
+          {bottomMenuOpen ? (
+            <OverlayBottomMenuDock
+              activeMenu={chromeMenu}
+              languageDirection={languageDirection}
+              onLanguageDirectionSelect={selectOverlayLanguageDirection}
+              onPlanSelect={selectOverlayTranslationProvider}
+              planOptions={translationPlanOptions}
+            />
+          ) : null}
           <div className="overlayMeta">
             <span className={`liveDot state-${snapshot.state}`} />
             <span>{isListening ? "正在同传" : "实时字幕"}</span>
@@ -3222,15 +3695,26 @@ function OverlayWindow({
           {showChrome ? (
             <div className="captionBottomChrome">
               <OverlaySessionBar
+                captionContentMode={captionContentMode}
+                activeMenu={chromeMenu}
                 durationMs={sessionDurationMs}
                 isListening={isListening}
+                languageDirection={languageDirection}
                 onCaptureToggle={() => void toggleOverlayCapture()}
-                onDisplayModeChange={(displayMode) => updateSubtitleStyle({ displayMode })}
+                onContentModeChange={setCaptionContentMode}
+                onMenuToggle={toggleChromeMenu}
                 onMicrophoneSelect={() => void selectMicrophoneCapture()}
+                onSystemSelect={() => void selectSystemCapture()}
+                planLabel={planLabel}
                 snapshot={snapshot}
-                subtitleStyle={subtitleStyle}
               />
             </div>
+          ) : null}
+          {overlayExitConfirmOpen ? (
+            <OverlayExitConfirmDialog
+              onCancel={cancelOverlayExit}
+              onConfirm={() => void confirmOverlayExit()}
+            />
           ) : null}
           <OverlayResizeHandles
             onResizeEnd={() => dispatchOverlay({ type: "drag.ended" })}
@@ -3351,35 +3835,43 @@ function resizeBoundsFromPointer(
 }
 
 function CaptionText({
+  contentMode = "bilingual",
   line,
   subtitleStyle,
   useBufferedBlocks = false
 }: {
+  contentMode?: CaptionContentMode;
   line?: CaptionLine;
   subtitleStyle: SubtitleStyleState;
   useBufferedBlocks?: boolean;
 }) {
   const blocks = useCaptionTextBlocks(line, subtitleStyle, useBufferedBlocks);
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
+  const showSource = contentMode !== "target";
+  const showTarget = contentMode !== "source";
 
   return (
-    <div className={`captionText mode-${displayMode}`}>
+    <div className={`captionText mode-${displayMode} content-${contentMode}`}>
       {blocks.map((block) => (
         <article className={`captionTextBlock${block.isSplitPending ? " splitPending" : ""}`} key={block.id}>
-          <p
-            aria-hidden={block.isSourcePlaceholder ? true : undefined}
-            className={`overlaySource ${block.state}${block.isSourcePlaceholder ? " placeholderText" : ""}`}
-            style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: selectSubtitleFontWeight("source", subtitleStyle.sourceBold) }}
-          >
-            {block.sourceText}
-          </p>
-          <h1
-            aria-hidden={block.isTargetPlaceholder ? true : undefined}
-            className={`${block.state}${block.isTargetPlaceholder ? " placeholderText" : ""}`}
-            style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: selectSubtitleFontWeight("target", subtitleStyle.targetBold) }}
-          >
-            {block.targetText}
-          </h1>
+          {showSource ? (
+            <p
+              aria-hidden={block.isSourcePlaceholder ? true : undefined}
+              className={`overlaySource ${block.state}${block.isSourcePlaceholder ? " placeholderText" : ""}`}
+              style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: selectSubtitleFontWeight("source", subtitleStyle.sourceBold) }}
+            >
+              {block.sourceText}
+            </p>
+          ) : null}
+          {showTarget ? (
+            <h1
+              aria-hidden={block.isTargetPlaceholder ? true : undefined}
+              className={`${block.state}${block.isTargetPlaceholder ? " placeholderText" : ""}`}
+              style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: selectSubtitleFontWeight("target", subtitleStyle.targetBold) }}
+            >
+              {block.targetText}
+            </h1>
+          ) : null}
         </article>
       ))}
     </div>
@@ -3413,124 +3905,427 @@ function useCaptionTextBlocks(
   return blocks;
 }
 
-function OverlayCaptionHistory({
+function selectOverlayCaptionRailLines(historyLines: CaptionLine[], activeLine: CaptionLine | undefined): CaptionLine[] {
+  const selectedLines: CaptionLine[] = [];
+
+  function upsertLine(line: CaptionLine | undefined) {
+    if (!line) {
+      return;
+    }
+    const existingIndex = selectedLines.findIndex((item) => item.id === line.id);
+    if (existingIndex >= 0) {
+      selectedLines[existingIndex] = line;
+      return;
+    }
+    selectedLines.push(line);
+  }
+
+  historyLines.forEach(upsertLine);
+  upsertLine(activeLine);
+  return selectedLines;
+}
+
+function ZonedCaptionRail({ lines, subtitleStyle }: { lines: CaptionLine[]; subtitleStyle: SubtitleStyleState }) {
+  return (
+    <div className="zonedCaptionRail" aria-label="分区对照字幕">
+      <ZonedCaptionLane kind="source" lines={lines} subtitleStyle={subtitleStyle} />
+      <ZonedCaptionLane kind="target" lines={lines} subtitleStyle={subtitleStyle} />
+    </div>
+  );
+}
+
+function ZonedCaptionLane({
+  kind,
   lines,
   subtitleStyle
 }: {
+  kind: "source" | "target";
+  lines: CaptionLine[];
+  subtitleStyle: SubtitleStyleState;
+}) {
+  const laneRef = useRef<HTMLDivElement | null>(null);
+  const isSource = kind === "source";
+  const zonedStyle: SubtitleStyleState = { ...subtitleStyle, displayMode: "zonedPair" };
+  const fallbackBlock = selectCaptionTextBlocks(undefined, zonedStyle)[0];
+  const fallbackText = isSource ? fallbackBlock.sourceText : fallbackBlock.targetText;
+  const lineRenderKey = lines.map((line) => `${line.id}:${line.rev}:${line.state}:${line.sourceText.length}:${line.targetText.length}`).join("|");
+  const hiddenItemKeys = useCompleteCaptionItemVisibility(laneRef, ".zonedCaptionLine", lineRenderKey);
+
+  useLayoutEffect(() => {
+    scrollCaptionRailToStableEdge(laneRef.current, ".zonedCaptionLine", "smooth");
+  }, [lineRenderKey]);
+
+  return (
+    <div
+      aria-label={isSource ? "原文字幕区" : "译文字幕区"}
+      className={`zonedCaptionLane ${kind}Lane`}
+      ref={laneRef}
+    >
+      {lines.length > 0 ? (
+        lines.map((line, index) => {
+          const block = selectCaptionTextBlocks(line, zonedStyle)[0];
+          const text = isSource ? block.sourceText : block.targetText;
+          const isPlaceholder = isSource ? block.isSourcePlaceholder : block.isTargetPlaceholder || !text;
+          return (
+            <article
+              className={`zonedCaptionLine ${line.state} ${index === lines.length - 1 ? "current" : ""}${hiddenItemKeys.has(line.id) ? " clipped" : ""}`}
+              data-caption-item-key={line.id}
+              key={`${kind}:${line.id}`}
+            >
+              <p
+                aria-hidden={isPlaceholder ? true : undefined}
+                className={`zonedCaptionText ${kind}Text ${line.state}${isPlaceholder ? " placeholderText" : ""}`}
+                style={{
+                  fontFamily: fontFamilyValue(isSource ? subtitleStyle.sourceFont : subtitleStyle.targetFont),
+                  fontWeight: selectSubtitleFontWeight(isSource ? "source" : "target", isSource ? subtitleStyle.sourceBold : subtitleStyle.targetBold)
+                }}
+              >
+                {text}
+              </p>
+            </article>
+          );
+        })
+      ) : (
+        <article
+          className={`zonedCaptionLine interim current${hiddenItemKeys.has("placeholder") ? " clipped" : ""}`}
+          data-caption-item-key="placeholder"
+        >
+          <p
+            className={`zonedCaptionText ${kind}Text interim`}
+            style={{
+              fontFamily: fontFamilyValue(isSource ? subtitleStyle.sourceFont : subtitleStyle.targetFont),
+              fontWeight: selectSubtitleFontWeight(isSource ? "source" : "target", isSource ? subtitleStyle.sourceBold : subtitleStyle.targetBold)
+            }}
+          >
+            {fallbackText}
+          </p>
+        </article>
+      )}
+    </div>
+  );
+}
+
+function OverlayCaptionHistory({
+  contentMode,
+  lines,
+  subtitleStyle
+}: {
+  contentMode: CaptionContentMode;
   lines: CaptionLine[];
   subtitleStyle: SubtitleStyleState;
 }) {
   const historyRef = useRef<HTMLDivElement | null>(null);
   const lineRenderKey = lines.map((line) => `${line.id}:${line.rev}:${line.state}:${line.sourceText.length}:${line.targetText.length}`).join("|");
+  const hiddenItemKeys = useCompleteCaptionItemVisibility(historyRef, ".historyLine", lineRenderKey);
 
   useLayoutEffect(() => {
-    scrollTranscriptToBottom(historyRef.current, "smooth");
+    scrollCaptionRailToStableEdge(historyRef.current, ".historyLine", "smooth");
   }, [lineRenderKey]);
 
   return (
     <div className="overlayCaptionHistory" ref={historyRef}>
-      {lines.map((line, index, visibleLines) => (
-        <article className={`historyLine ${line.state} ${index === visibleLines.length - 1 ? "current" : ""}`} key={line.id}>
-          <CaptionText line={line} subtitleStyle={subtitleStyle} />
+      {lines.length > 0 ? lines.map((line, index, visibleLines) => (
+        <article
+          className={`historyLine ${line.state} ${index === visibleLines.length - 1 ? "current" : ""}${hiddenItemKeys.has(line.id) ? " clipped" : ""}`}
+          data-caption-item-key={line.id}
+          key={line.id}
+        >
+          <CaptionText
+            contentMode={contentMode}
+            line={line}
+            subtitleStyle={subtitleStyle}
+            useBufferedBlocks={index === visibleLines.length - 1}
+          />
         </article>
-      ))}
+      )) : (
+        <article
+          className={`historyLine interim current${hiddenItemKeys.has("placeholder") ? " clipped" : ""}`}
+          data-caption-item-key="placeholder"
+        >
+          <CaptionText contentMode={contentMode} line={undefined} subtitleStyle={subtitleStyle} useBufferedBlocks />
+        </article>
+      )}
     </div>
   );
 }
 
 function OverlayToolbar({
+  activeMenu,
+  displayMode,
   isPinned,
   isInteractionLocked,
   isSettingsOpen,
+  onDisplayModeChange,
   onInteractionLockToggle,
   onClose,
+  onMenuToggle,
   onPinToggle,
-  onRecenter,
+  onMinimize,
   onSettingsToggle,
-  onWakeHome
 }: {
+  activeMenu: OverlayChromeMenu;
+  displayMode: SubtitleDisplayMode;
   isPinned: boolean;
   isInteractionLocked: boolean;
   isSettingsOpen: boolean;
+  onDisplayModeChange: (mode: SubtitleDisplayMode) => void;
   onInteractionLockToggle: () => void;
   onClose: () => void;
+  onMenuToggle: (menu: Exclude<OverlayChromeMenu, null>) => void;
   onPinToggle: () => void;
-  onRecenter: () => void;
+  onMinimize: () => void;
   onSettingsToggle: () => void;
-  onWakeHome: () => void;
 }) {
+  const displayModes: SubtitleDisplayMode[] = ["sentencePair", "zonedPair"];
   return (
     <nav className="overlayToolbar" aria-label="字幕弹窗工具栏">
-      <button className={isSettingsOpen ? "selected" : ""} title="字幕样式" onClick={onSettingsToggle}>
-        <ToolbarIcon name="settings" />
-      </button>
-      <button className={isInteractionLocked ? "selected" : ""} title={isInteractionLocked ? "恢复鼠标交互" : "鼠标穿透"} onClick={onInteractionLockToggle}>
-        <ToolbarIcon name="lock" />
-      </button>
-      <button className={isPinned ? "selected" : ""} title={isPinned ? "取消驻留" : "驻留字幕"} onClick={onPinToggle}>
-        <ToolbarIcon name="pin" />
-      </button>
-      <button title="召回居中" onClick={onRecenter}>
-        <ToolbarIcon name="target" />
-      </button>
-      <button title="唤醒控制" onClick={onWakeHome}>
-        <ToolbarIcon name="more" />
-      </button>
-      <button title="隐藏字幕窗" onClick={onClose}>
-        <ToolbarIcon name="close" />
-      </button>
+      <div className="overlayMenuCluster">
+        <button
+          aria-expanded={activeMenu === "display"}
+          className={activeMenu === "display" ? "overlayMenuTrigger selected" : "overlayMenuTrigger"}
+          onClick={() => onMenuToggle("display")}
+          title="双语显示方式"
+          type="button"
+        >
+          <ToolbarIcon name="target" />
+          <span>{displayMode === "sentencePair" ? "逐句" : "分区"}</span>
+          <span className="menuChevron">⌄</span>
+        </button>
+        {activeMenu === "display" ? (
+          <div className="overlayDropdown top" role="menu" aria-label="双语显示方式">
+            <span className="overlayDropdownHint">仅在双语模式下生效</span>
+            {displayModes.map((mode) => (
+              <button
+                className={displayMode === mode ? "selected" : ""}
+                aria-label={overlayDisplayModeAccessibleLabel(mode)}
+                key={mode}
+                onClick={() => onDisplayModeChange(mode)}
+                role="menuitemradio"
+                title={subtitleDisplayModeLabel(mode)}
+                type="button"
+              >
+                <span className={`modePreview ${mode}`} aria-hidden="true">
+                  <i />
+                  <i />
+                </span>
+                <span>
+                  <strong>{mode === "sentencePair" ? "逐句对照" : "分区对照"}</strong>
+                  <small>{mode === "sentencePair" ? "按句分段，语意清晰" : "转写翻译，分区显示"}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <div className="overlayIconGroup">
+        <button
+          className={isInteractionLocked ? "selected unlockButton" : ""}
+          title={isInteractionLocked ? "解锁字幕交互" : "锁定字幕并鼠标穿透"}
+          onClick={onInteractionLockToggle}
+          type="button"
+        >
+          <ToolbarIcon name={isInteractionLocked ? "unlock" : "lock"} />
+          {isInteractionLocked ? <span>解锁</span> : null}
+        </button>
+        <button className={isPinned ? "selected" : ""} title={isPinned ? "取消置顶" : "置于顶层"} onClick={onPinToggle} type="button">
+          <ToolbarIcon name="pin" />
+        </button>
+        <button className={isSettingsOpen ? "selected" : ""} title="设置" onClick={onSettingsToggle} type="button">
+          <ToolbarIcon name="settings" />
+        </button>
+        <button title="最小化" onClick={onMinimize} type="button">
+          <ToolbarIcon name="minimize" />
+        </button>
+        <button title="关闭" onClick={onClose} type="button">
+          <ToolbarIcon name="close" />
+        </button>
+      </div>
     </nav>
   );
 }
 
+function overlayDisplayModeAccessibleLabel(mode: SubtitleDisplayMode) {
+  return mode === "sentencePair" ? "逐句对照" : "分区对照";
+}
+
 function OverlaySessionBar({
+  activeMenu,
+  captionContentMode,
   durationMs,
   isListening,
+  languageDirection,
   onCaptureToggle,
-  onDisplayModeChange,
+  onContentModeChange,
+  onMenuToggle,
   onMicrophoneSelect,
-  snapshot,
-  subtitleStyle
+  onSystemSelect,
+  planLabel,
+  snapshot
 }: {
+  activeMenu: OverlayChromeMenu;
+  captionContentMode: CaptionContentMode;
   durationMs: number;
   isListening: boolean;
+  languageDirection: LanguageDirectionOption;
   onCaptureToggle: () => void;
-  onDisplayModeChange: (mode: SubtitleDisplayMode) => void;
+  onContentModeChange: (mode: CaptionContentMode) => void;
+  onMenuToggle: (menu: Exclude<OverlayChromeMenu, null>) => void;
   onMicrophoneSelect: () => void;
+  onSystemSelect: () => void;
+  planLabel: string;
   snapshot: DesktopCaptureSnapshot;
-  subtitleStyle: SubtitleStyleState;
 }) {
-  const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
   return (
     <div className="overlaySessionBar">
-      <button
-        className={snapshot.sourceId === "microphone" ? "roundSessionButton active" : "roundSessionButton"}
-        title="切换到麦克风"
-        onClick={onMicrophoneSelect}
-      >
-        <ToolbarIcon name="mic" />
-      </button>
+      <div className="inputSwitchGroup" aria-label="输入切换" role="group">
+        <button
+          className={snapshot.sourceId === "microphone" ? "roundSessionButton active" : "roundSessionButton"}
+          title="麦克风"
+          onClick={onMicrophoneSelect}
+          type="button"
+        >
+          <ToolbarIcon name="mic" />
+        </button>
+        <button
+          className={snapshot.sourceId === "windows-system" ? "roundSessionButton active" : "roundSessionButton"}
+          title="Windows 系统声音"
+          onClick={onSystemSelect}
+          type="button"
+        >
+          <ToolbarIcon name="system" />
+        </button>
+      </div>
       <button
         className={isListening ? "roundSessionButton active" : "roundSessionButton"}
         title={isListening ? "停止同传" : "开始同传"}
         onClick={onCaptureToggle}
+        type="button"
       >
         <ToolbarIcon name="power" />
       </button>
       <span className="sessionTimer">{formatClock(durationMs)}</span>
-      <span className="sessionPill">{isListening ? "同传中" : "待开始"}</span>
-      <span className="sessionPill">{sourceLabel(snapshot.sourceId)}</span>
-      <details className="displayModePicker">
-        <summary>{subtitleDisplayModeLabel(displayMode)}</summary>
-        <div className="displayModeMenu">
-          <button className={displayMode === "sentencePair" ? "selected" : ""} onClick={() => onDisplayModeChange("sentencePair")}>
-            逐句对照
+      <div className="overlaySessionMenuWrap planMenuWrap">
+        <button
+          aria-expanded={activeMenu === "plan"}
+          className={activeMenu === "plan" ? "sessionPill actionPill planPill selected" : "sessionPill actionPill planPill"}
+          onClick={() => onMenuToggle("plan")}
+          title="模型或方案设置"
+          type="button"
+        >
+          <ToolbarIcon name="model" />
+          <span>{planLabel}</span>
+          <span className="menuChevron">⌄</span>
+        </button>
+      </div>
+      <div className="overlaySessionMenuWrap languageMenuWrap">
+        <button
+          aria-expanded={activeMenu === "language"}
+          className={activeMenu === "language" ? "sessionPill actionPill languagePill selected" : "sessionPill actionPill languagePill"}
+          onClick={() => onMenuToggle("language")}
+          title={languageDirection.label}
+          type="button"
+        >
+          <span>{languageDirection.shortLabel}</span>
+          <span className="menuChevron">⌄</span>
+        </button>
+      </div>
+      <div className="captionContentSwitch" role="group" aria-label="字幕内容">
+        {captionContentModes.map((mode) => (
+          <button
+            className={captionContentMode === mode.id ? "selected" : ""}
+            key={mode.id}
+            onClick={() => onContentModeChange(mode.id)}
+            type="button"
+          >
+            {mode.label}
           </button>
-          <button className={displayMode === "zonedPair" ? "selected" : ""} onClick={() => onDisplayModeChange("zonedPair")}>
-            分区对照
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OverlayBottomMenuDock({
+  activeMenu,
+  languageDirection,
+  onLanguageDirectionSelect,
+  onPlanSelect,
+  planOptions
+}: {
+  activeMenu: OverlayChromeMenu;
+  languageDirection: LanguageDirectionOption;
+  onLanguageDirectionSelect: (directionId: LanguageDirectionId) => void;
+  onPlanSelect: (provider: TranslationProviderSelection) => void;
+  planOptions: Array<{ id: TranslationProviderSelection; description: string; disabled: boolean; label: string; selected: boolean }>;
+}) {
+  if (activeMenu === "plan") {
+    return (
+      <div className="captionMenuDock menu-plan">
+        <div className="overlayDropdown dockedOverlayMenu planMenu" role="menu" aria-label="模型或方案设置">
+          <span className="overlayDropdownHint">切换后用于下一次启动或重启同传</span>
+          {planOptions.map((option) => (
+            <button
+              className={option.selected ? "selected" : ""}
+              disabled={option.disabled}
+              key={option.id}
+              onClick={() => onPlanSelect(option.id)}
+              role="menuitemradio"
+              title={option.description}
+              type="button"
+            >
+              <span>
+                <strong>{option.label}</strong>
+                <small>{option.description}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (activeMenu === "language") {
+    return (
+      <div className="captionMenuDock menu-language">
+        <div className="overlayDropdown dockedOverlayMenu languageMenu" role="menu" aria-label="语言设置">
+          {languageDirectionOptions.map((option) => (
+            <button
+              className={option.id === languageDirection.id ? "selected" : ""}
+              key={option.id}
+              onClick={() => onLanguageDirectionSelect(option.id)}
+              role="menuitemradio"
+              title={option.label}
+              type="button"
+            >
+              <span>
+                <strong>{option.shortLabel}</strong>
+                <small>{option.label}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function OverlayExitConfirmDialog({ onCancel, onConfirm }: { onCancel: () => void; onConfirm: () => void }) {
+  return (
+    <div className="overlayExitConfirmScrim" role="presentation">
+      <section aria-modal="true" className="overlayExitConfirm" role="dialog" aria-labelledby="overlayExitConfirmTitle">
+        <h2 id="overlayExitConfirmTitle">退出同传？</h2>
+        <p>将停止当前识别并保存本次字幕记录，之后可在会议记录中查看。</p>
+        <div className="overlayExitConfirmActions">
+          <button onClick={onCancel} type="button">
+            取消
+          </button>
+          <button className="danger" onClick={onConfirm} type="button">
+            退出同传
           </button>
         </div>
-      </details>
+      </section>
     </div>
   );
 }
@@ -3733,7 +4528,21 @@ function ActionRow({
   );
 }
 
-function ToolbarIcon({ name }: { name: "settings" | "lock" | "pin" | "target" | "more" | "close" | "mic" | "power" }) {
+type ToolbarIconName =
+  | "settings"
+  | "lock"
+  | "unlock"
+  | "pin"
+  | "target"
+  | "more"
+  | "close"
+  | "mic"
+  | "system"
+  | "power"
+  | "minimize"
+  | "model";
+
+function ToolbarIcon({ name }: { name: ToolbarIconName }) {
   const common = { fill: "none", stroke: "currentColor", strokeLinecap: "round" as const, strokeLinejoin: "round" as const, strokeWidth: 1.9 };
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -3747,6 +4556,12 @@ function ToolbarIcon({ name }: { name: "settings" | "lock" | "pin" | "target" | 
         <>
           <rect x="5" y="10" width="14" height="10" rx="2.3" {...common} />
           <path d="M8.2 10V7.5a3.8 3.8 0 0 1 7.6 0V10" {...common} />
+        </>
+      ) : null}
+      {name === "unlock" ? (
+        <>
+          <rect x="5" y="10" width="14" height="10" rx="2.3" {...common} />
+          <path d="M8.2 10V7.5a3.8 3.8 0 0 1 6.7-2.4" {...common} />
         </>
       ) : null}
       {name === "pin" ? <path d="M14.8 3.8 20.2 9l-3.1 1.1-3.8 3.8.4 4.2L12.4 19l-3.5-3.5-4.1-4.1 1.1-1.3 4.2.4 3.8-3.8Z M9 15l-4 4" {...common} /> : null}
@@ -3765,16 +4580,29 @@ function ToolbarIcon({ name }: { name: "settings" | "lock" | "pin" | "target" | 
         </>
       ) : null}
       {name === "close" ? <path d="m6.5 6.5 11 11M17.5 6.5l-11 11" {...common} /> : null}
+      {name === "minimize" ? <path d="M6 12h12" {...common} /> : null}
       {name === "mic" ? (
         <>
           <rect x="9" y="3.5" width="6" height="10" rx="3" {...common} />
           <path d="M5.8 11.5a6.2 6.2 0 0 0 12.4 0M12 17.8V21M8.8 21h6.4" {...common} />
         </>
       ) : null}
+      {name === "system" ? (
+        <>
+          <rect x="4" y="5" width="16" height="11" rx="2" {...common} />
+          <path d="M9 20h6M12 16v4M7.5 9.2h9" {...common} />
+        </>
+      ) : null}
       {name === "power" ? (
         <>
           <path d="M12 3.5v8" {...common} />
           <path d="M7.4 6.8a7.2 7.2 0 1 0 9.2 0" {...common} />
+        </>
+      ) : null}
+      {name === "model" ? (
+        <>
+          <rect x="4" y="5" width="16" height="14" rx="3" {...common} />
+          <path d="M8 9h8M8 13h5M16.5 13.5l1.3 1.3M18 12.2v2.6" {...common} />
         </>
       ) : null}
     </svg>
@@ -3803,11 +4631,119 @@ function sourceLabel(sourceId: DesktopAudioSourceId) {
   return DESKTOP_AUDIO_SOURCES.find((source: DesktopAudioSource) => source.id === sourceId)?.label ?? "未知来源";
 }
 
+function useCompleteCaptionItemVisibility(
+  containerRef: { current: HTMLDivElement | null },
+  itemSelector: string,
+  layoutKey: string
+) {
+  const [hiddenItemKeys, setHiddenItemKeys] = useState<ReadonlySet<string>>(() => new Set());
+
+  useLayoutEffect(() => {
+    const element = containerRef.current;
+    if (!element) {
+      setHiddenItemKeys(new Set());
+      return;
+    }
+
+    let frame: number | null = null;
+    let resizeObserver: ResizeObserver | null = null;
+    const edgeTolerancePx = 1;
+
+    function measure() {
+      frame = null;
+      const container = containerRef.current;
+      if (!container) {
+        setHiddenItemKeys(new Set());
+        return;
+      }
+
+      const containerRect = container.getBoundingClientRect();
+      const nextHiddenKeys = new Set<string>();
+      const items = Array.from(container.querySelectorAll<HTMLElement>(itemSelector));
+      for (const item of items) {
+        const key = item.dataset.captionItemKey;
+        if (!key) {
+          continue;
+        }
+
+        const itemRect = item.getBoundingClientRect();
+        const itemFitsInViewport = itemRect.height <= containerRect.height + edgeTolerancePx;
+        const isFullyVisible =
+          itemRect.top >= containerRect.top - edgeTolerancePx &&
+          itemRect.bottom <= containerRect.bottom + edgeTolerancePx;
+        if (itemFitsInViewport && !isFullyVisible) {
+          nextHiddenKeys.add(key);
+        }
+      }
+
+      setHiddenItemKeys((current) => (setsEqual(current, nextHiddenKeys) ? current : nextHiddenKeys));
+    }
+
+    function scheduleMeasure() {
+      if (frame !== null) {
+        return;
+      }
+      frame = window.requestAnimationFrame(measure);
+    }
+
+    scheduleMeasure();
+    element.addEventListener("scroll", scheduleMeasure, { passive: true });
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(scheduleMeasure);
+      resizeObserver.observe(element);
+      for (const item of element.querySelectorAll<HTMLElement>(itemSelector)) {
+        resizeObserver.observe(item);
+      }
+    }
+
+    return () => {
+      element.removeEventListener("scroll", scheduleMeasure);
+      resizeObserver?.disconnect();
+      if (frame !== null) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [containerRef, itemSelector, layoutKey]);
+
+  return hiddenItemKeys;
+}
+
+function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>) {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const item of left) {
+    if (!right.has(item)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function scrollTranscriptToBottom(element: HTMLDivElement | null, behavior: ScrollBehavior = "auto") {
   if (!element) {
     return;
   }
   element.scrollTo({ behavior, top: element.scrollHeight });
+}
+
+function scrollCaptionRailToStableEdge(
+  element: HTMLDivElement | null,
+  itemSelector: string,
+  behavior: ScrollBehavior = "auto"
+) {
+  if (!element) {
+    return;
+  }
+
+  const items = Array.from(element.querySelectorAll<HTMLElement>(itemSelector));
+  const lastItem = items.at(-1);
+  const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+  const paddingBottom = Number.parseFloat(window.getComputedStyle(element).paddingBottom) || 0;
+  const targetTop = lastItem
+    ? Math.min(maxScrollTop, Math.max(0, lastItem.offsetTop + lastItem.offsetHeight + paddingBottom - element.clientHeight))
+    : maxScrollTop;
+  element.scrollTo({ behavior, top: targetTop });
 }
 
 function seekAudioElement(audio: HTMLAudioElement, nextMs: number) {

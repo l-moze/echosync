@@ -19,6 +19,17 @@ const captionEvent: RealtimeEvent = {
 };
 
 describe("主进程字幕事件缓存", () => {
+  it("默认缓存足够覆盖一段真实测评的高频字幕事件，避免窗口迟开后只补最后几秒", () => {
+    const buffer = createCaptionEventBuffer();
+
+    for (let index = 0; index < 640; index += 1) {
+      buffer.push({ ...captionEvent, segment_id: `seg_${index}` });
+    }
+
+    expect(buffer.snapshot()).toHaveLength(640);
+    expect(buffer.snapshot().filter(isSubtitleEvent)[0].segment_id).toBe("seg_0");
+  });
+
   it("保留最近事件，供窗口加载后重放", () => {
     const buffer = createCaptionEventBuffer(2);
 

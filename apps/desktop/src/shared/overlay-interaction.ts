@@ -46,9 +46,9 @@ export function createInitialOverlayInteractionState(): OverlayInteractionState 
     layer: "default",
     pointerMode: "pass_through",
     hoverStartedAtMs: null,
-    hoverIntentDelayMs: 200,
+    hoverIntentDelayMs: 180,
     collapseStartedAtMs: null,
-    collapseDelayMs: 320,
+    collapseDelayMs: 760,
     fallbackAwake: false,
     revisionHighlightedAtMs: null,
     revisionHighlightVisible: false

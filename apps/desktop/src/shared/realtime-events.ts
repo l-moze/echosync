@@ -30,10 +30,17 @@ export type RealtimeEventMetrics = {
   translation_final_ms?: number;
   prompt_cache_hit_tokens?: number;
   prompt_cache_miss_tokens?: number;
+  semantic_revision_latency_ms?: number;
+  semantic_revision_changed_chars?: number;
+  semantic_revision_trigger_count?: number;
   tts_first_audio_ms?: number;
+  tts_queue_wait_ms?: number;
   tts_total_ms?: number;
   tts_audio_chunks?: number;
   tts_audio_bytes?: number;
+  tts_failed?: number;
+  tts_prefetch_placeholder?: number;
+  tts_prefetch_concurrency?: number;
 };
 
 export type CaptionUpdateEvent = {
@@ -145,6 +152,7 @@ export type RealtimeErrorEvent = {
   type: "realtime.error";
   session_id: string;
   message: string;
+  code?: string;
   published_at_ms?: number;
   trace_id?: string;
   span_id?: string;
@@ -176,6 +184,25 @@ export type TtsAudioEvent = {
   span_id?: string;
 };
 
+export type TtsErrorEvent = {
+  type: "tts.error";
+  session_id: string;
+  segment_id: string;
+  rev: number;
+  start_ms: number;
+  end_ms: number;
+  target_lang: string;
+  provider?: string;
+  message: string;
+  code?: string;
+  retryable?: boolean;
+  target_text?: string;
+  metrics?: RealtimeEventMetrics;
+  published_at_ms?: number;
+  trace_id?: string;
+  span_id?: string;
+};
+
 export type RealtimeEvent =
   | TranscriptEvent
   | SubtitleEvent
@@ -183,5 +210,6 @@ export type RealtimeEvent =
   | SubtitlePatchEvent
   | SubtitleCommitEvent
   | TtsAudioEvent
+  | TtsErrorEvent
   | RealtimeErrorEvent
   | RealtimeDoneEvent;

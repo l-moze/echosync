@@ -1,4 +1,4 @@
-export type AsrProviderId = "mock" | "funasr" | "voxtral" | "deepgram";
+export type AsrProviderId = "mock" | "funasr" | "voxtral" | "deepgram" | "qwen-asr" | "qwen-livetranslate";
 export type AsrProviderSelection = "server-default" | AsrProviderId;
 export type AsrLatencyMode = "low_latency" | "balanced" | "accuracy";
 
@@ -38,6 +38,18 @@ export const ASR_PROVIDER_OPTIONS: AsrProviderOption[] = [
     label: "Deepgram",
     description: "云端实时英文识别",
     providerId: "deepgram"
+  },
+  {
+    id: "qwen-asr",
+    label: "Qwen ASR",
+    description: "阿里云百炼实时语音识别",
+    providerId: "qwen-asr"
+  },
+  {
+    id: "qwen-livetranslate",
+    label: "Qwen 同传",
+    description: "阿里云端到端实时语音翻译",
+    providerId: "qwen-livetranslate"
   },
   {
     id: "mock",

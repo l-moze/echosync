@@ -200,4 +200,46 @@ describe("实时事件遥测", () => {
       type: "realtime.error"
     });
   });
+
+  it("记录 TTS 错误的供应商、错误码和非致命重试属性", () => {
+    const telemetry = buildRealtimeEventTelemetry(
+      {
+        type: "tts.error",
+        session_id: "sess_voice",
+        segment_id: "seg_voice",
+        rev: 4,
+        start_ms: 1200,
+        end_ms: 2400,
+        target_lang: "zh-CN",
+        provider: "ElevenLabsTtsSynthesizer",
+        message: "ElevenLabs TTS failed: HTTP 404 voice_not_found",
+        code: "tts.elevenlabs.voice_not_found",
+        retryable: false,
+        target_text: "你好，欢迎。",
+        metrics: {
+          tts_failed: 1,
+          tts_total_ms: 95,
+          tts_audio_chunks: 0,
+          tts_audio_bytes: 0
+        },
+        published_at_ms: 7000
+      },
+      7042
+    );
+
+    expect(telemetry).toMatchObject({
+      agentToRendererMs: 42,
+      code: "tts.elevenlabs.voice_not_found",
+      message: "ElevenLabs TTS failed: HTTP 404 voice_not_found",
+      provider: "ElevenLabsTtsSynthesizer",
+      retryable: false,
+      sessionId: "sess_voice",
+      segmentId: "seg_voice",
+      targetPreview: "你好，欢迎。",
+      ttsAudioChunks: 0,
+      ttsFailed: 1,
+      ttsTotalMs: 95,
+      type: "tts.error"
+    });
+  });
 });

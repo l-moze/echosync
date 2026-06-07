@@ -20,7 +20,7 @@
 | 术语表是必需能力 | `Glossary` + `GlossaryEntry` + `MatchedTerm` 已实现；`CorrectionContext.glossary` + `glossary_constraints` 数据流贯通；流式窗口匹配 + overlap 去重 + XML prompt 注入 + `as_asr_phrases()` ASR bias 出口已完成 | 已对齐 | 术语表作为 session 级配置，会话启动时加载术语全集，每段只匹配命中术语，prompt 仅注入命中项。MVP 使用 `RegexGlossaryMatcher`（预编译正则），术语数超过 500 时可替换为 Aho-Corasick/FlashText。 |
 | 可选 TTS / 原生语音翻译 | `EdgeTtsSynthesizer`、`TranslatedAudioSink`、`InterpretationEngine` 边界 | 已对齐 | 默认关闭，避免 MVP 首版增加延迟；端到端模型可直接输出译文音频块。 |
 
-当前文档与研究报告的关系是：**产品/管道模型对齐，传输层当前落地为 Electron/Web Audio PCM + FastAPI WebSocket；LiveKit/WebRTC 来自补充文档的快速开发备选路线，保留在 `transport/` 边界中，不是当前已接通主链路。**
+当前文档与研究报告的关系是：**产品/管道模型对齐，传输层当前落地为 Windows WASAPI sidecar / 浏览器麦克风 PCM + FastAPI WebSocket；LiveKit/WebRTC 来自补充文档的快速开发备选路线，保留在 `transport/` 边界中，不是当前已接通主链路。**
 
 ### 1. Next 15 Web 工作台
 
@@ -45,7 +45,7 @@
 - 关注点分离：`apps/desktop` 只负责窗口、桌面音频入口和 IPC，不承担 ASR、翻译、修正或 TTS 推理。
 - 依赖倒置：桌面音频最后仍转换为 `AudioFrame`，Agent 管道只依赖 `AudioSource` 抽象，不依赖 Electron、WASAPI 或浏览器设备 API。
 - KISS：首版桌面端只做主控窗口和悬浮字幕窗，不提前实现安装器、自动更新、托盘菜单和复杂热键。
-- 开闭原则：Windows 系统声音当前声明为 `electron-display-media-loopback` 边界；后续可以替换为 WASAPI native addon、Python sidecar 或供应商 SDK，而不修改字幕 UI 和 Agent 推理管道。
+- 开闭原则：Windows 系统声音当前声明为 `native-wasapi-process-loopback` 边界，由 Rust sidecar 实现；后续可扩展目标进程/目标窗口采集或 native addon，而不修改字幕 UI 和 Agent 推理管道。
 
 桌面端核心结构：
 
@@ -63,15 +63,16 @@ apps/desktop/
 | 音频源 | 当前边界 | 后续生产实现 | 原则 |
 |---|---|---|---|
 | 麦克风 | `browser-microphone` | Electron preload 调用浏览器 MediaStream 或 native addon | 接口隔离 |
-| Windows 系统声音 | `electron-display-media-loopback` + renderer Web Audio PCM sender | AudioWorklet / WASAPI loopback native addon / Python sidecar | 依赖倒置 |
+| Windows 系统声音 | Rust WASAPI sidecar，Application Loopback `exclude-process-tree` 排除 EchoSync 进程树 | 目标进程/目标窗口采集、输出设备隔离或 native addon | 依赖倒置 |
 | 混音 | `native-wasapi-mixed` | 原生层混合麦克风与系统声音后输出 16k mono PCM | 单一职责 |
 | 文件回放 | `file-decode` | ffmpeg / WebCodecs 解码后转 `AudioFrame` | 开闭原则 |
 
 当前最小真实链路已经接通：
 
 ```text
-Electron getDisplayMedia(loopback)
-  -> Web Audio downmix/resample
+Rust WASAPI Application Loopback(exclude EchoSync process tree)
+  -> sidecar downmix/resample/pcm16 frame
+  -> Electron main process
   -> PCM16 binary audio frame
   -> Agent /v1/realtime/sessions/{session_id}
   -> build_demo_pipeline(Settings.from_env())
@@ -81,7 +82,7 @@ Electron getDisplayMedia(loopback)
   -> Electron overlay caption-store
 ```
 
-Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit` 和可选的 `tts.audio`。Agent 同时暴露 `/healthz` 和 `/v1/realtime/capabilities`，用于 Desktop 启动前确认默认 provider、缺失密钥和缺失依赖。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值；API key、base URL、voice id 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr`、`voxtral` 或 `deepgram`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，字幕事件携带 `published_at_ms` 和模型指标，方便现场拆分采集、传输、ASR、翻译和 UI 接收延迟。
+Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit` 和可选的 `tts.audio`。Agent 同时暴露 `/healthz` 和 `/v1/realtime/capabilities`，用于 Desktop 启动前确认默认 provider、缺失密钥和缺失依赖。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值；Windows 原生系统声会声明 `device_id=wasapi:exclude-process-tree:<pid>`，表示本次采集排除了 EchoSync 进程树，Agent 安全闸据此允许 TTS。API key、base URL、voice id 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr`、`voxtral` 或 `deepgram`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，WASAPI sidecar 每秒输出 `wasapi_capture_metrics`，字幕事件携带 `published_at_ms` 和模型指标，方便现场拆分采集、sidecar 重采样、传输、ASR、翻译和 UI 接收延迟。
 
 桌面 UI 生命周期：
 
@@ -120,7 +121,7 @@ SessionArchiveDraft
 
 原则落实：
 
-- 优先成熟库：本地服务使用 FastAPI 官方 WebSocket 能力；系统声音先用 Electron `desktopCapturer` / `getDisplayMedia` loopback，避免第一版手写 WASAPI。
+- 优先成熟库：本地服务使用 FastAPI 官方 WebSocket 能力；Windows 系统声音使用 Rust `wasapi` crate 封装 Application Loopback，避免手写 COM，同时获得进程树包含/排除能力。
 - 低耦合：LiveKit 被限制在 `transport/` 适配层，核心管道不依赖 LiveKit SDK。
 - 开闭原则：未来可增加 WebSocket、文件回放或原生实时供应商传输，不改 ASR/翻译模块。
 - KISS：当前只需要本机 `audio.start + pcm16.binary.v1 -> AudioFrame -> caption event`，不先引入房间、token、信令和远程音轨复杂度。旧 JSON `audio.chunk` 仅作为兼容协议保留。
@@ -143,7 +144,9 @@ SessionArchiveDraft
 
 - ASR：当前 provider 支持 `mock`、`funasr`、`voxtral`、`deepgram`。FunASR 本地 AutoModel 适配器在 `services/asr/funasr_transcriber.py`，会把 80ms 传输帧聚合成推理窗口：`low_latency` 约 320ms、`balanced` 默认 600ms、`accuracy` 约 900ms；Voxtral Realtime 云端适配器在 `services/asr/voxtral_transcriber.py`，并按 `asr_latency_mode` 映射目标等待：`low_latency` 最多 480ms、`balanced` 沿用 `VOXTRAL_TARGET_DELAY_MS`、`accuracy` 至少 1600ms；Deepgram Streaming STT 适配器在 `services/asr/deepgram_transcriber.py`，默认模型 `nova-3`，发送 PCM16 WebSocket 二进制帧，`interim_results=true`，`speech_final=true` 映射为 endpoint final，`asr_latency_mode` 会把 endpointing 映射为约 200/300/500ms。Deepgram 的 `is_final=true` 只更新当前 utterance 的 finalized span，适配器会累积到 `speech_final=true` 再提交，并在静音门控期间发送 WebSocket `KeepAlive`。Deepgram Voice Agent 是端到端对话管线，本轮不接管 EchoSync 主链路。Azure 属于下一批低延迟/高稳定云端候选，尚未进入可选 provider。媒体文件抽音频由 `services/media/ffmpeg_audio_source.py` 完成，默认使用 ffmpeg stdout 流式读取并在线分帧，避免 MP4 复盘时等待完整文件解码。
 - 翻译：当前 provider 支持 `mock`、`deepseek`。DeepSeek 兼容 OpenAI API 的适配器在 `services/translation/deepseek_translator.py`；Desktop 的“通用模型”不发送覆盖字段，沿用 Agent `.env`，显式选择 `DeepSeek-V3` 时只发送 `translation_provider=deepseek`。Desktop 会通过 capabilities 在启动前发现缺失的 `DEEPSEEK_API_KEY` 或 SDK。
-- TTS：当前 provider 支持 `disabled`、`edge-tts`、`elevenlabs`。`edge-tts` 适配器在 `services/tts/edge_tts_synthesizer.py`；ElevenLabs HTTP streaming 适配器在 `services/tts/elevenlabs_synthesizer.py`，使用 `ELEVENLABS_API_KEY`、`ELEVENLABS_VOICE_ID`、`ELEVENLABS_MODEL` 和 `ELEVENLABS_OUTPUT_FORMAT`。TTS 默认关闭，启用后由 pipeline 旁路消费最终 `segment.commit` 译文并发布 `tts.audio`，不阻塞字幕事件，也不对 DeepSeek committed 流式增量重复合成。ElevenLabs 默认模型是面向实时低延迟的 `eleven_flash_v2_5`；质量优先或长文本播报可用 `.env` 覆盖为 `eleven_multilingual_v2`。`ELEVENLABS_OPTIMIZE_STREAMING_LATENCY` 仅保留兼容，默认不启用；官方已将该参数标记为 deprecated，更推荐 Flash 模型、streaming、就近区域和合适 voice。Desktop 启动预检会检查 TTS provider 是否可用，本次会话可通过 `audio.start.tts_provider` 覆盖后端默认值；控制中心窗口负责播放 `tts.audio`，字幕窗只显示字幕，避免双窗口重复播报。Agent 对 TTS 音频分片立即发布 `final=false`，供应商流结束后再发布一个空音频 `final=true` 结束包，避免为了判断最后一包而增加首音延迟。renderer 优先用 MediaSource 追加播放音频分片并用结束包关闭流，不支持时回退为同一 segment/rev 等结束包后拼接 Blob 播放。每个 TTS 音频事件会携带 `tts_first_audio_ms`、`tts_total_ms`、`tts_audio_chunks` 和 `tts_audio_bytes`，最终用真实 TTFA 判断是否需要升级 ElevenLabs WebSocket TTS。
+- TTS：当前 provider 支持 `disabled`、`edge-tts`、`elevenlabs`。`edge-tts` 适配器在 `services/tts/edge_tts_synthesizer.py`；ElevenLabs HTTP streaming 适配器在 `services/tts/elevenlabs_synthesizer.py`，使用 `ELEVENLABS_API_KEY`、`ELEVENLABS_VOICE_ID`、`ELEVENLABS_MODEL` 和 `ELEVENLABS_OUTPUT_FORMAT`。TTS 默认关闭，启用后由 pipeline 旁路消费最终 `segment.commit` 译文并发布 `tts.audio`，不阻塞字幕事件，也不对 DeepSeek committed 流式增量重复合成。为避免长段整段等待，TTS 前置 `TtsUtteranceSplitter` 会按中文/英文标点和最大字符数拆成小句，每个小句使用独立 `segment_id_ttsNN`，并带 `tts_utterance_index` / `tts_utterance_count` 指标。TTS worker 先发布空音频占位锁定播放顺序，再按 `ECHOSYNC_TTS_PREFETCH_CONCURRENCY` 受限并发预合成后续小句；Desktop 仍按 segment/rev 串行播放，避免多个 committed 段并发抢话。用户停止或客户端断开时 pipeline 取消会同步取消 TTS worker，减少停止后继续播报。
+
+  同传播报默认略快：`EDGE_TTS_RATE=+15%`、`ELEVENLABS_SPEED=1.15`，用于弥补译文语音天然落后原声的问题；切分阈值由 `ECHOSYNC_TTS_UTTERANCE_MAX_CHARS` 和 `ECHOSYNC_TTS_UTTERANCE_MIN_CHARS` 控制，预合成窗口由 `ECHOSYNC_TTS_PREFETCH_CONCURRENCY` 控制。ElevenLabs 默认模型是面向实时低延迟的 `eleven_flash_v2_5`；质量优先或长文本播报可用 `.env` 覆盖为 `eleven_multilingual_v2`。`ELEVENLABS_OPTIMIZE_STREAMING_LATENCY` 仅保留兼容，默认不启用；官方已将该参数标记为 deprecated，更推荐 Flash 模型、streaming、就近区域和合适 voice。Desktop 启动预检会检查 TTS provider 是否可用，本次会话可通过 `audio.start.tts_provider` 覆盖后端默认值；控制中心窗口负责播放 `tts.audio`，字幕窗只显示字幕，避免双窗口重复播报。Agent 对 TTS 音频分片立即发布 `final=false`，供应商流结束后再发布一个空音频 `final=true` 结束包，避免为了判断最后一包而增加首音延迟。renderer 优先用 MediaSource 追加播放音频分片并用结束包关闭流，不支持时回退为同一 segment/rev 等结束包后拼接 Blob 播放。每个 TTS 音频事件会携带 `tts_first_audio_ms`、`tts_queue_wait_ms`、`tts_total_ms`、`tts_audio_chunks` 和 `tts_audio_bytes`，最终用真实 TTFA 和队列等待判断是否需要升级 ElevenLabs WebSocket TTS。
 
 ElevenLabs 三类服务的项目映射：
 
@@ -300,8 +303,10 @@ AudioFrame 流
 ### 阶段 1：音频通道
 
 - 桌面端已接入 Electron 主控窗口和悬浮字幕窗，完成音频源选择 IPC 和字幕事件接收。
-- Windows 系统声音已用 Electron display media loopback + Web Audio PCM sender 接入 Agent `8766` 实时链路；音频传输已从 base64 JSON chunk 改为 JSON control + binary PCM frame。稳定版本再替换为 AudioWorklet 或 WASAPI loopback 原生适配器。
+- Windows 系统声音默认走 `apps/wasapi-sidecar` Rust sidecar：WASAPI Application Loopback 采集系统声音，同时以 `exclude-process-tree` 排除 EchoSync 主进程树；sidecar 输出 16k mono PCM16，Electron 主进程读取 length-prefixed binary frame 后转发到 Agent `8766` 实时链路。音频传输已从 base64 JSON chunk 改为 JSON control + binary PCM frame，Electron display media loopback 只保留为兼容/历史路径，不作为默认系统声方案。
 - 麦克风源已改走 `getUserMedia({ audio: true })`，不再复用系统声的 `getDisplayMedia` 分支。
+- `windows-system + TTS` 只有在原生 `wasapi:exclude-process-tree:<pid>` 或未来目标进程/目标窗口采集这类可证明不回采 EchoSync 自身音频的模式下才允许；完整系统 loopback 或无法证明隔离的采集模式仍触发前端预检和 Agent `preflight.loopback_tts_guard`。
+- WASAPI sidecar 通过 stderr JSONL 输出 `wasapi_sidecar_started` 和 `wasapi_capture_metrics`，包含采集回调间隔、原始队列、水位、重采样耗时、编码耗时和 stdout 写入耗时。调试时优先用这些指标定位采集端延迟，再看 Agent 的 `audio_stream_metrics`、ASR RTF 和翻译/TTS 首包指标。
 - renderer 已加轻量音频门控：响度超过阈值后发送约 80ms PCM binary frame，连续静音后给上一块活跃音频标记 `is_final=true`。FunASR 适配器内部按 `FUNASR_CHUNK_MS` 聚合小传输帧，避免把 80ms 网络帧直接等同于模型推理窗。Voxtral 这类云端 realtime ASR 不复用 FunASR 的静音停发策略，Agent 侧会补 PCM silence keepalive，避免视频暂停/长静音被 provider 误判为 streaming timeout。
 - Agent 文件源已支持 ffmpeg 流式分帧；Desktop 文件回放和混音入口未形成完整产品链路前应标记为实验入口，避免 UI 误导。
 - LiveKit token、LiveKit Room 和 `LiveKitAgentBridge` 作为后续远程传输适配任务，不阻塞当前 Windows 本地 MVP。
@@ -339,3 +344,11 @@ AudioFrame 流
 - 录播课程高准确模式。
 - Redis Streams 会话事件持久化。
 - 离线评估：WER/CER、COMET/SacreBLEU、首字幕延迟、补丁率。
+
+### Windows WASAPI sidecar 开发备注
+
+- 代码位置：`apps/wasapi-sidecar`。当前使用 Rust `wasapi = 0.23`，通过 `AudioClient::new_application_loopback_client(pid, include_tree=false)` 对应 Windows `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`。
+- stdout 协议：每帧为 `u32 little-endian payload_len + pcm16.binary.v1 payload`；payload 内部沿用 Agent 二进制音频帧头，包含 magic、version、seq、start_ms、end_ms、captured_at_ms 和 PCM16 数据。
+- stderr 协议：JSONL 诊断日志。`wasapi_capture_metrics` 每秒聚合一次，避免热路径每 80ms 打日志造成额外延迟。
+- 开发态路径：Electron 主进程优先查找 `apps/wasapi-sidecar/target/debug/echosync-wasapi-sidecar.exe`，其次查找 `D:\code\echosync\.tmp\wasapi-target\debug\echosync-wasapi-sidecar.exe`；也可用 `ECHOSYNC_WASAPI_SIDECAR_PATH` 显式指定。
+- 构建：`npm run build:wasapi-sidecar` 或 `npm --prefix apps/desktop run build:native`。如果 C 盘空间不足，把 `RUSTUP_HOME`、`CARGO_HOME`、`CARGO_TARGET_DIR` 指向 D 盘。

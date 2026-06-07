@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from echosync_agent.domain import SegmentCommit, SubtitlePatch, TranslationSegment
 
@@ -15,4 +15,7 @@ class SubtitleSink(Protocol):
         raise NotImplementedError
 
     async def publish_commit(self, commit: SegmentCommit) -> None:
+        raise NotImplementedError
+
+    async def publish_caption_update(self, event: dict[str, Any]) -> None:
         raise NotImplementedError

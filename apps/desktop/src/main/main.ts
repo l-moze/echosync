@@ -4,7 +4,7 @@ import path from "node:path";
 import WebSocket from "ws";
 
 import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSourceId } from "../shared/audio-source-catalog";
-import type { DesktopCaptureSnapshot } from "../shared/desktop-api";
+import type { DesktopCaptureSnapshot, DesktopCaptureStartRequest } from "../shared/desktop-api";
 import type { RealtimeEvent } from "../shared/realtime-events";
 import { defaultSubtitleStyle, reduceSubtitleStyleState, type SubtitleStyleState } from "../shared/subtitle-style-state";
 import {
@@ -13,6 +13,11 @@ import {
 } from "./agent-capabilities-client";
 import { buildRealtimeEventTelemetry } from "../shared/realtime-telemetry";
 import type { SessionRecordDraftInput, SessionRecordExportFormat, SessionRecordSummary } from "../shared/session-records";
+import {
+  defaultSessionPreferences,
+  reduceSessionPreferences,
+  type SessionPreferencesState
+} from "../shared/session-preferences";
 import { createCaptionEventBuffer } from "./caption-event-buffer";
 import { resolveAppIconPath } from "./desktop-resources";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
@@ -32,6 +37,11 @@ import {
 import { createSessionRecordStore } from "./session-record-store";
 import { createSessionSummaryGeneratorFromEnv } from "./session-summary-generator";
 import { runSessionSummaryGeneration } from "./session-summary-runner";
+import {
+  resolveWasapiSidecarPath,
+  startWasapiSidecarCapture,
+  type WasapiSidecarSession
+} from "./wasapi-sidecar-client";
 import { CONTROL_WINDOW_PRESET, OVERLAY_WINDOW_PRESET, type DesktopWindowPreset } from "./window-config";
 import { sendToWindow, sendToWindows } from "./window-ipc";
 import { shouldCreateWindowAtStartup, shouldRevealWindowOnReady } from "./window-lifecycle";
@@ -41,6 +51,7 @@ loadDesktopEnvironment();
 const CAPTION_WS_URL = process.env.ECHOSYNC_CAPTION_WS_URL || "ws://127.0.0.1:8766/v1/caption/events";
 const AGENT_HTTP_BASE_URL =
   process.env.ECHOSYNC_AGENT_HTTP_URL || agentHttpBaseUrlFromCaptionWsUrl(CAPTION_WS_URL);
+const AGENT_REALTIME_WS_BASE_URL = process.env.ECHOSYNC_REALTIME_WS_URL || "ws://127.0.0.1:8766/v1/realtime/sessions";
 
 const rendererUrl = process.env.ECHOSYNC_DESKTOP_RENDERER_URL;
 const preloadPath = path.join(__dirname, "../preload/index.js");
@@ -59,6 +70,7 @@ let subtitleStyleVisible = false;
 let overlayWindowState: OverlayWindowState = {
   visible: false,
   pinned: false,
+  locked: false,
   ignoreMouse: false
 };
 let overlayLayer: OverlayUiLayer = "default";
@@ -68,8 +80,10 @@ let captureSnapshot: DesktopCaptureSnapshot = {
   state: "idle",
   message: "等待选择音频源。"
 };
+let sessionPreferences: SessionPreferencesState = defaultSessionPreferences;
 let subtitleStyle: SubtitleStyleState = defaultSubtitleStyle;
 let captionWs: WebSocket | null = null;
+let wasapiSidecarSession: WasapiSidecarSession | null = null;
 let captionReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 const captionEventBuffer = createCaptionEventBuffer();
@@ -101,6 +115,7 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay" |
 
   window.webContents.on("did-finish-load", () => {
     sendToWindow(window, "audio:state", captureSnapshot);
+    sendToWindow(window, "session-preferences:state", sessionPreferences);
     sendToWindow(window, "subtitle-style:state", subtitleStyle);
     if (captureSnapshot.sessionId) {
       for (const event of captionEventBuffer.snapshot(captureSnapshot.sessionId)) {
@@ -141,9 +156,14 @@ async function loadRenderer(window: BrowserWindow, role: "control" | "overlay" |
 }
 
 function broadcastCaptionEvent(event: RealtimeEvent) {
-  log.info("[caption-event] main_forwarded", buildRealtimeEventTelemetry(event, Date.now()));
+  const telemetry = buildRealtimeEventTelemetry(event, Date.now());
   captionEventBuffer.push(event);
-  sendToWindows([controlWindow, overlayWindow], "caption:event", event);
+  const sentWindowCount = sendToWindows([controlWindow, overlayWindow], "caption:event", event);
+  log.info("[caption-event] main_forwarded", {
+    ...telemetry,
+    bufferedEvents: captionEventBuffer.snapshot(event.session_id).length,
+    sentWindowCount
+  });
 }
 
 function broadcastCaptureState(snapshot: DesktopCaptureSnapshot) {
@@ -156,6 +176,19 @@ function broadcastSubtitleStyle(style: SubtitleStyleState) {
 
 function notifySessionRecordChanged(recordId: string) {
   sendToWindows([controlWindow], "session-records:changed", recordId);
+}
+
+async function stopWasapiSidecarSession() {
+  const session = wasapiSidecarSession;
+  wasapiSidecarSession = null;
+  if (!session) {
+    return;
+  }
+  try {
+    await session.stop();
+  } catch (error) {
+    log.warn("[wasapi-sidecar] 停止原生采集失败:", error);
+  }
 }
 
 function ensureOverlayWindow() {
@@ -220,6 +253,18 @@ function applyOverlayLayout(layer: OverlayUiLayer) {
   return window;
 }
 
+function applyOverlayMousePolicy(window = overlayWindow) {
+  window?.setIgnoreMouseEvents(overlayWindowState.ignoreMouse, { forward: true });
+}
+
+function revealWindowInactive(window: BrowserWindow) {
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  window.showInactive();
+  window.moveTop();
+}
+
 function registerIpc() {
   const sessionRecordStore = createSessionRecordStore(path.join(app.getPath("userData"), "echosync-data"));
   const sessionSummaryGenerator = createSessionSummaryGeneratorFromEnv();
@@ -261,17 +306,72 @@ function registerIpc() {
   );
 
   ipcMain.handle("agent:get-capabilities", () => fetchAgentCapabilities(AGENT_HTTP_BASE_URL));
+  ipcMain.handle("caption:snapshot", (_event, sessionId?: string) => captionEventBuffer.snapshot(sessionId));
   ipcMain.handle("audio:list-sources", () => DESKTOP_AUDIO_SOURCES);
+  ipcMain.handle("session-preferences:get", () => sessionPreferences);
+  ipcMain.handle("session-preferences:update", (_event, patch: Partial<SessionPreferencesState>) => {
+    sessionPreferences = reduceSessionPreferences(sessionPreferences, patch);
+    log.info("[session-preferences] 已更新会话偏好", sessionPreferences);
+    sendToWindows([controlWindow, overlayWindow], "session-preferences:state", sessionPreferences);
+    return sessionPreferences;
+  });
   ipcMain.handle("audio:get-state", () => captureSnapshot);
 
-  ipcMain.handle("audio:start", (_event, sourceId: DesktopAudioSourceId, sessionId?: string) => {
+  ipcMain.handle("audio:start", async (_event, request: DesktopCaptureStartRequest) => {
+    await stopWasapiSidecarSession();
+    const { sourceId, sessionId } = request;
     const source = DESKTOP_AUDIO_SOURCES.find((item) => item.id === sourceId);
     captionEventBuffer.clear();
+    log.info("[audio:start] 收到桌面采集请求", {
+      asrLatencyMode: request.asrLatencyMode,
+      asrProvider: request.asrProvider ?? "server-default",
+      sessionId,
+      sourceId,
+      sourceLang: request.sourceLang,
+      translationProvider: request.translationProvider ?? "server-default",
+      ttsProvider: request.ttsProvider ?? "server-default"
+    });
+    if (source?.id === "windows-system") {
+      try {
+        const sidecarPath = resolveWasapiSidecarPath({
+          isPackaged: app.isPackaged,
+          mainDir: __dirname,
+          resourcesPath: process.resourcesPath
+        });
+        wasapiSidecarSession = await startWasapiSidecarCapture(
+          {
+            agentRealtimeBaseUrl: AGENT_REALTIME_WS_BASE_URL,
+            asrLatencyMode: request.asrLatencyMode,
+            asrProvider: request.asrProvider,
+            mode: "exclude-process-tree",
+            sessionId,
+            sidecarPath,
+            sourceLang: request.sourceLang,
+            targetPid: process.pid,
+            translationProvider: request.translationProvider,
+            ttsProvider: request.ttsProvider
+          },
+          log
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Windows 原生系统声采集启动失败。";
+        captureSnapshot = {
+          sourceId,
+          state: "error",
+          message: `Windows 原生系统声采集启动失败：${message}`,
+          sessionId: undefined
+        };
+        broadcastCaptureState(captureSnapshot);
+        return captureSnapshot;
+      }
+    }
     captureSnapshot = {
       sourceId,
       state: source ? "listening" : "error",
       message: source
-        ? `${source.label} 已开始采集，音频正在送入同传服务。`
+        ? source.id === "windows-system"
+          ? `${source.label} 已通过 WASAPI 原生采集启动，并排除 EchoSync 自身语音输出。`
+          : `${source.label} 已开始采集，音频正在送入同传服务。`
         : "未知音频源。",
       sessionId: source ? sessionId : undefined
     };
@@ -279,7 +379,8 @@ function registerIpc() {
     return captureSnapshot;
   });
 
-  ipcMain.handle("audio:stop", () => {
+  ipcMain.handle("audio:stop", async () => {
+    await stopWasapiSidecarSession();
     captureSnapshot = {
       ...captureSnapshot,
       state: "stopped",
@@ -299,8 +400,7 @@ function registerIpc() {
     overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.visible", visible });
     if (visible) {
       const window = ensureOverlayWindow();
-      window.showInactive();
-      window.moveTop();
+      revealWindowInactive(window);
     } else {
       overlayWindow?.hide();
     }
@@ -308,18 +408,20 @@ function registerIpc() {
 
   ipcMain.handle("overlay:locked", (_event, locked: boolean) => {
     overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.locked", locked });
-    overlayWindow?.setIgnoreMouseEvents(overlayWindowState.ignoreMouse, { forward: true });
+    applyOverlayMousePolicy();
   });
 
   ipcMain.handle("overlay:pinned", (_event, pinned: boolean) => {
     overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.pinned", pinned });
     applyOverlayLayout(pinned ? "pinned" : "default");
-    overlayWindow?.setIgnoreMouseEvents(overlayWindowState.ignoreMouse, { forward: true });
+    applyOverlayMousePolicy();
     sendToWindow(overlayWindow, "overlay:wake-controls");
   });
 
   ipcMain.handle("overlay:layer", (_event, layer: OverlayUiLayer) => {
-    applyOverlayLayout(layer);
+    overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.layer", layer });
+    const window = applyOverlayLayout(layer);
+    applyOverlayMousePolicy(window);
   });
 
   ipcMain.handle("overlay:get-bounds", () => {
@@ -352,8 +454,7 @@ function registerIpc() {
     }
     const window = ensureSubtitleStyleWindow();
     placeSubtitleStyleWindowNearOverlay(window);
-    window.showInactive();
-    window.moveTop();
+    revealWindowInactive(window);
   });
 
   ipcMain.handle("subtitle-style:update", (_event, patch: Partial<SubtitleStyleState>) => {
@@ -366,11 +467,14 @@ function registerIpc() {
     wakeOverlayControls();
   });
 
+  ipcMain.handle("overlay:wake-settings", () => {
+    wakeOverlaySettings();
+  });
+
   ipcMain.handle("overlay:recenter", () => {
     const window = ensureOverlayWindow();
     window.center();
-    window.showInactive();
-    window.moveTop();
+    revealWindowInactive(window);
   });
 
   ipcMain.handle("clipboard:copy-text", (_event, text: string) => {
@@ -401,10 +505,17 @@ function registerIpc() {
 function wakeOverlayControls() {
   overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.wake_controls" });
   const window = applyOverlayLayout("controls");
-  window.setIgnoreMouseEvents(false);
-  window.showInactive();
-  window.moveTop();
+  applyOverlayMousePolicy(window);
+  revealWindowInactive(window);
   sendToWindow(window, "overlay:wake-controls");
+}
+
+function wakeOverlaySettings() {
+  overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.wake_settings" });
+  const window = applyOverlayLayout("settings");
+  applyOverlayMousePolicy(window);
+  revealWindowInactive(window);
+  sendToWindow(window, "overlay:wake-settings");
 }
 
 app.setAppUserModelId("com.echosync.desktop");
@@ -424,6 +535,10 @@ app.whenReady().then(() => {
 
   globalShortcut.register("Alt+Shift+S", () => {
     wakeOverlayControls();
+  });
+
+  globalShortcut.register("CommandOrControl+Shift+S", () => {
+    wakeOverlaySettings();
   });
 
   if (shouldCreateWindowAtStartup(CONTROL_WINDOW_PRESET)) {

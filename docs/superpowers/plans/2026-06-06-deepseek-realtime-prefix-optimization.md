@@ -39,6 +39,9 @@
 - [x] Fixed current-segment revision patches by letting `RevisionWindowCorrectionEngine` compare against `context.current_segment_revisions`, not only committed history.
 - [x] Added a default `120ms` correction timeout so slow revision logic cannot indefinitely block committed subtitles.
 - [x] Surfaced DeepSeek cache/stream and glossary metrics through `caption_update` metrics, `caption_event_published` logs, and `realtime_log_summary` distributions/totals.
+- [x] Tightened spoken-English quality rules for natural Simplified Chinese: avoid translating every leading `So` as `所以`, use recent context for fragments, avoid inventing first-person `我` for English `we`, and prefer idiomatic Mandarin word order.
+- [x] Added zero-request prompt/source cleanup for realtime ASR spacing artifacts such as `it 's`, `I 'm`, and known split words like `c ider`.
+- [x] Added zh-CN target cleanup for residual Traditional Chinese characters and redundant leading `所以` when the English source starts with discourse-marker `So`.
 
 ## Fast vs Slow Path Boundary
 
@@ -49,6 +52,7 @@ Fast path:
 - Append-only current-segment revisions may use DeepSeek `/beta` prefix completion with the previous target as an assistant prefix. Rewritten source revisions, unchanged revisions, and open-source tails with already closed target translations fall back to normal `/v1` streaming.
 - Required glossary source-copy repair is local string repair after DeepSeek output and before publish. It does not add another model request.
 - Current-segment terminology is matched first, then recent committed prefix terms supplement the context up to the term cap.
+- Source prompt normalization and zh-CN target cleanup are local O(text length) operations. They do not alter the stored source text and do not add provider calls.
 
 Slow path:
 

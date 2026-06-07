@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 
+from echosync_agent.pipeline.engine_pipeline import EngineDrivenInterpretationPipeline
 from echosync_agent.pipeline.realtime_pipeline import RealtimeInterpretationPipeline
 from echosync_agent.runtime.event_bus import InMemoryEventBus
 from echosync_agent.runtime.settings import Settings
 from echosync_agent.services.asr.factory import build_transcriber_from_settings
+from echosync_agent.services.correction.semantic_repair import DeepSeekTranslationRepairEngine
 from echosync_agent.services.correction.revision_window import RevisionWindowCorrectionEngine
 from echosync_agent.services.subtitle.event_sink import EventSubtitleSink
 from echosync_agent.services.translation.deepseek_translator import DeepSeekTranslator
@@ -13,6 +15,7 @@ from echosync_agent.services.translation.mock_translator import MockTranslator
 from echosync_agent.services.translation.terminology import Glossary
 from echosync_agent.services.tts.event_audio_sink import EventTranslatedAudioSink
 from echosync_agent.services.tts.factory import build_tts_synthesizer_from_settings
+from echosync_agent.services.tts.utterance_splitter import TtsUtteranceSplitter
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,13 @@ def build_demo_pipeline(
     if caption_event_bus is not None:
         _subscribe_caption_pusher(event_bus, caption_event_bus)
 
+    if resolved.asr_provider == "qwen-livetranslate":
+        pipeline = _build_qwen_livetranslate_pipeline(
+            resolved,
+            event_bus=event_bus,
+        )
+        return pipeline, event_bus
+
     glossary = _load_glossary(resolved)
     pipeline = RealtimeInterpretationPipeline(
         transcriber=_build_transcriber(resolved),
@@ -46,6 +56,15 @@ def build_demo_pipeline(
         glossary=glossary,
         tts_synthesizer=build_tts_synthesizer_from_settings(resolved),
         audio_sink=EventTranslatedAudioSink(event_bus),
+        tts_utterance_splitter=TtsUtteranceSplitter(
+            max_chars=resolved.tts_utterance_max_chars,
+            min_chars=resolved.tts_utterance_min_chars,
+        ),
+        translation_repair_engine=_build_translation_repair_engine(resolved),
+        translation_repair_timeout_ms=resolved.translation_repair_timeout_ms,
+        translation_repair_max_concurrency=resolved.translation_repair_max_concurrency,
+        translation_repair_mode=resolved.translation_repair_mode,
+        tts_prefetch_concurrency=resolved.tts_prefetch_concurrency,
     )
     return pipeline, event_bus
 
@@ -63,6 +82,7 @@ def _subscribe_caption_pusher(event_bus: InMemoryEventBus, caption_event_bus: ob
         "translation.patch",
         "segment.commit",
         "tts.audio",
+        "tts.error",
     ):
         event_bus.subscribe(event_type, _push)
 
@@ -95,6 +115,61 @@ def _build_translator(settings: Settings):
             model_type=settings.deepl_model_type,
         )
     raise ValueError(f"不支持的翻译供应商：{settings.translator_provider}")
+
+
+def _build_translation_repair_engine(settings: Settings):
+    if settings.translation_repair_provider == "disabled":
+        return None
+    if settings.translation_repair_provider == "deepseek":
+        if not settings.deepseek_api_key:
+            raise ValueError("使用 DeepSeek 慢修复时必须配置 DEEPSEEK_API_KEY。")
+        return DeepSeekTranslationRepairEngine(
+            api_key=settings.deepseek_api_key,
+            base_url=settings.deepseek_base_url,
+            model=settings.translation_repair_model,
+            target_lang=settings.target_lang,
+        )
+    raise ValueError(f"不支持的翻译慢修复供应商：{settings.translation_repair_provider}")
+
+
+def _build_qwen_livetranslate_pipeline(
+    settings: Settings,
+    *,
+    event_bus: InMemoryEventBus,
+) -> EngineDrivenInterpretationPipeline:
+    if not settings.qwen_api_key:
+        raise ValueError("使用 Qwen LiveTranslate 时必须配置 DASHSCOPE_API_KEY 或 QWEN_API_KEY。")
+
+    from echosync_agent.services.engine.qwen_livetranslate_engine import (
+        QwenLiveTranslateConfig,
+        QwenLiveTranslateEngine,
+    )
+
+    return EngineDrivenInterpretationPipeline(
+        engine=QwenLiveTranslateEngine(
+            QwenLiveTranslateConfig(
+                api_key=settings.qwen_api_key,
+                model=settings.qwen_livetranslate_model,
+                base_url=settings.qwen_realtime_base_url,
+                source_lang=settings.qwen_livetranslate_source_lang,
+                target_lang=settings.target_lang,
+                output_audio=settings.qwen_livetranslate_output_audio,
+                vad_silence_duration_ms=_qwen_livetranslate_vad_silence_ms_for_latency_mode(
+                    latency_mode=settings.asr_latency_mode,
+                ),
+            )
+        ),
+        subtitle_sink=EventSubtitleSink(event_bus),
+        audio_sink=EventTranslatedAudioSink(event_bus),
+    )
+
+
+def _qwen_livetranslate_vad_silence_ms_for_latency_mode(*, latency_mode: str) -> int:
+    if latency_mode == "low_latency":
+        return 500
+    if latency_mode == "accuracy":
+        return 1000
+    return 800
 
 
 def _load_glossary(settings: Settings) -> Glossary:
