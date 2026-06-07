@@ -87,6 +87,25 @@ describe("renderer visual style contract", () => {
     expect(recordRowHoverRule).toContain("background: #f8fbff");
   });
 
+  it("bounds record detail content so transcript and summary panes scroll independently", () => {
+    const detailWindowRule = cssRule(".recordWindow.detail");
+    const detailPanelRule = cssRule(".recordDetailPanel");
+    const detailLayoutRule = cssRule(".recordDetailLayout");
+    const transcriptRule = cssRule(".recordTranscriptList");
+    const summaryRule = cssRule(".recordSummaryAside");
+
+    expect(detailWindowRule).toContain("height: min(820px, calc(100vh - 92px))");
+    expect(detailWindowRule).toContain("grid-template-rows: auto minmax(0, 1fr)");
+    expect(detailPanelRule).toContain("grid-template-rows: auto auto minmax(0, 1fr)");
+    expect(detailPanelRule).toContain("overflow: hidden");
+    expect(detailLayoutRule).toContain("height: 100%");
+    expect(detailLayoutRule).toContain("min-height: 0");
+    expect(transcriptRule).toContain("min-height: 0");
+    expect(transcriptRule).toContain("overflow-y: auto");
+    expect(summaryRule).toContain("min-height: 0");
+    expect(summaryRule).toContain("overflow-y: auto");
+  });
+
   it("keeps finished transcript review segments in readable block flow", () => {
     const gridRule = cssRule(".transcriptReviewGrid");
     const stackedGridRule = cssRule(".transcriptReviewGrid.stacked");
@@ -139,5 +158,23 @@ describe("renderer visual style contract", () => {
     const earlyFinishedBreakpoint = /@media \(max-width: 1120px\)\s*\{\s*\.controlCenter\.lifecycle-finished \.dashboardGrid\s*\{([^}]*)\}/.exec(stylesheet)?.[1] ?? "";
 
     expect(earlyFinishedBreakpoint).toContain("grid-template-columns: minmax(0, 1fr)");
+  });
+
+  it("disables unavailable provider choices before session start", () => {
+    const settingsPanelSource = rendererSource.slice(
+      rendererSource.indexOf("function PreferenceSettingsPanel"),
+      rendererSource.indexOf("function PreferenceRow")
+    );
+    const engineChoiceSource = rendererSource.slice(
+      rendererSource.indexOf("function EngineChoiceRow"),
+      rendererSource.indexOf("function engineOptionLabel")
+    );
+
+    expect(settingsPanelSource).toContain("providerChoiceState");
+    expect(settingsPanelSource).toContain("findAgentAsrProvider");
+    expect(settingsPanelSource).toContain("findAgentTranslationProvider");
+    expect(settingsPanelSource).toContain("findAgentTtsProvider");
+    expect(engineChoiceSource).toContain("disabled={option.disabled}");
+    expect(engineChoiceSource).toContain("title={option.description}");
   });
 });

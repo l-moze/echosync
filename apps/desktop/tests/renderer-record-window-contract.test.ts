@@ -33,7 +33,7 @@ describe("会议记录窗口契约", () => {
   });
 
   it("会议记录窗口使用本地持久化记录并在删除后刷新", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 4200);
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 5600);
 
     expect(windowSource).toContain("records: SessionRecordListItem[];");
     expect(windowSource).toContain("onRecordsChanged: () => Promise<void>;");
@@ -52,6 +52,14 @@ describe("会议记录窗口契约", () => {
     expect(rendererSource).toContain("await window.echosyncDesktop?.sessionRecords.saveDraft(input);");
   });
 
+  it("停止会话保存记录不依赖采集状态快照成功返回", () => {
+    const stopSource = sourceAround("async function stopCapture", 0, 5200);
+
+    expect(stopSource).toContain("if (nextSnapshot) {\n      setSnapshot(nextSnapshot);\n    }\n    const endedAt");
+    expect(stopSource).toContain("const elapsedDurationMs");
+    expect(stopSource).toContain("Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0)");
+  });
+
   it("详情页导出按钮会通过主进程导出并复制当前记录", () => {
     const exportSource = sourceAround("async function exportSelectedRecord", 0, 1200);
     const actionsSource = sourceAround("<button onClick={() => void exportSelectedRecord(\"txt\")}>TXT</button>", 500, 900);
@@ -67,21 +75,44 @@ describe("会议记录窗口契约", () => {
   });
 
   it("详情页读取完整记录，支持重命名、音频 URL、片段跳转和播放高亮", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 12800);
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 17000);
 
     expect(windowSource).toContain("const [selectedRecord, setSelectedRecord] = useState<SessionRecord | null>(null);");
     expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.get(recordId)");
     expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.getAudioUrl(recordId)");
     expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.rename(selectedRecord.id, nextTitle)");
-    expect(windowSource).toContain("audio.currentTime = segment.startMs / 1000;");
-    expect(windowSource).toContain("selectSessionRecordPlaybackSegmentId(selectedRecord.segments, currentMs)");
+    expect(windowSource).toContain("seekRecordAudio(segment.startMs);");
+    expect(windowSource).toContain("audio.currentTime = boundedMs / 1000;");
+    expect(windowSource).toContain("selectSessionRecordPlaybackSegmentId(selectedRecord.segments, boundedMs)");
     expect(windowSource).toContain("node?.scrollIntoView({ block: \"center\", behavior: \"smooth\" });");
     expect(windowSource).toContain("className=\"recordTitleInput\"");
     expect(windowSource).toContain("className={segment.id === activeRecordSegmentId ? \"recordSegmentPair active\" : \"recordSegmentPair\"}");
   });
+
+  it("详情页音频回放使用记录时长自绘进度，避免 WebM 原生时长误导", () => {
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 15500);
+
+    expect(windowSource).toContain("const [recordAudioPlaying, setRecordAudioPlaying] = useState(false);");
+    expect(windowSource).toContain("function seekRecordAudio(nextMs: number)");
+    expect(windowSource).toContain("function toggleRecordAudioPlayback()");
+    expect(windowSource).toContain("className=\"recordAudioControls\"");
+    expect(windowSource).toContain("max={selectedRecord.durationMs}");
+    expect(windowSource).toContain("value={Math.min(playbackMs, selectedRecord.durationMs)}");
+    expect(windowSource).toContain("onChange={(event) => seekRecordAudio(Number(event.target.value))}");
+    expect(windowSource).not.toContain("<audio\n                controls");
+  });
 });
 
 describe("采集资源生命周期契约", () => {
+  it("收到新的监听会话时清空当前窗口的旧字幕状态", () => {
+    const listenerSource = sourceAround("const removeCaptureListener = window.echosyncDesktop?.onCaptureState", 0, 2600);
+
+    expect(listenerSource).toContain("const newListeningSession");
+    expect(listenerSource).toContain("setLines(createInitialCaptionLines());");
+    expect(listenerSource).toContain("setRealtimeError(null);");
+    expect(listenerSource).toContain("terminalRealtimeErrorRef.current = null;");
+  });
+
   it("桌面端未返回采集状态时清理已创建的实时客户端和 TTS 队列", () => {
     const failureSource = sourceAround("桌面端没有返回音频采集状态。", 500, 300);
 
@@ -103,5 +134,19 @@ describe("采集资源生命周期契约", () => {
     expect(rendererSource).toContain("const ttsPlaybackRef = useRef<TtsAudioPlaybackQueue | null>(null);");
     expect(rendererSource).toContain("ttsPlaybackRef.current ??= createTtsAudioPlaybackQueue();");
     expect(rendererSource).toContain("const ttsPlayback = ttsPlaybackRef.current;");
+  });
+
+  it("字幕弹窗只对窗口化字幕行做显示合成，并记录渲染热路径耗时", () => {
+    const overlaySource = sourceAround("function OverlayWindow", 0, 5200);
+    const eventListenerSource = sourceAround("caption_event_renderer_processed", 900, 900);
+
+    expect(overlaySource).toContain("selectOverlayDisplayWindow(lines, activeLine?.id)");
+    expect(overlaySource).toContain("caption_overlay_render_metrics");
+    expect(overlaySource).toContain("selectDisplayMs");
+    expect(overlaySource).toContain("presentationMs");
+    expect(overlaySource).toContain("pendingLineCount");
+    expect(eventListenerSource).toContain("caption_event_renderer_processed");
+    expect(eventListenerSource).toContain("applyEventMs");
+    expect(eventListenerSource).toContain("linesCount");
   });
 });

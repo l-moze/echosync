@@ -33,6 +33,9 @@ funasr = [
 voxtral = [
   "mistralai[realtime]>=1.0"
 ]
+deepgram = [
+  "websockets>=12"
+]
 
 [build-system]
 requires = ["hatchling"]

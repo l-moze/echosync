@@ -5,6 +5,7 @@ import {
   isRealtimeEventForActiveSession,
   selectActiveCaptionLine,
   selectActiveCaptionLineForDisplay,
+  selectOverlayDisplayWindow,
   selectOverlayHistoryLinesForDisplay,
   selectOverlayHistoryLines
 } from "../src/shared/caption-store";
@@ -1021,5 +1022,46 @@ describe("桌面字幕状态机", () => {
 
     expect(isRealtimeEventForActiveSession(null, event, "sess_shared")).toBe(true);
     expect(isRealtimeEventForActiveSession(null, event, "sess_other")).toBe(false);
+  });
+
+  it("字幕弹窗显示计算只处理最近窗口，同时保留当前活跃行", () => {
+    const lines = Array.from({ length: 100 }, (_value, index): CaptionLine => ({
+      id: `seg_${index}`,
+      rev: 1,
+      state: index < 99 ? "locked" : "stable",
+      sourceText: `source ${index}`,
+      targetText: `译文 ${index}`,
+      stability: 1,
+      startMs: index * 1000,
+      endMs: index * 1000 + 800,
+      patchCount: 0
+    }));
+
+    expect(selectOverlayDisplayWindow(lines).map((line) => line.id)).toEqual(
+      Array.from({ length: 60 }, (_value, index) => `seg_${index + 40}`)
+    );
+
+    const withOldActive = selectOverlayDisplayWindow(lines, "seg_2");
+
+    expect(withOldActive).toHaveLength(60);
+    expect(withOldActive[0].id).toBe("seg_2");
+    expect(withOldActive.at(-1)?.id).toBe("seg_99");
+  });
+
+  it("字幕弹窗显示窗口在极小窗口限制下也不会退回全量历史", () => {
+    const lines = Array.from({ length: 12 }, (_value, index): CaptionLine => ({
+      id: `seg_${index}`,
+      rev: 1,
+      state: index < 11 ? "locked" : "stable",
+      sourceText: `source ${index}`,
+      targetText: `译文 ${index}`,
+      stability: 1,
+      startMs: index * 1000,
+      endMs: index * 1000 + 800,
+      patchCount: 0
+    }));
+
+    expect(selectOverlayDisplayWindow(lines, "seg_2", 1).map((line) => line.id)).toEqual(["seg_11"]);
+    expect(selectOverlayDisplayWindow(lines, "seg_2", 2).map((line) => line.id)).toEqual(["seg_2", "seg_11"]);
   });
 });

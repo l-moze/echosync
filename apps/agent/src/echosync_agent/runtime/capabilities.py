@@ -36,10 +36,12 @@ def build_realtime_capabilities(
             _mock_asr_capability(default=settings.asr_provider == "mock"),
             _funasr_capability(settings, has_dependency),
             _voxtral_capability(settings, has_dependency),
+            _deepgram_capability(settings, has_dependency),
         ],
         "translation_providers": [
             _mock_translation_capability(default=settings.translator_provider == "mock"),
             _deepseek_capability(settings, has_dependency),
+            _deepl_capability(settings),
         ],
         "tts_providers": [
             _disabled_tts_capability(default=settings.tts_provider == "disabled"),
@@ -115,6 +117,34 @@ def _voxtral_capability(
     }
 
 
+def _deepgram_capability(
+    settings: Settings,
+    dependency_available: DependencyAvailable,
+) -> dict[str, Any]:
+    has_key = bool(settings.deepgram_api_key)
+    has_websockets = dependency_available("websockets")
+    status = "ready"
+    reason = ""
+    if not has_key:
+        status = "missing_key"
+        reason = "缺少 DEEPGRAM_API_KEY。"
+    elif not has_websockets:
+        status = "missing_dependency"
+        reason = "缺少 websockets 依赖，请安装 pip install -e .[deepgram]。"
+
+    return {
+        "id": "deepgram",
+        "label": "Deepgram",
+        "kind": "asr",
+        "status": status,
+        "available": status == "ready",
+        "default": settings.asr_provider == "deepgram",
+        "real_audio_supported": True,
+        "reason": reason,
+        "model": settings.deepgram_model,
+    }
+
+
 def _mock_translation_capability(*, default: bool) -> dict[str, Any]:
     return {
         "id": "mock",
@@ -152,6 +182,26 @@ def _deepseek_capability(
         "default": settings.translator_provider == "deepseek",
         "reason": reason,
         "model": settings.deepseek_model,
+    }
+
+
+def _deepl_capability(settings: Settings) -> dict[str, Any]:
+    has_key = bool(settings.deepl_api_key)
+    status = "ready"
+    reason = ""
+    if not has_key:
+        status = "missing_key"
+        reason = "缺少 DEEPL_API_KEY。"
+
+    return {
+        "id": "deepl",
+        "label": "DeepL",
+        "kind": "translation",
+        "status": status,
+        "available": status == "ready",
+        "default": settings.translator_provider == "deepl",
+        "reason": reason,
+        "model": settings.deepl_model_type,
     }
 
 

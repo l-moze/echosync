@@ -9,6 +9,7 @@ const desktopApi: DesktopApi = {
     list: () => ipcRenderer.invoke("session-records:list"),
     get: (id) => ipcRenderer.invoke("session-records:get", id),
     saveDraft: (input) => ipcRenderer.invoke("session-records:save-draft", input),
+    updateSummary: (id, summary) => ipcRenderer.invoke("session-records:update-summary", id, summary),
     rename: (id, title) => ipcRenderer.invoke("session-records:rename", id, title),
     delete: (id) => ipcRenderer.invoke("session-records:delete", id),
     export: (id, format) => ipcRenderer.invoke("session-records:export", id, format),
@@ -43,6 +44,11 @@ const desktopApi: DesktopApi = {
     const handler = (_event: Electron.IpcRendererEvent, payload: DesktopCaptureSnapshot) => listener(payload);
     ipcRenderer.on("audio:state", handler);
     return () => ipcRenderer.off("audio:state", handler);
+  },
+  onSessionRecordChanged: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, recordId: string) => listener(recordId);
+    ipcRenderer.on("session-records:changed", handler);
+    return () => ipcRenderer.off("session-records:changed", handler);
   },
   onOverlayWake: (listener) => {
     const handler = () => listener();

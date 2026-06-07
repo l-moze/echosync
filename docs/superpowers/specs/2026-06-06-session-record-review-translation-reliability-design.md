@@ -266,7 +266,7 @@ sessionRecords.export(id: string, format: "markdown" | "srt" | "txt"): Promise<{
 sessionRecords.getAudioUrl(id: string): Promise<string | null>
 ```
 
-2026-06-06 当前实现状态：`session-record-store.ts` 已落地本地 `list/get/saveDraft/rename/delete/export/getAudioUrl` 持久化能力，并通过 preload 暴露同名 IPC 子集；`updateSegment`、`updateSummary` 仍随记录详情页编辑能力进入下一批实现。
+2026-06-07 当前实现状态：`session-record-store.ts` 已落地本地 `list/get/saveDraft/updateSummary/rename/delete/export/getAudioUrl` 持久化能力，并通过 preload 暴露同名 IPC 子集。保存会议记录后，主进程会异步调用 OpenAI-compatible/DeepSeek 摘要生成器，输出摘要、关键词、行动项、主题、风险和术语建议，并通过 `session-records:changed` 通知 Renderer 刷新；`updateSegment` 仍随记录详情页编辑能力进入下一批实现。
 
 ### 窗口生命周期
 

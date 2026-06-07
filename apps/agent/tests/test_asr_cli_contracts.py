@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from echosync_agent.asr_demo import build_arg_parser, build_transcriber
+from echosync_agent.services.asr.deepgram_transcriber import DeepgramStreamingTranscriber
 from echosync_agent.services.asr.funasr_transcriber import FunAsrTranscriber
 from echosync_agent.services.asr.voxtral_transcriber import VoxtralRealtimeTranscriber
 
@@ -62,6 +63,55 @@ def test_asr_demo_cli_accepts_voxtral_options() -> None:
     assert args.model == "voxtral-mini-transcribe-realtime-2602"
     assert args.mistral_api_key == "test-key"
     assert args.voxtral_delay_ms == 480
+
+
+def test_asr_demo_cli_accepts_deepgram_options() -> None:
+    parser = build_arg_parser()
+
+    args = parser.parse_args(
+        [
+            "lecture.mp4",
+            "--provider",
+            "deepgram",
+            "--model",
+            "nova-3",
+            "--deepgram-api-key",
+            "test-key",
+            "--deepgram-endpointing-ms",
+            "200",
+            "--source-lang",
+            "en",
+        ]
+    )
+
+    assert args.provider == "deepgram"
+    assert args.model == "nova-3"
+    assert args.deepgram_api_key == "test-key"
+    assert args.deepgram_endpointing_ms == 200
+
+
+def test_asr_demo_builds_deepgram_transcriber_from_cli_options() -> None:
+    parser = build_arg_parser()
+    args = parser.parse_args(
+        [
+            "lecture.mp4",
+            "--provider",
+            "deepgram",
+            "--deepgram-api-key",
+            "test-key",
+            "--deepgram-endpointing-ms",
+            "200",
+            "--source-lang",
+            "en",
+        ]
+    )
+
+    transcriber = build_transcriber(args)
+
+    assert isinstance(transcriber, DeepgramStreamingTranscriber)
+    assert transcriber.config.model == "nova-3"
+    assert transcriber.config.language == "en"
+    assert transcriber.config.endpointing_ms == 200
 
 
 def test_asr_demo_uses_voxtral_default_model_when_model_is_not_supplied() -> None:

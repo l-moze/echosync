@@ -51,6 +51,19 @@ describe("主进程字幕事件缓存", () => {
 
     expect(buffer.snapshot()).toEqual([]);
   });
+
+  it("支持按会话快照和清理，避免新会话重放上一场字幕", () => {
+    const buffer = createCaptionEventBuffer(5);
+
+    buffer.push({ ...captionEvent, session_id: "sess_old", segment_id: "seg_old" });
+    buffer.push({ ...captionEvent, session_id: "sess_new", segment_id: "seg_new" });
+
+    expect(buffer.snapshot("sess_new").filter(isSubtitleEvent).map((event) => event.segment_id)).toEqual(["seg_new"]);
+
+    buffer.clearSession("sess_old");
+
+    expect(buffer.snapshot().filter(isSubtitleEvent).map((event) => event.segment_id)).toEqual(["seg_new"]);
+  });
 });
 
 function isSubtitleEvent(event: RealtimeEvent): event is SubtitleEvent {

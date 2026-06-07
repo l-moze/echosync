@@ -19,6 +19,7 @@ export type CaptionLine = {
 };
 
 export type CaptionLineDisplayMode = "sentencePair" | "zonedPair" | "bilingual" | "source" | "translation";
+export const OVERLAY_DISPLAY_WINDOW_LINE_LIMIT = 60;
 
 export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): CaptionLine[] {
   const receivedAtMs = Date.now();
@@ -35,7 +36,8 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
   }
 
   if (event.type === "segment.commit") {
-    const previousLine = lines.find((line) => line.id === event.segment_id);
+    const previousIndex = findLineIndexFromTail(lines, event.segment_id);
+    const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
     const nextLine: CaptionLine = withReceivedAt({
       id: event.segment_id,
       rev: event.rev,
@@ -48,8 +50,8 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
       patchCount: previousLine?.patchCount ?? 0
     }, receivedAtMs, { previousLine, source: true, target: true });
 
-    if (lines.some((line) => line.id === event.segment_id)) {
-      return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
+    if (previousIndex !== -1) {
+      return replaceLineAt(lines, previousIndex, nextLine);
     }
 
     return [...lines, nextLine];
@@ -148,6 +150,41 @@ export function selectOverlayHistoryLinesForDisplay(
   return selectOverlayHistoryLines(layer, lines, activeLineId, maxLines);
 }
 
+export function selectOverlayDisplayWindow(
+  lines: CaptionLine[],
+  activeLineId?: string,
+  maxLines = OVERLAY_DISPLAY_WINDOW_LINE_LIMIT
+): CaptionLine[] {
+  if (maxLines <= 0) {
+    return [];
+  }
+
+  if (lines.length <= maxLines) {
+    return lines;
+  }
+
+  const recentStart = lines.length - maxLines;
+  const recentLines = lines.slice(recentStart);
+  if (!activeLineId) {
+    return recentLines;
+  }
+
+  if (recentLines.some((line) => line.id === activeLineId)) {
+    return recentLines;
+  }
+
+  if (maxLines === 1) {
+    return recentLines;
+  }
+
+  const activeLine = findLineBeforeIndex(lines, activeLineId, recentStart);
+  if (!activeLine) {
+    return recentLines;
+  }
+
+  return [activeLine, ...lines.slice(-(maxLines - 1))];
+}
+
 function overlayHistoryLimit(layer: OverlayLayer): number {
   if (layer === "pinned") {
     return 24;
@@ -163,20 +200,25 @@ function selectLatestCaptionLine(
   predicate: (line: CaptionLine) => boolean,
   orderOf: (line: CaptionLine, index: number) => number = (line, index) => line.receivedAtMs ?? index
 ): CaptionLine | undefined {
-  return lines.reduce<{ line: CaptionLine; order: number } | undefined>((latest, line, index) => {
+  let latestLine: CaptionLine | undefined;
+  let latestOrder = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (!predicate(line)) {
-      return latest;
+      continue;
     }
     const order = orderOf(line, index);
-    if (!latest || order >= latest.order) {
-      return { line, order };
+    if (order >= latestOrder) {
+      latestLine = line;
+      latestOrder = order;
     }
-    return latest;
-  }, undefined)?.line;
+  }
+  return latestLine;
 }
 
 function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs: number): CaptionLine[] {
-  const previousLine = lines.find((line) => line.id === event.segment_id);
+  const previousIndex = findLineIndexFromTail(lines, event.segment_id);
+  const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
   if (!previousLine && shouldHideSourceOnlyDraft(event)) {
     return lines;
   }
@@ -191,7 +233,7 @@ function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs:
         stability: Math.max(previousLine.stability, event.stability)
       }, receivedAtMs, { previousLine, target: true });
 
-      return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
+      return replaceLineAt(lines, previousIndex, nextLine);
     }
 
     return lines;
@@ -213,15 +255,16 @@ function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs:
     target: target.accepted
   });
 
-  if (lines.some((line) => line.id === event.segment_id)) {
-    return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
+  if (previousIndex !== -1) {
+    return replaceLineAt(lines, previousIndex, nextLine);
   }
 
   return [...lines, nextLine];
 }
 
 function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, receivedAtMs: number): CaptionLine[] {
-  const previousLine = lines.find((line) => line.id === event.segment_id);
+  const previousIndex = findLineIndexFromTail(lines, event.segment_id);
+  const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
   if (!previousLine && !event.source_text.trim()) {
     return lines;
   }
@@ -245,7 +288,7 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
   }, receivedAtMs, { previousLine, source: true });
 
   if (previousLine) {
-    return lines.map((line) => (line.id === event.segment_id ? nextLine : line));
+    return replaceLineAt(lines, previousIndex, nextLine);
   }
 
   return [...lines, nextLine];
@@ -267,35 +310,63 @@ function canFillEmptyTargetFromStaleTranslation(
 }
 
 function applyPatch(lines: CaptionLine[], event: SubtitlePatchEvent, receivedAtMs: number): CaptionLine[] {
-  return lines.map((line) => {
-    if (line.id !== event.segment_id) {
-      return line;
+  const index = findLineIndexFromTail(lines, event.segment_id);
+  if (index === -1) {
+    return lines;
+  }
+  const line = lines[index];
+  if (line.state === "locked" || line.rev !== event.base_rev) {
+    return lines;
+  }
+
+  const targetText = event.operations.reduce((text, operation) => {
+    if (operation.op === "replace") {
+      return `${text.slice(0, operation.from_char)}${operation.text}${text.slice(operation.to_char)}`;
     }
-    if (line.state === "locked" || line.rev !== event.base_rev) {
-      return line;
+
+    if (operation.op === "insert") {
+      return `${text.slice(0, operation.at_char)}${operation.text}${text.slice(operation.at_char)}`;
     }
 
-    const targetText = event.operations.reduce((text, operation) => {
-      if (operation.op === "replace") {
-        return `${text.slice(0, operation.from_char)}${operation.text}${text.slice(operation.to_char)}`;
-      }
+    return `${text.slice(0, operation.from_char)}${text.slice(operation.to_char)}`;
+  }, line.targetText);
 
-      if (operation.op === "insert") {
-        return `${text.slice(0, operation.at_char)}${operation.text}${text.slice(operation.at_char)}`;
-      }
-
-      return `${text.slice(0, operation.from_char)}${text.slice(operation.to_char)}`;
-    }, line.targetText);
-
-    return withReceivedAt({
+  return replaceLineAt(
+    lines,
+    index,
+    withReceivedAt({
       ...line,
       rev: event.rev,
       state: "revised",
       targetText,
       stability: event.stability,
       patchCount: line.patchCount + event.operations.length
-    }, receivedAtMs, { previousLine: line, target: true });
-  });
+    }, receivedAtMs, { previousLine: line, target: true })
+  );
+}
+
+function findLineIndexFromTail(lines: CaptionLine[], segmentId: string): number {
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].id === segmentId) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findLineBeforeIndex(lines: CaptionLine[], segmentId: string, beforeIndex: number): CaptionLine | undefined {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    if (lines[index].id === segmentId) {
+      return lines[index];
+    }
+  }
+  return undefined;
+}
+
+function replaceLineAt(lines: CaptionLine[], index: number, nextLine: CaptionLine): CaptionLine[] {
+  const nextLines = lines.slice();
+  nextLines[index] = nextLine;
+  return nextLines;
 }
 
 function withReceivedAt(

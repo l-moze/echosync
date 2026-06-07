@@ -63,6 +63,14 @@ def test_cascaded_engine_drops_pending_stable_when_committed_arrives() -> None:
     asyncio.run(_assert_cascaded_engine_drops_pending_stable_when_committed_arrives())
 
 
+def test_cascaded_engine_drops_backlogged_drafts_before_committed_checkpoint() -> None:
+    asyncio.run(_assert_cascaded_engine_drops_backlogged_drafts_before_committed_checkpoint())
+
+
+def test_cascaded_engine_drops_stale_draft_when_newer_draft_is_queued() -> None:
+    asyncio.run(_assert_cascaded_engine_drops_stale_draft_when_newer_draft_is_queued())
+
+
 def test_cascaded_engine_refreshes_stable_translation_for_long_segment() -> None:
     asyncio.run(_assert_cascaded_engine_refreshes_stable_translation_for_long_segment())
 
@@ -341,6 +349,68 @@ async def _assert_cascaded_engine_drops_pending_stable_when_committed_arrives() 
     ]
     latest = next(event for event in translations if event.target_text == "[zh] latest committed.")
     assert latest.metrics["translation_queue_wait_ms"] >= 0
+
+
+async def _assert_cascaded_engine_drops_backlogged_drafts_before_committed_checkpoint() -> None:
+    translator = BlockingTranslator()
+    engine = CascadedInterpretationEngine(
+        transcriber=BackloggedDraftsThenCommittedTranscriber(),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    stream = engine.stream(_frames())
+    first = await anext(stream)
+    assert isinstance(first, TranslationSegment)
+    assert first.source_text == "blocking segment."
+
+    await asyncio.wait_for(translator.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+    translator.release.set()
+    remaining = [event async for event in stream]
+    translations = [event for event in remaining if isinstance(event, TranslationSegment)]
+
+    assert [segment.text for segment in translator.seen_segments] == [
+        "blocking segment.",
+        "current committed.",
+    ]
+    assert any(event.target_text == "[zh] current committed." for event in translations)
+    assert all(
+        event.target_text not in {"[zh] stale stable draft", "[zh] another stable draft"}
+        for event in translations
+    )
+
+
+async def _assert_cascaded_engine_drops_stale_draft_when_newer_draft_is_queued() -> None:
+    translator = BlockingTranslator()
+    engine = CascadedInterpretationEngine(
+        transcriber=BackloggedStableRefreshOnlyTranscriber(),
+        translator=translator,
+        correction_engine=NoopCorrectionEngine(),
+        transcript_assembler=PassThroughAssembler(),
+    )
+
+    stream = engine.stream(_frames())
+    first = await anext(stream)
+    assert isinstance(first, TranslationSegment)
+    assert first.source_text == "blocking segment."
+
+    await asyncio.wait_for(translator.started.wait(), timeout=1)
+    await asyncio.sleep(0)
+    translator.release.set()
+    remaining = [event async for event in stream]
+    translations = [event for event in remaining if isinstance(event, TranslationSegment)]
+
+    assert [segment.text for segment in translator.seen_segments] == [
+        "blocking segment.",
+        "newer stable draft with enough content.",
+    ]
+    assert any(
+        event.target_text == "[zh] newer stable draft with enough content."
+        for event in translations
+    )
+    assert all(event.target_text != "[zh] stale stable draft" for event in translations)
 
 
 async def _assert_cascaded_engine_refreshes_stable_translation_for_long_segment() -> None:
@@ -666,6 +736,60 @@ class BackloggedStableCommittedTranscriber(Transcriber):
                     status=status,
                     stability=0.9 if status == SegmentStatus.STABLE else 1.0,
                 )
+
+
+class BackloggedDraftsThenCommittedTranscriber(Transcriber):
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for frame in frames:
+            for index, (segment_id, text, status) in enumerate(
+                (
+                    ("seg_blocking", "blocking segment.", SegmentStatus.COMMITTED),
+                    ("seg_stale_draft", "stale stable draft", SegmentStatus.STABLE),
+                    ("seg_other_draft", "another stable draft", SegmentStatus.STABLE),
+                    ("seg_current", "current committed.", SegmentStatus.COMMITTED),
+                )
+            ):
+                yield TranscriptSegment(
+                    session_id=frame.session_id,
+                    segment_id=segment_id,
+                    rev=index + 1,
+                    start_ms=index * 600,
+                    end_ms=(index + 1) * 600,
+                    source_lang="en",
+                    text=text,
+                    status=status,
+                    stability=0.9 if status == SegmentStatus.STABLE else 1.0,
+                )
+
+
+class BackloggedStableRefreshOnlyTranscriber(Transcriber):
+    async def stream(self, frames: AsyncIterator[AudioFrame]) -> AsyncIterator[TranscriptSegment]:
+        async for frame in frames:
+            for index, (segment_id, text) in enumerate(
+                (
+                    ("seg_blocking", "blocking segment."),
+                    ("seg_refresh", "stale stable draft"),
+                    ("seg_refresh", "newer stable draft with enough content."),
+                )
+            ):
+                status = (
+                    SegmentStatus.COMMITTED
+                    if segment_id == "seg_blocking"
+                    else SegmentStatus.STABLE
+                )
+                yield TranscriptSegment(
+                    session_id=frame.session_id,
+                    segment_id=segment_id,
+                    rev=index + 1,
+                    start_ms=index * 1_200,
+                    end_ms=(index + 1) * 1_200,
+                    source_lang="en",
+                    text=text,
+                    status=status,
+                    stability=1.0 if segment_id == "seg_blocking" else 0.9,
+                )
+                if segment_id == "seg_refresh" and text == "stale stable draft":
+                    await asyncio.sleep(0)
 
 
 class RefreshingStableTranscriber(Transcriber):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from echosync_agent.runtime.settings import Settings
+from echosync_agent.services.asr.deepgram_transcriber import DeepgramStreamingTranscriber
 from echosync_agent.services.asr.factory import build_transcriber_from_settings
 from echosync_agent.services.asr.funasr_transcriber import FunAsrTranscriber
 from echosync_agent.services.asr.mock_transcriber import MockTranscriber
@@ -138,6 +139,47 @@ def test_asr_factory_builds_voxtral_transcriber() -> None:
     assert transcriber.config.target_streaming_delay_ms == 480
 
 
+def test_asr_factory_builds_deepgram_transcriber() -> None:
+    transcriber = build_transcriber_from_settings(
+        _settings(
+            asr_provider="deepgram",
+            deepgram_api_key="test-key",
+            deepgram_model="nova-3",
+            deepgram_endpointing_ms=300,
+        )
+    )
+
+    assert isinstance(transcriber, DeepgramStreamingTranscriber)
+    assert transcriber.config.api_key == "test-key"
+    assert transcriber.config.model == "nova-3"
+    assert transcriber.config.endpointing_ms == 300
+
+
+@pytest.mark.parametrize(
+    ("latency_mode", "expected_endpointing_ms"),
+    [
+        ("low_latency", 200),
+        ("balanced", 300),
+        ("accuracy", 500),
+    ],
+)
+def test_asr_factory_maps_deepgram_latency_mode_to_endpointing(
+    latency_mode: str,
+    expected_endpointing_ms: int,
+) -> None:
+    transcriber = build_transcriber_from_settings(
+        _settings(
+            asr_provider="deepgram",
+            asr_latency_mode=latency_mode,
+            deepgram_api_key="test-key",
+            deepgram_endpointing_ms=300,
+        )
+    )
+
+    assert isinstance(transcriber, DeepgramStreamingTranscriber)
+    assert transcriber.config.endpointing_ms == expected_endpointing_ms
+
+
 @pytest.mark.parametrize(
     ("latency_mode", "expected_delay_ms"),
     [
@@ -168,6 +210,11 @@ def test_asr_factory_requires_mistral_api_key_for_voxtral() -> None:
         build_transcriber_from_settings(_settings(asr_provider="voxtral", mistral_api_key=""))
 
 
+def test_asr_factory_requires_deepgram_api_key() -> None:
+    with pytest.raises(ValueError, match="DEEPGRAM_API_KEY"):
+        build_transcriber_from_settings(_settings(asr_provider="deepgram", deepgram_api_key=""))
+
+
 def _settings(**overrides: object) -> Settings:
     values = {
         "asr_provider": "mock",
@@ -181,6 +228,9 @@ def _settings(**overrides: object) -> Settings:
         "deepseek_api_key": "",
         "deepseek_base_url": "https://api.deepseek.com/v1",
         "deepseek_model": "deepseek-chat",
+        "deepl_api_key": "",
+        "deepl_base_url": "https://api-free.deepl.com",
+        "deepl_model_type": "latency_optimized",
         "edge_tts_voice": "zh-CN-XiaoxiaoNeural",
         "elevenlabs_api_key": "",
         "elevenlabs_voice_id": "",
@@ -190,6 +240,10 @@ def _settings(**overrides: object) -> Settings:
         "mistral_api_key": "",
         "voxtral_model": "voxtral-mini-transcribe-realtime-2602",
         "voxtral_target_delay_ms": 1000,
+        "deepgram_api_key": "",
+        "deepgram_model": "nova-3",
+        "deepgram_language": "en",
+        "deepgram_endpointing_ms": 300,
         "funasr_vad_enabled": False,
     }
     values.update(overrides)

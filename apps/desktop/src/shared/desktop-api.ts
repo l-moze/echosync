@@ -7,7 +7,8 @@ import type {
   SessionRecordDraftInput,
   SessionRecordExportFormat,
   SessionRecordExportResult,
-  SessionRecordListItem
+  SessionRecordListItem,
+  SessionRecordSummary
 } from "./session-records";
 
 export type DesktopWindowRole = "control" | "overlay" | "subtitle-style";
@@ -33,6 +34,7 @@ export type DesktopApi = {
     list: () => Promise<SessionRecordListItem[]>;
     get: (id: string) => Promise<SessionRecord | null>;
     saveDraft: (input: SessionRecordDraftInput) => Promise<SessionRecord>;
+    updateSummary: (id: string, summary: Partial<SessionRecordSummary>) => Promise<SessionRecord>;
     rename: (id: string, title: string) => Promise<SessionRecord>;
     delete: (id: string) => Promise<void>;
     export: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
@@ -60,6 +62,7 @@ export type DesktopApi = {
   close: () => Promise<void>;
   onRealtimeEvent: (listener: (event: RealtimeEvent) => void) => () => void;
   onCaptureState: (listener: (snapshot: DesktopCaptureSnapshot) => void) => () => void;
+  onSessionRecordChanged: (listener: (recordId: string) => void) => () => void;
   onOverlayWake: (listener: () => void) => () => void;
   onSubtitleStyle: (listener: (style: SubtitleStyleState) => void) => () => void;
 };

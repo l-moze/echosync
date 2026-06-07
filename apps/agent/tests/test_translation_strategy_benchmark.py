@@ -58,7 +58,7 @@ def test_translation_strategy_benchmark_output_marks_synthetic_scope() -> None:
 
 
 def test_real_agent_benchmark_rejects_mock_asr_provider() -> None:
-    with pytest.raises(ValueError, match="需要 FunASR 或 Voxtral ASR"):
+    with pytest.raises(ValueError, match="需要 FunASR、Voxtral 或 Deepgram ASR"):
         _validate_benchmark_settings(_settings(asr_provider="mock"))
 
 
@@ -107,6 +107,7 @@ def test_real_agent_benchmark_output_marks_real_scope_and_deltas() -> None:
                     first_committed_target_ms=8.0,
                     log_lines=(
                         "translation_checkpoint_started translation_queue_wait_ms=1.0",
+                        "translation_checkpoint_dropped reason=committed_backlog",
                         "translation_checkpoint_first_token first_token_ms=4.0",
                         "translation_checkpoint_finished final_ms=7.0 first_token_ms=4.0",
                     ),
@@ -119,6 +120,8 @@ def test_real_agent_benchmark_output_marks_real_scope_and_deltas() -> None:
     assert "scope=real ASR transcripts + real Agent cascaded engine" in output
     assert "delta_current_vs_old_like:" in output
     assert "translation_started=+0" in output
+    assert "translation_dropped=1" in output
+    assert "translation_dropped=+1" in output
     assert "first_committed_target_ms=-4.0" in output
 
 
@@ -135,6 +138,9 @@ def _settings(**overrides: object) -> Settings:
         "deepseek_api_key": "",
         "deepseek_base_url": "https://api.deepseek.com/v1",
         "deepseek_model": "deepseek-chat",
+        "deepl_api_key": "",
+        "deepl_base_url": "https://api-free.deepl.com",
+        "deepl_model_type": "latency_optimized",
         "edge_tts_voice": "zh-CN-XiaoxiaoNeural",
         "elevenlabs_api_key": "",
         "elevenlabs_voice_id": "",

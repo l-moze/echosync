@@ -16,13 +16,19 @@ from echosync_agent.services.media import MediaAudioSource
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="EchoSync ASR 媒体文件终端验证工具。")
     parser.add_argument("media", help="视频或音频文件路径。")
-    parser.add_argument("--provider", choices=["funasr", "mock", "voxtral"], default="funasr")
+    parser.add_argument(
+        "--provider",
+        choices=["funasr", "mock", "voxtral", "deepgram"],
+        default="funasr",
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--chunk-ms", type=int, default=600)
     parser.add_argument("--source-lang", default="zh")
     parser.add_argument("--mistral-api-key", default="")
     parser.add_argument("--voxtral-delay-ms", type=int, default=1000)
+    parser.add_argument("--deepgram-api-key", default="")
+    parser.add_argument("--deepgram-endpointing-ms", type=int, default=300)
     return parser
 
 
@@ -73,6 +79,9 @@ def build_transcriber(args: argparse.Namespace) -> Transcriber:
             deepseek_api_key=settings.deepseek_api_key,
             deepseek_base_url=settings.deepseek_base_url,
             deepseek_model=settings.deepseek_model,
+            deepl_api_key=settings.deepl_api_key,
+            deepl_base_url=settings.deepl_base_url,
+            deepl_model_type=settings.deepl_model_type,
             edge_tts_voice=settings.edge_tts_voice,
             elevenlabs_api_key=settings.elevenlabs_api_key,
             elevenlabs_voice_id=settings.elevenlabs_voice_id,
@@ -82,6 +91,10 @@ def build_transcriber(args: argparse.Namespace) -> Transcriber:
             mistral_api_key=args.mistral_api_key or settings.mistral_api_key,
             voxtral_model=model,
             voxtral_target_delay_ms=args.voxtral_delay_ms,
+            deepgram_api_key=args.deepgram_api_key or settings.deepgram_api_key,
+            deepgram_model=model,
+            deepgram_language=args.source_lang,
+            deepgram_endpointing_ms=args.deepgram_endpointing_ms,
             asr_latency_mode=settings.asr_latency_mode,
             funasr_vad_enabled=settings.funasr_vad_enabled,
             funasr_vad_silence_ms=settings.funasr_vad_silence_ms,
@@ -96,6 +109,8 @@ def build_transcriber(args: argparse.Namespace) -> Transcriber:
 def _default_model_for_provider(provider: str, settings: Settings) -> str:
     if provider == "voxtral":
         return settings.voxtral_model
+    if provider == "deepgram":
+        return settings.deepgram_model
     return settings.funasr_model
 
 

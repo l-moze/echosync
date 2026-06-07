@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from pathlib import Path
 
 from echosync_agent.domain import AudioFrame, AudioSourceKind
@@ -212,6 +213,7 @@ async def stream_pcm_from_ffmpeg(
         raise RuntimeError("ffmpeg stdout 未打开。")
 
     stderr_task = asyncio.create_task(process.stderr.read() if process.stderr else _empty_bytes())
+    completed = False
     try:
         while True:
             chunk = await process.stdout.read(read_size)
@@ -220,15 +222,20 @@ async def stream_pcm_from_ffmpeg(
             yield chunk
         return_code = await process.wait()
         stderr = await stderr_task
+        completed = True
         if return_code != 0:
             message = stderr.decode("utf-8", errors="ignore").strip()
             raise RuntimeError(f"ffmpeg 音频抽取失败：{message}")
     finally:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-        if not stderr_task.done():
-            stderr_task.cancel()
+        if not completed:
+            if not stderr_task.done():
+                stderr_task.cancel()
+                await asyncio.gather(stderr_task, return_exceptions=True)
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            with suppress(Exception):
+                await process.communicate()
 
 
 async def _empty_bytes() -> bytes:

@@ -21,6 +21,7 @@ export type SessionRecordStore = {
   list: () => Promise<SessionRecordListItem[]>;
   get: (id: string) => Promise<SessionRecord | null>;
   saveDraft: (input: SessionRecordDraftInput) => Promise<SessionRecord>;
+  updateSummary: (id: string, summary: Partial<SessionRecordSummary>) => Promise<SessionRecord>;
   rename: (id: string, title: string) => Promise<SessionRecord>;
   delete: (id: string) => Promise<void>;
   exportRecord: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
@@ -37,7 +38,7 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
   async function readRecord(id: string) {
     const recordPath = sessionJsonPath(sessionsDir, id);
     try {
-      return JSON.parse(await fs.readFile(recordPath, "utf8")) as SessionRecord;
+      return normalizeStoredRecord(JSON.parse(await fs.readFile(recordPath, "utf8")) as SessionRecord);
     } catch (error) {
       if (isNotFound(error)) {
         return null;
@@ -113,6 +114,28 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
       return record;
     },
 
+    async updateSummary(id, summary) {
+      const record = await readRecord(id);
+      if (!record) {
+        throw new Error(`未找到会议记录：${id}`);
+      }
+      const now = new Date().toISOString();
+      const nextRecord = {
+        ...record,
+        summary: buildDraftSummary(
+          {
+            ...record.summary,
+            ...summary,
+            updatedAt: summary.updatedAt ?? now
+          },
+          now
+        ),
+        updatedAt: now
+      };
+      await writeRecord(nextRecord);
+      return nextRecord;
+    },
+
     async rename(id, title) {
       const record = await readRecord(id);
       if (!record) {
@@ -151,6 +174,13 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
   };
 }
 
+function normalizeStoredRecord(record: SessionRecord): SessionRecord {
+  return {
+    ...record,
+    summary: buildDraftSummary(record.summary, record.summary?.updatedAt ?? record.updatedAt)
+  };
+}
+
 function sessionDir(sessionsDir: string, id: string) {
   return path.join(sessionsDir, sanitizePathSegment(id));
 }
@@ -176,6 +206,11 @@ function buildDraftSummary(summary: Partial<SessionRecordSummary> | undefined, n
     status: summary?.status ?? "pending",
     text: summary?.text ?? "",
     keywords: summary?.keywords ?? [],
+    actionItems: summary?.actionItems ?? [],
+    topics: summary?.topics ?? [],
+    risks: summary?.risks ?? [],
+    terminologySuggestions: summary?.terminologySuggestions ?? [],
+    errorMessage: summary?.errorMessage,
     updatedAt: summary?.updatedAt ?? now
   };
 }

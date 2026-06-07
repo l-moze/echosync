@@ -166,12 +166,14 @@ Node.js 直接承载 FunASR
 mock    # 事件链路和测试用，只适合文本帧演示
 funasr  # 本地 AutoModel，优先用于 Windows 本地真实音频
 voxtral # Mistral Voxtral Realtime，云端多语言实时 ASR 备选
+deepgram # Deepgram Streaming STT，云端英语实时 ASR 备选
 ```
 
 实现文件：
 
 ```text
 apps/agent/src/echosync_agent/services/asr/funasr_transcriber.py
+apps/agent/src/echosync_agent/services/asr/deepgram_transcriber.py
 apps/agent/src/echosync_agent/services/media/ffmpeg_audio_source.py
 apps/agent/src/echosync_agent/asr_demo.py
 ```
@@ -246,7 +248,7 @@ python -m pip install "torch==2.9.1" "torchaudio==2.9.1"
 
 ```text
 1. 每个会话维护独立 FunASR cache。
-2. 使用 funasr 或 voxtral 跑真实 PCM 音频，验证首字延迟、chunk 延迟、RTF、空片段比例。
+2. 使用 funasr、voxtral 或 deepgram 跑真实 PCM 音频，验证首字延迟、chunk 延迟、RTF、空片段比例。
 3. 把麦克风源从 getDisplayMedia 分支改成 getUserMedia({ audio: true })。
 4. 将 renderer 中的 ScriptProcessorNode 迁移到 AudioWorklet，降低长期运行抖动。
 ```

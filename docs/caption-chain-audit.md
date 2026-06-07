@@ -45,7 +45,7 @@
 
 后端仍兼容旧 JSON `audio.chunk` / `pcm_base64`，主要用于旧测试、纯 ASR 调试和过渡期兼容；当前 Desktop 真实链路默认不走 base64 JSON。
 
-仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr` 或 `voxtral`，否则 Desktop preflight 会先拦截；如果绕过 preflight，Agent 仍会在启动 pipeline 前返回 `realtime.error` 并结束会话。FunASR readiness 按真实导入链检查 `funasr`、`modelscope` 和 `torch`，缺少 `torch` 时也会在 capabilities 阶段返回 `missing_dependency`，不会等音频流启动后才懒加载失败。`audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥、voice id 和模型配置仍来自 Agent 端 `.env`。
+仍需注意：默认 `mock` ASR 只适合文本帧演示。真实 PCM 音频必须使用 `funasr`、`voxtral` 或 `deepgram`，否则 Desktop preflight 会先拦截；如果绕过 preflight，Agent 仍会在启动 pipeline 前返回 `realtime.error` 并结束会话。FunASR readiness 按真实导入链检查 `funasr`、`modelscope` 和 `torch`，Voxtral 检查 `MISTRAL_API_KEY` 和 `mistralai`，Deepgram 检查 `DEEPGRAM_API_KEY` 和 `websockets`，不会等音频流启动后才懒加载失败。`audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以做会话级切换；未发送时沿用 Agent 端 `.env`。密钥、voice id 和模型配置仍来自 Agent 端 `.env`。
 
 `8765` 与 `8766` 的边界：
 
@@ -236,6 +236,8 @@ current='Feels funny to say that at normal speed,' incoming='but'
    | current -> old | old-like | 20 | 0 | 0 | 622.7 / 1062.7ms | 781.3 / 1240.9ms | 80.6 / 696.7ms |
 
    结论：当前策略可以稳定减少 3 次 DeepSeek 请求，并跳过 56-59 个不稳定 checkpoint，减少半句翻译和 UI 回滚风险；但两组顺序对照不能证明真实翻译延迟下降。`old-current` 中 current 首 token 略快但 final 平均更慢；`current-old` 中 current 首 token 和 final 都更慢。后续优化不能再声称“翻译耗时降低”，除非新的 Agent paced A/B 在反转顺序后仍稳定降低 `translation_first_token_ms` 和 `translation_latency_ms`。
+
+   2026-06-07 追加质量修正：真实英语输入中出现过 `... a spatial reasoning tasks` 被翻成“新的空间推理”，漏掉尾部 head noun `tasks`。根因不是前端展示，而是后端翻译 prompt 过度强调 concise，且 DeepSeek prefix completion 可能把上一版已句末闭合的译文前缀固定住，导致后续追加名词只能生硬补在句号后。后端已把提示词改为“compact but do not summarize/drop/merge semantic content”，明确保留 final content words / head nouns，并在旧源文未句末闭合但旧译文已闭合时禁用 prefix completion，让 committed/stable 新版本走完整重译。
 
 8. **SemanticChunker + FunASR endpoint cache reset**
 
@@ -470,6 +472,8 @@ python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realti
 - `caption-store` 保存 desired state，并按源文/译文分别记录接收顺序。双语/原文模式按最新源文选择 active line，避免旧段晚到译文抢焦点；翻译模式按最新译文选择。
 - `caption-display-buffer` 负责视觉合成：源文和译文分别以字素队列追赶 desired text，`segment.commit` 后先进入 `settling` 驻留，再进入 history。
 
+2026-06-07 性能修正：悬浮字幕不能让整场会话历史参与每帧打字机计算。`selectOverlayDisplayWindow` 只向视觉合成器提供最近窗口，且常规路径只切尾部窗口；active 行落在窗口外时才回扫一次。已补极小窗口契约，避免 `maxLines=1` 时因为 `slice(-0)` 退化成全量历史。`selectActiveCaptionLine` 保持“源文优先、无源文再回退译文”的语义，但底层选择器从 `reduce` 临时对象改为简单循环，减少长会话下每个 realtime event 的分配开销。
+
 2026-06-06 真实日志回放结论：本机 `main.old.log + main.log` 共解析到 `translation.partial=1234`、`transcript.partial=1354`、`segment.commit=57`、`realtime.error=2`。其中译文长度缩短回退 `129` 次，新的策略全部覆盖：`transcript.partial` 不清空已有译文，`translation.partial` 不缩短已可见译文，真正缩短/替换由 `translation.patch` 或 `segment.commit` 负责。源文侧仍允许小范围 ASR 修订，严重前缀回退由 display buffer 保持可见稳定。
 
 停止播放或主动停止时出现的 `RealtimeTranscriptionErrorDetail(... code=3804)` 不应进入字幕文本。根因分两类：
@@ -543,6 +547,7 @@ segment.commit=10
    - `asr_stream_rtf`：流累计口径 RTF，不能和 FunASR 单次推理 `asr_rtf` 混读。
 2. 翻译调度增加队列等待指标 `translation_queue_wait_ms`。
 3. 当同一 `segment_id` 的 committed checkpoint 到达时，尚未开始的 stable/partial checkpoint 会被丢弃；当 stable 到达时，尚未开始的 partial 会被丢弃。已经开始的翻译不强行取消，避免供应商流中断和 UI 回滚复杂度。
+   2026-06-07 追加：当翻译 worker 准备处理 stable/partial 草稿、且队列后方已经有 backlog 时，先让 producer 一个事件循环机会继续入队；如果这时出现 committed checkpoint，则跳过当前和队列中尚未开始的草稿 checkpoint，优先翻译 committed。无 backlog 时不允许 committed 抢掉当前 weak-boundary stable 草稿，避免损失低延迟首译；但如果同一 `segment_id + status` 的更新版草稿已经入队，则跳过旧草稿，防止连续翻译 stale stable 造成 UI 修订风暴。这个策略只丢“未开始的草稿”，不丢 committed 终稿。对应日志为 `translation_checkpoint_dropped reason=committed_backlog|newer_draft_backlog`，`realtime_log_summary` 会统计 `translation_dropped` 和 `dropped_reasons`。
 4. Desktop renderer 采集侧 `realtime_audio_capture_metrics` 改为 `info` 级别，真实测评日志应能看到采集 callback、编码耗时、发送帧数和 WebSocket backlog。
 5. Agent caption 发布日志补充 `asr_stream_elapsed_ms`、`asr_audio_lag_ms`、`translation_queue_wait_ms`，同时保留 FunASR 可用的 `asr_latency_ms`。
 
@@ -567,7 +572,10 @@ python -m echosync_agent.diagnostics.realtime_log_summary ..\..\agent-live.log
 before/after:
   translation_started
   translation_skipped
+  translation_dropped
   skipped_reasons(partial_disabled/simul_wait)
+  dropped_reasons(committed_backlog)
+  dropped_reasons(newer_draft_backlog)
   source_to_first_translation_ms
   stable_to_first_translation_ms
   translation_queue_wait_ms p50/p95
@@ -627,7 +635,7 @@ echosync-log-summary path\to\agent.log
 
 ### P0：真实 ASR 配置与健康检查
 1. 启动 `8766` 完整同传服务。
-2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr` 或 `voxtral` 作为默认值，设置 `ECHOSYNC_TRANSLATOR_PROVIDER=deepseek` 作为真实翻译默认值；也可以由 Desktop 在 `audio.start.asr_provider` / `audio.start.translation_provider` / `audio.start.tts_provider` 中选择本次会话 provider。
+2. 设置 `ECHOSYNC_ASR_PROVIDER=funasr`、`voxtral` 或 `deepgram` 作为默认值，设置 `ECHOSYNC_TRANSLATOR_PROVIDER=deepseek` 作为真实翻译默认值；也可以由 Desktop 在 `audio.start.asr_provider` / `audio.start.translation_provider` / `audio.start.tts_provider` 中选择本次会话 provider。
 3. Desktop 已在开始同传前读取 `/v1/realtime/capabilities`，并阻止 mock+真实音频、缺 key、缺 SDK/本地依赖和未完整接入音频源这类组合；FunASR 会显式检查 `funasr`、`modelscope`、`torch`。后续还需要把能力结果做成更细的设置页和诊断页。
 
 ### P1：音频源分支补实

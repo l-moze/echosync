@@ -158,7 +158,7 @@ DeepL Voice、Wordly、KUDO、Interprefy 等产品证明企业和活动场景愿
 
 不同内容、网络和成本环境下供应商表现不同。系统应保留 FunASR、Voxtral、托管 ASR、DeepSeek、专用翻译 API 的适配边界。
 
-MVP 的多 ASR 选择不应让前端持有供应商密钥。前端只声明本次会话的 provider 和延迟模式，服务端根据 `.env` 中已启用的 provider 创建适配器。低延迟/准确率优先级建议是：FunASR 本地兜底、Voxtral 云端英语技术内容、Deepgram/Azure 作为下一批 streaming ASR 候选；OpenAI Realtime 更适合端到端语音同传候选。
+MVP 的多 ASR 选择不应让前端持有供应商密钥。前端只声明本次会话的 provider 和延迟模式，服务端根据 `.env` 中已启用的 provider 创建适配器。低延迟/准确率优先级建议是：FunASR 本地兜底、Voxtral 云端英语技术内容、Deepgram 作为已接入的云端 streaming ASR 备选；Azure 作为下一批候选。Deepgram Voice Agent / OpenAI Realtime 更适合端到端语音同传候选，不应混入当前 ASR-only provider 抽象。
 
 ### P2：后续增强
 
@@ -288,7 +288,7 @@ MVP 应以体感指标为准：
 
 5. 供应商可替换
 
-ASR、翻译、修正、TTS 分层，方便测试 FunASR、Voxtral、OpenAI Realtime、Azure、DeepL 等不同方案。
+ASR、翻译、修正、TTS 分层，方便测试 FunASR、Voxtral、Deepgram、Azure、DeepL、OpenAI Realtime 等不同方案。
 
 ## 评估方法
 

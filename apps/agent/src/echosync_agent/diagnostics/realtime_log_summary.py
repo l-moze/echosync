@@ -17,7 +17,9 @@ class RealtimeLogSummary:
     translation_started: int = 0
     translation_finished: int = 0
     translation_skipped: int = 0
+    translation_dropped: int = 0
     skipped_reasons: Counter[str] = field(default_factory=Counter)
+    dropped_reasons: Counter[str] = field(default_factory=Counter)
     simul_wait: int = 0
     simul_actions: Counter[str] = field(default_factory=Counter)
     caption_events: Counter[str] = field(default_factory=Counter)
@@ -69,6 +71,10 @@ def summarize_log_lines(lines: Iterable[str]) -> RealtimeLogSummary:
             summary.skipped_reasons[reason] += 1
             if reason == "simul_wait":
                 summary.simul_wait += 1
+        if "translation_checkpoint_dropped" in line:
+            summary.translation_dropped += 1
+            reason = fields.get("reason", "unknown")
+            summary.dropped_reasons[reason] += 1
         if "caption_event_published" in line:
             event_type = fields.get("type", "unknown")
             summary.caption_events[event_type] += 1
@@ -112,10 +118,12 @@ def format_summary(summary: RealtimeLogSummary) -> str:
             "translation_started="
             f"{summary.translation_started} translation_finished={summary.translation_finished} "
             f"translation_skipped={summary.translation_skipped} "
+            f"translation_dropped={summary.translation_dropped} "
             f"skip_ratio={summary.translation_skip_ratio:.3f}"
         ),
         f"simul_wait={summary.simul_wait}",
         f"skipped_reasons={_format_counter(summary.skipped_reasons)}",
+        f"dropped_reasons={_format_counter(summary.dropped_reasons)}",
         f"simul_actions={_format_counter(summary.simul_actions)}",
         f"caption_events={_format_counter(summary.caption_events)}",
         _format_distribution("avg_audio_transport_ms", summary.avg_audio_transport_ms),
@@ -166,7 +174,9 @@ def _merge(target: RealtimeLogSummary, source: RealtimeLogSummary) -> None:
     target.translation_started += source.translation_started
     target.translation_finished += source.translation_finished
     target.translation_skipped += source.translation_skipped
+    target.translation_dropped += source.translation_dropped
     target.skipped_reasons.update(source.skipped_reasons)
+    target.dropped_reasons.update(source.dropped_reasons)
     target.simul_wait += source.simul_wait
     target.simul_actions.update(source.simul_actions)
     target.caption_events.update(source.caption_events)

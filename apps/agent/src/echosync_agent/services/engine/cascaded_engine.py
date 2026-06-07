@@ -210,6 +210,31 @@ class CascadedInterpretationEngine(InterpretationEngine):
                             "translation_queue_wait_ms",
                             queue_wait_ms,
                         )
+                        has_backlog_after_current = bool(pending_checkpoints)
+                        if item.status != SegmentStatus.COMMITTED and not producer_done:
+                            await asyncio.sleep(0)
+                            newer_draft = pending_checkpoints.get(checkpoint_key)
+                            if (
+                                newer_draft is not None
+                                and newer_draft.transcript.rev > item.rev
+                            ):
+                                self._log_dropped_checkpoint(
+                                    queued,
+                                    reason="newer_draft_backlog",
+                                    pending_checkpoints=len(pending_checkpoints),
+                                    committed_transcript=None,
+                                )
+                                continue
+                            if (
+                                has_backlog_after_current
+                                and self._has_pending_committed_checkpoint(pending_checkpoints)
+                            ):
+                                self._log_dropped_checkpoint(
+                                    queued,
+                                    reason="committed_backlog",
+                                    pending_checkpoints=len(pending_checkpoints),
+                                )
+                                continue
                         async for event in self._translate_checkpoint(
                             item,
                             queued.simul_decision,
@@ -478,6 +503,11 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 pending_order,
                 (transcript.segment_id, SegmentStatus.PARTIAL),
             )
+            CascadedInterpretationEngine._drop_pending_draft_checkpoints_before_committed(
+                pending_checkpoints,
+                pending_order,
+                transcript,
+            )
         elif transcript.status == SegmentStatus.STABLE:
             CascadedInterpretationEngine._drop_pending_checkpoint(
                 pending_checkpoints,
@@ -520,6 +550,74 @@ class CascadedInterpretationEngine(InterpretationEngine):
         pending_checkpoints.pop(checkpoint_key, None)
         with suppress(ValueError):
             pending_order.remove(checkpoint_key)
+
+    @staticmethod
+    def _drop_pending_draft_checkpoints_before_committed(
+        pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint],
+        pending_order: deque[tuple[str, SegmentStatus]],
+        committed_transcript: TranscriptSegment,
+    ) -> None:
+        """Prefer pending committed checkpoints over stale draft work.
+
+        Stable/partial checkpoints are speculative UI drafts. Once a committed
+        segment is waiting behind a slow translation request, translating older
+        drafts first increases visible lag and often creates subtitles that are
+        immediately superseded. Committed checkpoints are retained because they
+        feed final subtitles, archive, and export.
+        """
+        dropped: list[_QueuedCheckpoint] = []
+        kept_order: deque[tuple[str, SegmentStatus]] = deque()
+        for checkpoint_key in pending_order:
+            queued = pending_checkpoints.get(checkpoint_key)
+            if queued is None:
+                continue
+            if checkpoint_key[1] == SegmentStatus.COMMITTED:
+                kept_order.append(checkpoint_key)
+                continue
+            dropped.append(queued)
+            pending_checkpoints.pop(checkpoint_key, None)
+
+        if not dropped:
+            return
+
+        pending_order.clear()
+        pending_order.extend(kept_order)
+        for queued in dropped:
+            CascadedInterpretationEngine._log_dropped_checkpoint(
+                queued,
+                reason="committed_backlog",
+                pending_checkpoints=len(pending_checkpoints),
+                committed_transcript=committed_transcript,
+            )
+
+    @staticmethod
+    def _has_pending_committed_checkpoint(
+        pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint],
+    ) -> bool:
+        return any(key[1] == SegmentStatus.COMMITTED for key in pending_checkpoints)
+
+    @staticmethod
+    def _log_dropped_checkpoint(
+        queued: _QueuedCheckpoint,
+        *,
+        reason: str,
+        pending_checkpoints: int,
+        committed_transcript: TranscriptSegment | None = None,
+    ) -> None:
+        draft = queued.transcript
+        logger.info(
+            "translation_checkpoint_dropped session_id=%s segment_id=%s "
+            "rev=%d status=%s reason=%s committed_segment_id=%s committed_rev=%d "
+            "pending_checkpoints=%d",
+            draft.session_id,
+            draft.segment_id,
+            draft.rev,
+            draft.status,
+            reason,
+            committed_transcript.segment_id if committed_transcript else "",
+            committed_transcript.rev if committed_transcript else -1,
+            pending_checkpoints,
+        )
 
     def _should_queue_stable_checkpoint(
         self,

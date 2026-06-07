@@ -1,4 +1,4 @@
-export type AsrProviderId = "mock" | "funasr" | "voxtral";
+export type AsrProviderId = "mock" | "funasr" | "voxtral" | "deepgram";
 export type AsrProviderSelection = "server-default" | AsrProviderId;
 export type AsrLatencyMode = "low_latency" | "balanced" | "accuracy";
 
@@ -32,6 +32,12 @@ export const ASR_PROVIDER_OPTIONS: AsrProviderOption[] = [
     label: "Voxtral",
     description: "云端低延迟识别",
     providerId: "voxtral"
+  },
+  {
+    id: "deepgram",
+    label: "Deepgram",
+    description: "云端实时英文识别",
+    providerId: "deepgram"
   },
   {
     id: "mock",

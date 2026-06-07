@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from os import getenv
 
-SUPPORTED_ASR_PROVIDERS = frozenset({"mock", "funasr", "voxtral"})
-NEXT_ASR_PROVIDER_CANDIDATES = frozenset({"deepgram", "azure"})
+SUPPORTED_ASR_PROVIDERS = frozenset({"mock", "funasr", "voxtral", "deepgram"})
+NEXT_ASR_PROVIDER_CANDIDATES = frozenset({"azure"})
 SUPPORTED_ASR_LATENCY_MODES = frozenset({"low_latency", "balanced", "accuracy"})
-SUPPORTED_TRANSLATION_PROVIDERS = frozenset({"mock", "deepseek"})
+SUPPORTED_TRANSLATION_PROVIDERS = frozenset({"mock", "deepseek", "deepl"})
 SUPPORTED_TTS_PROVIDERS = frozenset({"disabled", "edge-tts", "elevenlabs"})
 
 
@@ -23,6 +23,9 @@ class Settings:
     deepseek_api_key: str
     deepseek_base_url: str
     deepseek_model: str
+    deepl_api_key: str
+    deepl_base_url: str
+    deepl_model_type: str
     edge_tts_voice: str
     elevenlabs_api_key: str
     elevenlabs_voice_id: str
@@ -32,6 +35,10 @@ class Settings:
     mistral_api_key: str
     voxtral_model: str
     voxtral_target_delay_ms: int
+    deepgram_api_key: str = ""
+    deepgram_model: str = "nova-3"
+    deepgram_language: str = "en"
+    deepgram_endpointing_ms: int = 300
     asr_latency_mode: str = "balanced"
     funasr_vad_enabled: bool = False
     funasr_vad_silence_ms: int = 300
@@ -54,6 +61,9 @@ class Settings:
             deepseek_api_key=getenv("DEEPSEEK_API_KEY", ""),
             deepseek_base_url=getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"),
             deepseek_model=getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+            deepl_api_key=getenv("DEEPL_API_KEY", ""),
+            deepl_base_url=getenv("DEEPL_BASE_URL", "https://api-free.deepl.com"),
+            deepl_model_type=getenv("DEEPL_MODEL_TYPE", "latency_optimized"),
             edge_tts_voice=getenv("EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural"),
             elevenlabs_api_key=getenv("ELEVENLABS_API_KEY", ""),
             elevenlabs_voice_id=getenv("ELEVENLABS_VOICE_ID", ""),
@@ -65,6 +75,10 @@ class Settings:
             mistral_api_key=getenv("MISTRAL_API_KEY", ""),
             voxtral_model=getenv("VOXTRAL_MODEL", "voxtral-mini-transcribe-realtime-2602"),
             voxtral_target_delay_ms=int(getenv("VOXTRAL_TARGET_DELAY_MS", "1000")),
+            deepgram_api_key=getenv("DEEPGRAM_API_KEY", ""),
+            deepgram_model=getenv("DEEPGRAM_MODEL", "nova-3"),
+            deepgram_language=getenv("DEEPGRAM_LANGUAGE", "en"),
+            deepgram_endpointing_ms=int(getenv("DEEPGRAM_ENDPOINTING_MS", "300")),
             asr_latency_mode=getenv("ECHOSYNC_ASR_LATENCY_MODE", "balanced"),
             funasr_vad_enabled=getenv("FUNASR_VAD_ENABLED", "false").lower()
             in ("true", "1", "yes"),
@@ -103,7 +117,8 @@ def with_session_asr_overrides(
         provider = str(asr_provider).strip().lower()
         if provider in NEXT_ASR_PROVIDER_CANDIDATES:
             raise ValueError(
-                f"{provider.title()} ASR 尚未接入，本轮可选 provider：mock、funasr、voxtral"
+                f"{provider.title()} ASR 尚未接入，"
+                "本轮可选 provider：mock、funasr、voxtral、deepgram"
             )
         if provider not in SUPPORTED_ASR_PROVIDERS:
             raise ValueError(f"不支持的 ASR provider：{provider}")

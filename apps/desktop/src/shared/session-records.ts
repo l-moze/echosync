@@ -2,6 +2,11 @@ export type SessionRecordSummary = {
   status: "pending" | "ready" | "failed";
   text: string;
   keywords: string[];
+  actionItems: string[];
+  topics: string[];
+  risks: string[];
+  terminologySuggestions: string[];
+  errorMessage?: string;
   updatedAt?: string;
 };
 

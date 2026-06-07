@@ -12,7 +12,7 @@ import {
   fetchAgentCapabilities
 } from "./agent-capabilities-client";
 import { buildRealtimeEventTelemetry } from "../shared/realtime-telemetry";
-import type { SessionRecordDraftInput, SessionRecordExportFormat } from "../shared/session-records";
+import type { SessionRecordDraftInput, SessionRecordExportFormat, SessionRecordSummary } from "../shared/session-records";
 import { createCaptionEventBuffer } from "./caption-event-buffer";
 import { resolveAppIconPath } from "./desktop-resources";
 import { createLoopbackDisplayMediaStreams } from "./display-media-loopback";
@@ -29,6 +29,8 @@ import {
   type OverlayWindowState
 } from "./overlay-window-state";
 import { createSessionRecordStore } from "./session-record-store";
+import { createSessionSummaryGeneratorFromEnv } from "./session-summary-generator";
+import { runSessionSummaryGeneration } from "./session-summary-runner";
 import { CONTROL_WINDOW_PRESET, OVERLAY_WINDOW_PRESET, type DesktopWindowPreset } from "./window-config";
 import { sendToWindow, sendToWindows } from "./window-ipc";
 import { shouldCreateWindowAtStartup, shouldRevealWindowOnReady } from "./window-lifecycle";
@@ -97,8 +99,10 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay" |
   window.webContents.on("did-finish-load", () => {
     sendToWindow(window, "audio:state", captureSnapshot);
     sendToWindow(window, "subtitle-style:state", subtitleStyle);
-    for (const event of captionEventBuffer.snapshot()) {
-      sendToWindow(window, "caption:event", event);
+    if (captureSnapshot.sessionId) {
+      for (const event of captionEventBuffer.snapshot(captureSnapshot.sessionId)) {
+        sendToWindow(window, "caption:event", event);
+      }
     }
   });
 
@@ -145,6 +149,10 @@ function broadcastCaptureState(snapshot: DesktopCaptureSnapshot) {
 
 function broadcastSubtitleStyle(style: SubtitleStyleState) {
   sendToWindows([controlWindow, overlayWindow, subtitleStyleWindow], "subtitle-style:state", style);
+}
+
+function notifySessionRecordChanged(recordId: string) {
+  sendToWindows([controlWindow], "session-records:changed", recordId);
 }
 
 function ensureOverlayWindow() {
@@ -211,12 +219,27 @@ function applyOverlayLayout(layer: OverlayUiLayer) {
 
 function registerIpc() {
   const sessionRecordStore = createSessionRecordStore(path.join(app.getPath("userData"), "echosync-data"));
+  const sessionSummaryGenerator = createSessionSummaryGeneratorFromEnv();
 
   ipcMain.handle("session-records:list", () => sessionRecordStore.list());
   ipcMain.handle("session-records:get", (_event, id: string) => sessionRecordStore.get(id));
-  ipcMain.handle("session-records:save-draft", (_event, input: SessionRecordDraftInput) =>
-    sessionRecordStore.saveDraft(input)
-  );
+  ipcMain.handle("session-records:save-draft", async (_event, input: SessionRecordDraftInput) => {
+    const record = await sessionRecordStore.saveDraft(input);
+    void runSessionSummaryGeneration({
+      generator: sessionSummaryGenerator,
+      notifyChanged: notifySessionRecordChanged,
+      recordId: record.id,
+      store: sessionRecordStore
+    }).catch((error) => {
+      log.warn("[session-records] 会议摘要后台任务失败:", error);
+    });
+    return record;
+  });
+  ipcMain.handle("session-records:update-summary", async (_event, id: string, summary: Partial<SessionRecordSummary>) => {
+    const record = await sessionRecordStore.updateSummary(id, summary);
+    notifySessionRecordChanged(id);
+    return record;
+  });
   ipcMain.handle("session-records:rename", (_event, id: string, title: string) =>
     sessionRecordStore.rename(id, title)
   );
@@ -234,6 +257,7 @@ function registerIpc() {
 
   ipcMain.handle("audio:start", (_event, sourceId: DesktopAudioSourceId, sessionId?: string) => {
     const source = DESKTOP_AUDIO_SOURCES.find((item) => item.id === sourceId);
+    captionEventBuffer.clear();
     captureSnapshot = {
       sourceId,
       state: source ? "listening" : "error",

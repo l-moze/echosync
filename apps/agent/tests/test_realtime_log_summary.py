@@ -28,6 +28,11 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
                 "status=stable reason=simul_wait simul_reason=suspended_tail"
             ),
             (
+                "translation_checkpoint_dropped session_id=sess segment_id=seg_old rev=3 "
+                "status=stable reason=committed_backlog committed_segment_id=seg_new "
+                "committed_rev=4 pending_checkpoints=1"
+            ),
+            (
                 "caption_event_published type=caption_update session_id=sess segment_id=seg "
                 "translation_queue_wait_ms=12.0 translation_first_token_ms=140.0 "
                 "translation_latency_ms=210.0 simul_policy_action=1.0"
@@ -61,13 +66,15 @@ def test_realtime_log_summary_counts_translation_policy_and_latency_metrics() ->
         ]
     )
 
-    assert summary.lines == 11
+    assert summary.lines == 12
     assert summary.translation_started == 1
     assert summary.translation_finished == 1
     assert summary.translation_skipped == 1
+    assert summary.translation_dropped == 1
     assert summary.translation_skip_ratio == 0.5
     assert summary.simul_wait == 1
     assert summary.skipped_reasons["simul_wait"] == 1
+    assert summary.dropped_reasons["committed_backlog"] == 1
     assert summary.simul_actions["SimulPolicyAction.DRAFT"] == 1
     assert summary.caption_events["caption_update"] == 1
     assert summary.queue_wait_ms == [12.0]
@@ -93,5 +100,6 @@ def test_realtime_log_summary_formats_empty_counters() -> None:
 
     assert "translation_started=0" in output
     assert "skipped_reasons=-" in output
+    assert "dropped_reasons=-" in output
     assert "translation_first_token_ms=n:0" in output
     assert "tts_started=0 tts_finished=0 tts_failed=0" in output

@@ -40,10 +40,7 @@ class CaptionEventHub:
         """向所有已连接的 Desktop 客户端推送事件。"""
         published_at_ms = int(time.time() * 1000)
         metrics = payload.get("metrics")
-        if not isinstance(metrics, dict):
-            metrics = {}
-        else:
-            metrics = dict(metrics)
+        metrics = {} if not isinstance(metrics, dict) else dict(metrics)
         trace_id = str(payload.get("trace_id") or payload.get("session_id") or "")
         span_id = str(payload.get("span_id") or "")
         message = {

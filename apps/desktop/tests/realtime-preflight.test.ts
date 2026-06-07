@@ -35,6 +35,21 @@ describe("实时同传启动预检", () => {
     expect(message).toContain("MISTRAL_API_KEY");
   });
 
+  it("阻止缺少密钥的 Deepgram 会话", () => {
+    const message = validateRealtimePreflight({
+      asrLatencyMode: "balanced",
+      asrProvider: "deepgram",
+      capabilities: capabilities({
+        deepgramStatus: "missing_key"
+      }),
+      sourceId: "windows-system",
+      ttsProvider: "server-default",
+      translationProvider: "server-default"
+    });
+
+    expect(message).toContain("DEEPGRAM_API_KEY");
+  });
+
   it("阻止缺少密钥的 DeepSeek 翻译会话", () => {
     const message = validateRealtimePreflight({
       asrLatencyMode: "balanced",
@@ -135,6 +150,7 @@ describe("实时同传启动预检", () => {
 function capabilities({
   asrLatencyModes = ["low_latency", "balanced", "accuracy"],
   deepseekStatus = "ready",
+  deepgramStatus = "ready",
   defaultAsrProvider = "funasr",
   defaultTtsProvider = "disabled",
   elevenLabsTtsStatus = "missing_key",
@@ -142,7 +158,8 @@ function capabilities({
 }: {
   asrLatencyModes?: AgentCapabilities["asr_latency_modes"];
   deepseekStatus?: "ready" | "missing_key" | "missing_dependency" | "unavailable";
-  defaultAsrProvider?: "mock" | "funasr" | "voxtral";
+  deepgramStatus?: "ready" | "missing_key" | "missing_dependency" | "unavailable";
+  defaultAsrProvider?: "mock" | "funasr" | "voxtral" | "deepgram";
   defaultTtsProvider?: "disabled" | "edge-tts" | "elevenlabs";
   elevenLabsTtsStatus?: "ready" | "missing_key" | "missing_config" | "unavailable";
   voxtralStatus?: "ready" | "missing_key" | "missing_dependency" | "unavailable";
@@ -190,6 +207,17 @@ function capabilities({
         real_audio_supported: true,
         reason: voxtralStatus === "missing_key" ? "缺少 MISTRAL_API_KEY。" : "",
         status: voxtralStatus
+      },
+      {
+        available: deepgramStatus === "ready",
+        default: defaultAsrProvider === "deepgram",
+        id: "deepgram",
+        kind: "asr",
+        label: "Deepgram",
+        model: "nova-3",
+        real_audio_supported: true,
+        reason: deepgramStatus === "missing_key" ? "缺少 DEEPGRAM_API_KEY。" : "",
+        status: deepgramStatus
       }
     ],
     translation_providers: [

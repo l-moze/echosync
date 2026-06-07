@@ -195,7 +195,12 @@ class DeepSeekTranslator(Translator):
         return (
             "You are a real-time subtitle translator. "
             f"Translate the user's source text into {self.target_lang}. "
-            "Keep the translation concise and suitable for live captions. "
+            "Keep the translation compact and suitable for live captions, but do not summarize, "
+            "drop, or merge semantic content. "
+            "Preserve final content words and head nouns, especially technical objects such as "
+            "tasks, methods, datasets, demonstrations, models, and reasoning types. "
+            "Smooth obvious speech fillers such as 'like' or 'kind of' without deleting the "
+            "surrounding meaning. "
             "For glossary terms marked required, use the target translation exactly. "
             "For glossary terms marked preferred, prefer the target translation when natural. "
             "Do not invent glossary terms that are not listed. "
@@ -238,7 +243,13 @@ class DeepSeekTranslator(Translator):
         ):
             return ""
 
-        return (previous.target_stable_text or previous.target_text).strip()
+        previous_target = (previous.target_stable_text or previous.target_text).strip()
+        if _target_closes_sentence(previous_target) and not _source_closes_sentence(
+            previous_source
+        ):
+            return ""
+
+        return previous_target
 
     def _build_segment(
         self,
@@ -353,6 +364,14 @@ def _combine_prefix_completion(prefix: str, completion: str) -> str:
     if completion.startswith(prefix):
         return completion.strip()
     return f"{prefix}{completion}".strip()
+
+
+def _source_closes_sentence(text: str) -> bool:
+    return text.rstrip().endswith((".", "?", "!", "。", "？", "！"))
+
+
+def _target_closes_sentence(text: str) -> bool:
+    return _source_closes_sentence(text)
 
 
 def _usage_metrics(usage: object | None) -> dict[str, float]:

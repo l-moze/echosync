@@ -82,6 +82,55 @@ describe("主进程会议记录持久化", () => {
       await fs.rm(rootDir, { force: true, recursive: true });
     }
   });
+
+  it("更新 AI 摘要并持久化到记录详情和列表", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "echosync-record-store-"));
+    try {
+      const store = createSessionRecordStore(rootDir);
+      await store.saveDraft({
+        id: "summary-demo",
+        title: "摘要会议",
+        createdAt: "2026-06-06T10:00:00.000Z",
+        endedAt: "2026-06-06T10:01:00.000Z",
+        durationMs: 60_000,
+        segments: [
+          segment({ id: "seg_1", sourceText: "We need a lower latency ASR path.", targetText: "我们需要更低延迟的识别链路。" })
+        ]
+      });
+
+      const updated = await store.updateSummary("summary-demo", {
+        status: "ready",
+        text: "会议讨论了低延迟识别链路的优化方向。",
+        keywords: ["低延迟", "识别链路"],
+        actionItems: ["评估 FunASR 低延迟模式"],
+        topics: ["ASR 优化"],
+        risks: ["云端模型响应波动"],
+        terminologySuggestions: ["ASR：语音识别"]
+      });
+
+      expect(updated.summary).toMatchObject({
+        status: "ready",
+        text: "会议讨论了低延迟识别链路的优化方向。",
+        keywords: ["低延迟", "识别链路"],
+        actionItems: ["评估 FunASR 低延迟模式"],
+        topics: ["ASR 优化"],
+        risks: ["云端模型响应波动"],
+        terminologySuggestions: ["ASR：语音识别"]
+      });
+      expect(updated.summary.updatedAt).toBeTruthy();
+
+      const reloaded = await store.get("summary-demo");
+      expect(reloaded?.summary.text).toBe("会议讨论了低延迟识别链路的优化方向。");
+
+      const listed = await store.list();
+      expect(listed[0]).toMatchObject({
+        summaryStatus: "ready",
+        summaryText: "会议讨论了低延迟识别链路的优化方向。"
+      });
+    } finally {
+      await fs.rm(rootDir, { force: true, recursive: true });
+    }
+  });
 });
 
 function segment(overrides: Partial<SessionRecordSegment>): SessionRecordSegment {

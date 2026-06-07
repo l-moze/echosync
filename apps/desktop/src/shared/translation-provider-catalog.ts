@@ -1,4 +1,4 @@
-export type TranslationProviderId = "mock" | "deepseek";
+export type TranslationProviderId = "mock" | "deepseek" | "deepl";
 export type TranslationProviderSelection = "server-default" | TranslationProviderId;
 
 export type TranslationProviderOption = {
@@ -19,6 +19,12 @@ export const TRANSLATION_PROVIDER_OPTIONS: TranslationProviderOption[] = [
     label: "DeepSeek-V3",
     description: "低延迟流式翻译",
     providerId: "deepseek"
+  },
+  {
+    id: "deepl",
+    label: "DeepL",
+    description: "批量请求专用翻译",
+    providerId: "deepl"
   },
   {
     id: "mock",

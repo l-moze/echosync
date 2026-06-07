@@ -35,7 +35,7 @@ EchoSync 当前初始化为一个小型 monorepo：
 
 项目仓库已初始化，并完成 Next 15 + Python Agent 框架、提供商无关的实时管道契约、字幕事件协议和模拟链路测试骨架。当前地基同时支持 ASR→翻译→修正的级联模型，以及未来 OpenAI Realtime、Qwen LiveTranslate、Azure Speech Translation 等端到端模型适配。
 
-ASR provider 当前支持 `mock`、`funasr`、`voxtral`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr` 或 `voxtral`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`；TTS provider 当前支持 `disabled`、`edge-tts`、`elevenlabs`。Desktop 会在启动前读取 Agent `/v1/realtime/capabilities`，显示后端默认 provider、缺失密钥或缺失 SDK/本地依赖，并在本次会话中声明 `asr_latency_mode`；只有用户显式选择 provider 时才额外发送 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值。API key、base URL、voice id 和模型密钥仍只保留在后端环境变量中。Deepgram/Azure 目前是下一批 ASR 候选，不是已接入的可选 provider。
+ASR provider 当前支持 `mock`、`funasr`、`voxtral`、`deepgram`。默认 `.env.example` 使用 `mock` 方便跑通事件链路；真实 PCM 音频必须切到 `funasr`、`voxtral` 或 `deepgram`，否则 `MockTranscriber` 只适合文本帧演示，不代表真实识别能力。翻译 provider 当前支持 `mock`、`deepseek`；TTS provider 当前支持 `disabled`、`edge-tts`、`elevenlabs`。Desktop 会在启动前读取 Agent `/v1/realtime/capabilities`，显示后端默认 provider、缺失密钥或缺失 SDK/本地依赖，并在本次会话中声明 `asr_latency_mode`；只有用户显式选择 provider 时才额外发送 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值。API key、base URL、voice id 和模型密钥仍只保留在后端环境变量中。Azure 目前是下一批 ASR 候选，不是已接入的可选 provider。
 
 当前 Web 工作台已按 `doc/UI设计调研.md` 的 MVP 方向实现：
 
@@ -101,7 +101,7 @@ FUNASR_DEVICE=auto
 
 FunASR 默认关闭 `livekit.plugins.silero` VAD，依赖 hard timeout 做延迟兜底；需要实验 soft endpoint 时可设置 `FUNASR_VAD_ENABLED=true`。本地 30 秒英文样本里 Silero 没带来中途 soft endpoint，且会明显增加 CPU 开销，因此暂不作为 MVP 默认路径。
 
-也可以在 Desktop 会话启动时选择 ASR provider、ASR 延迟模式、翻译 provider 和语音播报 provider。选择“自动/通用模型”时不发送覆盖字段，沿用 Agent `.env`；显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral`，同时保证后端 `.env` 配置了 `MISTRAL_API_KEY`。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
+也可以在 Desktop 会话启动时选择 ASR provider、ASR 延迟模式、翻译 provider 和语音播报 provider。选择“自动/通用模型”时不发送覆盖字段，沿用 Agent `.env`；显式选择 `DeepSeek-V3` 时只发送 provider id，仍要求后端 `.env` 配置 `DEEPSEEK_API_KEY`。如需云端英语实时 ASR，可把会话 provider 切到 `voxtral` 或 `deepgram`：Voxtral 需要 `MISTRAL_API_KEY`，Deepgram 需要 `DEEPGRAM_API_KEY`，默认 Deepgram 模型为 `nova-3`，`DEEPGRAM_ENDPOINTING_MS=300`。Deepgram Streaming STT 适配器会在静音门控期间发送 WebSocket `KeepAlive`，并把多个 `is_final=true` span 累积到 `speech_final=true` 后再提交 endpoint final，避免长句中段被拆丢。Deepgram 官方 Voice Agent 是 STT+LLM+TTS 的单 WebSocket 端到端对话方案，当前不直接接管 EchoSync 主链路；EchoSync 先接 Deepgram Streaming STT，继续复用现有 DeepSeek 翻译、术语、修订和字幕状态机。Agent 会在启动实时 pipeline 前校验本次音频源和 ASR provider：`mock` 只接受 `network_stream` 演示输入，遇到 Windows 系统声、麦克风或文件 PCM 会返回 `realtime.error` 并结束会话，不再额外发送 `realtime.done`。
 
 ### 可选语音播报（TTS）
 
@@ -122,6 +122,28 @@ ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=
 
 如果只想验证字幕事件和 UI，可以继续使用默认 `mock`。
 
+### 会议记录 AI 摘要
+
+会议记录保存后，Desktop 主进程会在后台读取完整双语片段并调用 OpenAI-compatible/DeepSeek Chat Completions 生成复盘摘要。Renderer 只负责保存草稿和展示状态，不持有模型密钥。摘要任务完成或失败后，主进程会更新本地 `session.json`，并通过 `session-records:changed` 通知会议记录列表和详情页刷新。
+
+默认复用翻译侧的 DeepSeek 配置：
+
+```powershell
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-chat
+```
+
+如需给复盘摘要单独指定模型，可覆盖：
+
+```powershell
+ECHOSYNC_SESSION_SUMMARY_API_KEY=
+ECHOSYNC_SESSION_SUMMARY_BASE_URL=
+ECHOSYNC_SESSION_SUMMARY_MODEL=
+```
+
+摘要输出会写入 `summary.status/text/keywords/actionItems/topics/risks/terminologySuggestions`。未配置密钥或模型请求失败时，状态会更新为 `failed`，复盘页仍可查看完整双语记录和原始音频。
+
 4. 观察 Python 日志：
 
 - `audio_stream_started`：桌面端已开始送系统音频。
@@ -130,13 +152,14 @@ ELEVENLABS_OPTIMIZE_STREAMING_LATENCY=
 - `audio_stream_final_marker`：Desktop 音频门控检测到连续静音后发送 `audio.final` 控制消息，Agent 将其转为空 PCM 的 `is_final=True` frame，用于 flush ASR cache。
 - `funasr_inference_chunk`：FunASR 每次模型推理的真实窗口，包含 `input_audio_ms`、`transport_frames`、`final`、`latency_ms`、`rtf`，用于证明 80ms 传输帧没有被直接变成 80ms 模型调用。
 - `funasr_semantic_boundary`：FunASR 遇到 soft endpoint、hard endpoint 或 stream end 时打印，包含 `boundary`、`active_audio_ms`、`overlap_ms` 和当前 chunk 时间范围。
+- `deepgram_result`：Deepgram Streaming STT 返回识别事件时打印，包含 `is_final`、`speech_final`、confidence 和文本长度；`is_final=true` 会更新当前 utterance buffer，`speech_final=true` 会被映射为 ASR endpoint final。
 - `translation_checkpoint_skipped`：跳过不稳定翻译 checkpoint 时出现；`reason=partial_disabled` 表示默认不翻 partial，`reason=simul_wait` 表示 Simul 策略认为 stable 尾部仍悬空。
 - `translation_checkpoint_started / first_token / finished`：请求级翻译耗时日志，包含 `translation_queue_wait_ms`、首 token 和最终耗时，是判断 DeepSeek 调度是否变快的主要依据。
 - `tts_synthesis_started / first_audio / finished`：TTS 旁路耗时日志，分别定位 provider 启动、首个音频包和完整合成耗时；`tts_synthesis_failed` 用于发现 provider 或网络失败。
 - `caption_event_published`：ASR/翻译后的字幕事件已推给桌面端，并带 `published_at_ms` 与模型指标；`transcript.partial` 是源文草稿，`translation.partial` 是译文更新。
 - `python -m echosync_agent.diagnostics.realtime_log_summary <log>` 或 `echosync-log-summary <log>`：离线汇总真实测评日志，统计音频传输、ASR 队列、FunASR RTF、翻译请求、跳过原因、`simul_wait`、DeepSeek 首 token、TTS 首音和总合成分布。
 - `python -m echosync_agent.diagnostics.translation_strategy_benchmark`：可重复的合成调度基准，用固定延迟 fake translator 对比“旧式 partial/stable 都翻”和“当前 partial 默认不翻 + Simul wait”的请求数、跳过数和估算请求工作量。这个脚本只能证明调度压力变化，不能替代真实 DeepSeek/ElevenLabs 网络 A/B。
-- `python -m echosync_agent.diagnostics.real_agent_translation_benchmark .\vido\videoplayback.mp4 --duration-ms 30000 --asr-provider voxtral --translator-provider deepseek --log-file .tmp\agent-ab.log`：真正走 Agent 组件的翻译 A/B。默认按真实音频时间送媒体 frame，记录 Voxtral + `TranscriptAssembler` 产出的真实 transcript 到达时间，再用同一批 transcript 按到达节奏分别回放给旧式调度和当前调度，两边都真实调用 DeepSeek。可用 `--order current-old` 反转顺序排查网络波动和 provider cache 偏差。
+- `python -m echosync_agent.diagnostics.real_agent_translation_benchmark .\vido\videoplayback.mp4 --duration-ms 30000 --asr-provider deepgram --translator-provider deepseek --log-file .tmp\agent-ab.log`：真正走 Agent 组件的翻译 A/B。默认按真实音频时间送媒体 frame，记录真实 ASR provider（FunASR、Voxtral 或 Deepgram）+ `TranscriptAssembler` 产出的 transcript 到达时间，再用同一批 transcript 按到达节奏分别回放给旧式调度和当前调度，两边都真实调用 DeepSeek。可用 `--order current-old` 反转顺序排查网络波动和 provider cache 偏差。
 
 截至 2026-06-06，仓库中可检索到的 desktop/web 日志没有 Agent 请求级 `translation_checkpoint_started / first_token / finished` 记录；用现有日志汇总时 `translation_started=0`、`translation_first_token_ms=n:0`。因此当前不能宣称“真实 DeepSeek 翻译延迟已经低于之前版本”。已可量化的是策略基准：在 `first_token_ms=35ms,total_ms=90ms` 的合成 translator 下，`long_partial_then_committed` 和 `suspended_stable_tail_then_committed` 两个典型场景都从 2 次翻译请求降为 1 次，估算请求工作量从 180ms 降为 90ms；真实提升必须通过重定向 Agent 日志后再跑 `realtime_log_summary` 验证。
 

@@ -69,7 +69,11 @@ def test_realtime_websocket_publishes_translated_captions_to_caption_clients() -
         else:
             raise AssertionError("expected final caption_update before websocket test timeout")
 
-    assert done == {"type": "realtime.done", "session_id": "sess_realtime", "trace_id": "sess_realtime"}
+    assert done == {
+        "type": "realtime.done",
+        "session_id": "sess_realtime",
+        "trace_id": "sess_realtime",
+    }
     first_caption = received[0]
     assert first_caption["type"] == "transcript.partial"
     assert first_caption["session_id"] == "sess_realtime"
@@ -203,7 +207,11 @@ def test_realtime_transport_metrics_aggregates_and_resets_audio_frames() -> None
     metrics.record_asr_queue_wait(4.0)
     metrics.record_asr_queue_wait(16.0)
 
-    snapshot = metrics.snapshot_and_reset(queue_depth=3, session_id="sess_metrics", trace_id="trace_metrics")
+    snapshot = metrics.snapshot_and_reset(
+        queue_depth=3,
+        session_id="sess_metrics",
+        trace_id="trace_metrics",
+    )
 
     assert snapshot.session_id == "sess_metrics"
     assert snapshot.trace_id == "trace_metrics"
@@ -302,16 +310,12 @@ def test_realtime_session_applies_tts_provider_from_audio_start(monkeypatch: Any
     assert captured[0].tts_provider == "edge-tts"
 
 
-def test_session_asr_override_rejects_candidate_provider_until_adapter_exists() -> None:
+def test_session_asr_override_accepts_deepgram_provider() -> None:
     settings = replace(Settings.from_env(), asr_provider="mock")
 
-    try:
-        with_session_asr_overrides(settings, asr_provider="deepgram")
-    except ValueError as exc:
-        assert "Deepgram" in str(exc)
-        assert "尚未接入" in str(exc)
-    else:
-        raise AssertionError("deepgram must stay unavailable until its adapter is implemented")
+    updated = with_session_asr_overrides(settings, asr_provider="deepgram")
+
+    assert updated.asr_provider == "deepgram"
 
 
 def test_session_translation_override_rejects_unknown_provider() -> None:
@@ -364,7 +368,9 @@ async def _run_realtime_session_stop_without_done_test() -> None:
 
     await session.run()
 
-    assert websocket.sent_messages == [{"type": "realtime.done", "session_id": "sess_stop", "trace_id": "sess_stop"}]
+    assert websocket.sent_messages == [
+        {"type": "realtime.done", "session_id": "sess_stop", "trace_id": "sess_stop"}
+    ]
 
 
 async def _run_realtime_session_pipeline_error_publish_test() -> None:

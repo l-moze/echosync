@@ -14,6 +14,7 @@ def test_capabilities_report_defaults_and_provider_readiness() -> None:
         ),
         dependency_available=lambda name: name in {
             "edge_tts",
+            "websockets",
             "funasr",
             "modelscope",
             "openai",
@@ -31,6 +32,7 @@ def test_capabilities_report_defaults_and_provider_readiness() -> None:
     assert _provider(capabilities["asr_providers"], "mock")["real_audio_supported"] is False
     assert _provider(capabilities["asr_providers"], "funasr")["status"] == "ready"
     assert _provider(capabilities["asr_providers"], "voxtral")["status"] == "missing_key"
+    assert _provider(capabilities["asr_providers"], "deepgram")["status"] == "missing_key"
     assert _provider(capabilities["translation_providers"], "deepseek")["status"] == "missing_key"
     assert _provider(capabilities["tts_providers"], "disabled")["status"] == "ready"
     assert _provider(capabilities["tts_providers"], "edge-tts")["status"] == "ready"
@@ -44,12 +46,14 @@ def test_capabilities_report_missing_dependencies_without_importing_sdks() -> No
             translator_provider="deepseek",
             mistral_api_key="test-key",
             deepseek_api_key="test-key",
+            deepgram_api_key="test-key",
         ),
         dependency_available=lambda _name: False,
     )
 
     assert _provider(capabilities["asr_providers"], "funasr")["status"] == "missing_dependency"
     assert _provider(capabilities["asr_providers"], "voxtral")["status"] == "missing_dependency"
+    assert _provider(capabilities["asr_providers"], "deepgram")["status"] == "missing_dependency"
     assert (
         _provider(capabilities["translation_providers"], "deepseek")["status"]
         == "missing_dependency"
@@ -86,6 +90,9 @@ def _settings(**overrides: object) -> Settings:
         "deepseek_api_key": "",
         "deepseek_base_url": "https://api.deepseek.com/v1",
         "deepseek_model": "deepseek-chat",
+        "deepl_api_key": "",
+        "deepl_base_url": "https://api-free.deepl.com",
+        "deepl_model_type": "latency_optimized",
         "edge_tts_voice": "zh-CN-XiaoxiaoNeural",
         "elevenlabs_api_key": "",
         "elevenlabs_voice_id": "",
@@ -95,6 +102,10 @@ def _settings(**overrides: object) -> Settings:
         "mistral_api_key": "",
         "voxtral_model": "voxtral-mini-transcribe-realtime-2602",
         "voxtral_target_delay_ms": 1000,
+        "deepgram_api_key": "",
+        "deepgram_model": "nova-3",
+        "deepgram_language": "en",
+        "deepgram_endpointing_ms": 300,
     }
     values.update(overrides)
     return Settings(**values)

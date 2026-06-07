@@ -3,7 +3,12 @@ import { createRoot } from "react-dom/client";
 import log from "electron-log/renderer";
 
 import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSource, type DesktopAudioSourceId } from "../shared/audio-source-catalog";
-import type { AgentCapabilities } from "../shared/agent-capabilities";
+import {
+  findAgentAsrProvider,
+  findAgentTranslationProvider,
+  findAgentTtsProvider,
+  type AgentCapabilities
+} from "../shared/agent-capabilities";
 import {
   ASR_LATENCY_OPTIONS,
   ASR_PROVIDER_OPTIONS,
@@ -36,6 +41,7 @@ import {
   applyRealtimeEvent,
   isRealtimeEventForActiveSession,
   selectActiveCaptionLine,
+  selectOverlayDisplayWindow,
   selectOverlayHistoryLinesForDisplay,
   type CaptionLine
 } from "../shared/caption-store";
@@ -284,6 +290,13 @@ function App() {
   );
 
   useEffect(() => {
+    const remove = window.echosyncDesktop?.onSessionRecordChanged(async () => {
+      await refreshSessionRecords();
+    });
+    return () => remove?.();
+  }, [refreshSessionRecords]);
+
+  useEffect(() => {
     sessionUiRef.current = sessionUi;
   }, [sessionUi]);
 
@@ -338,7 +351,21 @@ function App() {
         setHasRealEvents(true);
         return;
       }
-      setLines((current) => applyRealtimeEvent(current, event));
+      setLines((current) => {
+        const applyStartedAt = performance.now();
+        const nextLines = applyRealtimeEvent(current, event);
+        const applyEventMs = performance.now() - applyStartedAt;
+        log.debug("caption_event_renderer_processed", {
+          applyEventMs: roundMetric(applyEventMs),
+          eventType: event.type,
+          linesCount: current.length,
+          nextLinesCount: nextLines.length,
+          pendingGrowth: nextLines.length - current.length,
+          segmentId: "segment_id" in event ? event.segment_id : undefined,
+          sessionId: event.session_id
+        });
+        return nextLines;
+      });
       setHasRealEvents(true);
       if (event.type === "realtime.error") {
         if (!shouldSurfaceRealtimeError(event, { stoppingSessionIds: stoppingSessionIdsRef.current })) {
@@ -362,12 +389,21 @@ function App() {
     const removeCaptureListener = window.echosyncDesktop?.onCaptureState((nextSnapshot) => {
       const terminalError = terminalRealtimeErrorRef.current;
       const previousSessionId = activeSessionIdRef.current;
+      const newListeningSession =
+        nextSnapshot.state === "listening" &&
+        Boolean(nextSnapshot.sessionId) &&
+        nextSnapshot.sessionId !== previousSessionId;
       setSnapshot(
         terminalError && nextSnapshot.state === "stopped"
           ? { ...nextSnapshot, state: "error", message: terminalError, sessionId: undefined }
           : nextSnapshot
       );
       setSourceId(nextSnapshot.sourceId);
+      if (newListeningSession) {
+        setLines(createInitialCaptionLines());
+        setRealtimeError(null);
+        terminalRealtimeErrorRef.current = null;
+      }
       activeSessionIdRef.current = nextSnapshot.sessionId ?? null;
       if (nextSnapshot.state === "listening") {
         if (nextSnapshot.sessionId) {
@@ -598,45 +634,56 @@ function App() {
     realtimeClientRef.current = null;
     activeSessionIdRef.current = null;
     ttsPlayback.clear();
-    const recording = await currentClient?.stop();
-    const nextSnapshot = await window.echosyncDesktop?.stopCapture();
+    let recording: Awaited<ReturnType<RealtimeAudioClient["stop"]>> | undefined;
+    try {
+      recording = await currentClient?.stop();
+    } catch (error) {
+      log.warn("[realtime] 停止会话音频流时出错:", error);
+    }
+    let nextSnapshot: DesktopCaptureSnapshot | undefined;
+    try {
+      nextSnapshot = await window.echosyncDesktop?.stopCapture();
+    } catch (error) {
+      log.warn("[realtime] 更新停止采集状态时出错:", error);
+    }
     if (nextSnapshot) {
       setSnapshot(nextSnapshot);
-      const endedAt = new Date();
-      const endedAtIso = endedAt.toISOString();
-      const durationMs = Math.max(...lines.map((line) => line.endMs), 0);
-      const averageCaptionLagMs = selectAverageCaptionLatencyMs(lines, sessionUiRef.current.sessionStartedAtMs) ?? undefined;
-      const hasSessionContent = Boolean(recording) || lines.some((line) => line.sourceText.trim() || line.targetText.trim());
-      if (hasSessionContent) {
-        const archive = buildSessionArchiveDraft({
-          audioBlob: recording?.blob,
-          audioMimeType: recording?.mimeType,
-          audioObjectUrl: recording ? URL.createObjectURL(recording.blob) : undefined,
-          createdAt: endedAtIso,
-          durationMs,
-          id: currentClient?.sessionId ?? nextSnapshot.sessionId ?? `sess_${endedAt.getTime()}`,
-          lines,
-          title: sessionArchiveTitleFromDate(endedAt)
-        });
-        const startedAtMs = sessionUiRef.current.sessionStartedAtMs;
-        setSessionArchiveDraft(archive);
-        void saveSessionArchiveDraft(archive, {
-          averageCaptionLagMs,
-          endedAt: endedAtIso,
-          startedAt: startedAtMs === null ? endedAtIso : new Date(startedAtMs).toISOString()
-        });
-      } else {
-        setSessionArchiveSaveStatus({ message: "本次没有可保存内容", state: "idle" });
-      }
-      const summary: SessionSummary = {
-        durationMs,
-        segmentCount: lines.length,
-        patchCount: lines.reduce((sum, line) => sum + line.patchCount, 0),
-        averageLatencyMs: averageCaptionLagMs ?? 0,
-        wordCount: lines.reduce((sum, line) => sum + line.targetText.length, 0)
-      };
-      dispatchSessionUi({ type: "session.finished", summary });
     }
+    const endedAt = new Date();
+    const endedAtIso = endedAt.toISOString();
+    const startedAtMs = sessionUiRef.current.sessionStartedAtMs;
+    const elapsedDurationMs = startedAtMs === null ? 0 : Math.max(0, endedAt.getTime() - startedAtMs);
+    const durationMs = Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0);
+    const averageCaptionLagMs = selectAverageCaptionLatencyMs(lines, startedAtMs) ?? undefined;
+    const hasSessionContent = Boolean(recording) || lines.some((line) => line.sourceText.trim() || line.targetText.trim());
+    if (hasSessionContent) {
+      const archive = buildSessionArchiveDraft({
+        audioBlob: recording?.blob,
+        audioMimeType: recording?.mimeType,
+        audioObjectUrl: recording ? URL.createObjectURL(recording.blob) : undefined,
+        createdAt: endedAtIso,
+        durationMs,
+        id: currentClient?.sessionId ?? nextSnapshot?.sessionId ?? `sess_${endedAt.getTime()}`,
+        lines,
+        title: sessionArchiveTitleFromDate(endedAt)
+      });
+      setSessionArchiveDraft(archive);
+      void saveSessionArchiveDraft(archive, {
+        averageCaptionLagMs,
+        endedAt: endedAtIso,
+        startedAt: startedAtMs === null ? endedAtIso : new Date(startedAtMs).toISOString()
+      });
+    } else {
+      setSessionArchiveSaveStatus({ message: "本次没有可保存内容", state: "idle" });
+    }
+    const summary: SessionSummary = {
+      durationMs,
+      segmentCount: lines.length,
+      patchCount: lines.reduce((sum, line) => sum + line.patchCount, 0),
+      averageLatencyMs: averageCaptionLagMs ?? 0,
+      wordCount: lines.reduce((sum, line) => sum + line.targetText.length, 0)
+    };
+    dispatchSessionUi({ type: "session.finished", summary });
   }
 
   function requestReturnHome() {
@@ -1225,6 +1272,44 @@ function PreferenceSettingsPanel({
   const asrOptions = ASR_PROVIDER_OPTIONS.filter((provider) => provider.id !== "mock");
   const translationOptions = TRANSLATION_PROVIDER_OPTIONS.filter((provider) => provider.id !== "mock");
   const ttsOptions = TTS_PROVIDER_OPTIONS;
+  const providerChoiceState = {
+    asr: (providerId: typeof asrOptions[number]["providerId"], fallbackDescription: string) => {
+      if (!providerId || !agentCapabilities) {
+        return { description: fallbackDescription, disabled: false };
+      }
+      const provider = findAgentAsrProvider(agentCapabilities, providerId);
+      return {
+        description:
+          provider?.real_audio_supported === false
+            ? "当前调试识别方案不能处理真实音频。"
+            : provider?.reason || fallbackDescription,
+        disabled: provider ? !provider.available || !provider.real_audio_supported : true
+      };
+    },
+    translation: (
+      providerId: typeof translationOptions[number]["providerId"],
+      fallbackDescription: string
+    ) => {
+      if (!providerId || !agentCapabilities) {
+        return { description: fallbackDescription, disabled: false };
+      }
+      const provider = findAgentTranslationProvider(agentCapabilities, providerId);
+      return {
+        description: provider?.reason || fallbackDescription,
+        disabled: provider ? !provider.available : true
+      };
+    },
+    tts: (providerId: typeof ttsOptions[number]["providerId"], fallbackDescription: string) => {
+      if (!providerId || !agentCapabilities) {
+        return { description: fallbackDescription, disabled: false };
+      }
+      const provider = findAgentTtsProvider(agentCapabilities, providerId);
+      return {
+        description: provider?.reason || fallbackDescription,
+        disabled: provider ? !provider.available : true
+      };
+    }
+  };
 
   return (
     <aside className="engineSettingsPanel preferenceSettingsPanel" aria-label="偏好设置">
@@ -1281,16 +1366,21 @@ function PreferenceSettingsPanel({
             value={ttsProviderLabel(ttsProvider, agentCapabilities?.defaults.tts_provider)}
           />
           <div className="choiceGroup qualityGroup">
-            {ttsOptions.map((option) => (
-              <button
-                className={option.id === ttsProvider ? "selected" : ""}
-                key={option.id}
-                onClick={() => onTtsProviderSelect(option.id)}
-                title={option.description}
-              >
-                {option.label}
-              </button>
-            ))}
+            {ttsOptions.map((option) => {
+              const providerId = option.providerId ?? agentCapabilities?.defaults.tts_provider;
+              const choiceState = providerChoiceState.tts(providerId, option.description);
+              return (
+                <button
+                  className={option.id === ttsProvider ? "selected" : ""}
+                  disabled={choiceState.disabled}
+                  key={option.id}
+                  onClick={() => onTtsProviderSelect(option.id)}
+                  title={choiceState.description}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
           </div>
           <PreferenceRow label="引擎" value={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider).replace("通用模型", "自动")} />
         </section>
@@ -1318,22 +1408,34 @@ function PreferenceSettingsPanel({
             </nav>
             <EngineChoiceRow
               label="语音识别"
-              options={asrOptions.map((option) => ({
-                id: option.id,
-                label: engineOptionLabel(option.label, option.id),
-                selected: option.id === asrProvider,
-                onSelect: () => onAsrProviderSelect(option.id)
-              }))}
+              options={asrOptions.map((option) => {
+                const providerId = option.providerId ?? agentCapabilities?.defaults.asr_provider;
+                const choiceState = providerChoiceState.asr(providerId, option.description);
+                return {
+                  id: option.id,
+                  description: choiceState.description,
+                  disabled: choiceState.disabled,
+                  label: engineOptionLabel(option.label, option.id),
+                  selected: option.id === asrProvider,
+                  onSelect: () => onAsrProviderSelect(option.id)
+                };
+              })}
               status={asrProviderLabel(asrProvider, agentCapabilities?.defaults.asr_provider).replace("后端默认", "自动")}
             />
             <EngineChoiceRow
               label="翻译"
-              options={translationOptions.map((option) => ({
-                id: option.id,
-                label: engineOptionLabel(option.label, option.id),
-                selected: option.id === translationProvider,
-                onSelect: () => onTranslationProviderSelect(option.id)
-              }))}
+              options={translationOptions.map((option) => {
+                const providerId = option.providerId ?? agentCapabilities?.defaults.translation_provider;
+                const choiceState = providerChoiceState.translation(providerId, option.description);
+                return {
+                  id: option.id,
+                  description: choiceState.description,
+                  disabled: choiceState.disabled,
+                  label: engineOptionLabel(option.label, option.id),
+                  selected: option.id === translationProvider,
+                  onSelect: () => onTranslationProviderSelect(option.id)
+                };
+              })}
               status={translationProviderLabel(translationProvider, agentCapabilities?.defaults.translation_provider).replace("通用模型", "自动")}
             />
             <PreferenceRow label="故障处理" value="故障时尽量继续生成字幕" />
@@ -1377,7 +1479,7 @@ function EngineChoiceRow({
   status
 }: {
   label: string;
-  options: Array<{ id: string; label: string; selected: boolean; onSelect: () => void }>;
+  options: Array<{ id: string; description: string; disabled: boolean; label: string; selected: boolean; onSelect: () => void }>;
   status: string;
 }) {
   return (
@@ -1386,7 +1488,13 @@ function EngineChoiceRow({
       <strong>{status}</strong>
       <div className="choiceGroup">
         {options.map((option) => (
-          <button className={option.selected ? "selected" : ""} key={option.id} onClick={option.onSelect}>
+          <button
+            className={option.selected ? "selected" : ""}
+            disabled={option.disabled}
+            key={option.id}
+            onClick={option.onSelect}
+            title={option.description}
+          >
             {option.label}
           </button>
         ))}
@@ -1902,6 +2010,8 @@ function SessionRecordsWindow({
   const [renameStatus, setRenameStatus] = useState("");
   const [reviewScale, setReviewScale] = useState(1);
   const [recordAudioUrl, setRecordAudioUrl] = useState<string | null>(null);
+  const [recordAudioPlaying, setRecordAudioPlaying] = useState(false);
+  const [recordAudioError, setRecordAudioError] = useState("");
   const [playbackMs, setPlaybackMs] = useState(0);
   const [activeRecordSegmentId, setActiveRecordSegmentId] = useState<string | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -1915,6 +2025,8 @@ function SessionRecordsWindow({
     if (!isOpen || !selectedId) {
       setSelectedRecord(null);
       setRecordAudioUrl(null);
+      setRecordAudioPlaying(false);
+      setRecordAudioError("");
       setPlaybackMs(0);
       setActiveRecordSegmentId(null);
       setTitleDraft("");
@@ -1935,6 +2047,8 @@ function SessionRecordsWindow({
         if (!record) {
           setSelectedRecord(null);
           setRecordAudioUrl(null);
+          setRecordAudioPlaying(false);
+          setRecordAudioError("");
           setExportStatus("记录不存在");
           return;
         }
@@ -1947,12 +2061,16 @@ function SessionRecordsWindow({
         const audioUrl = await window.echosyncDesktop?.sessionRecords.getAudioUrl(recordId);
         if (!cancelled) {
           setRecordAudioUrl(audioUrl ?? null);
+          setRecordAudioPlaying(false);
+          setRecordAudioError("");
         }
       } catch (error) {
         log.warn("[session-records] 读取会议记录详情失败:", error);
         if (!cancelled) {
           setSelectedRecord(null);
           setRecordAudioUrl(null);
+          setRecordAudioPlaying(false);
+          setRecordAudioError("");
           setExportStatus("加载失败");
         }
       } finally {
@@ -1967,6 +2085,24 @@ function SessionRecordsWindow({
       cancelled = true;
     };
   }, [isOpen, selectedId]);
+
+  useEffect(() => {
+    const remove = window.echosyncDesktop?.onSessionRecordChanged(async (recordId) => {
+      await onRecordsChanged();
+      if (!isOpen || selectedId !== recordId) {
+        return;
+      }
+      try {
+        const record = await window.echosyncDesktop?.sessionRecords.get(recordId);
+        if (record) {
+          setSelectedRecord(normalizeSessionRecordForReview(record));
+        }
+      } catch (error) {
+        log.warn("[session-records] 刷新会议摘要失败:", error);
+      }
+    });
+    return () => remove?.();
+  }, [isOpen, onRecordsChanged, selectedId]);
 
   useEffect(() => {
     if (!activeRecordSegmentId) {
@@ -1994,6 +2130,8 @@ function SessionRecordsWindow({
       setSelectedId(null);
       setSelectedRecord(null);
       setRecordAudioUrl(null);
+      setRecordAudioPlaying(false);
+      setRecordAudioError("");
     }
   }
 
@@ -2056,25 +2194,64 @@ function SessionRecordsWindow({
 
   function seekToRecordSegment(segment: SessionRecordSegment) {
     setActiveRecordSegmentId(segment.id);
-    setPlaybackMs(segment.startMs);
+    seekRecordAudio(segment.startMs);
     const audio = recordAudioRef.current;
     if (!audio) {
       return;
     }
-    audio.currentTime = segment.startMs / 1000;
-    void audio.play().catch(() => undefined);
+    void audio.play()
+      .then(() => {
+        setRecordAudioPlaying(true);
+      })
+      .catch(() => {
+        setRecordAudioPlaying(false);
+        setRecordAudioError("音频无法播放");
+      });
+  }
+
+  function seekRecordAudio(nextMs: number) {
+    const durationMs = selectedRecord?.durationMs ?? 0;
+    const boundedMs = Math.min(Math.max(nextMs, 0), Math.max(durationMs, 0));
+    setPlaybackMs(boundedMs);
+    const audio = recordAudioRef.current;
+    if (!audio) {
+      return;
+    }
+    audio.currentTime = boundedMs / 1000;
+  }
+
+  function toggleRecordAudioPlayback() {
+    const audio = recordAudioRef.current;
+    if (!audio) {
+      return;
+    }
+    if (recordAudioPlaying) {
+      audio.pause();
+      setRecordAudioPlaying(false);
+      return;
+    }
+    setRecordAudioError("");
+    void audio.play()
+      .then(() => {
+        setRecordAudioPlaying(true);
+      })
+      .catch(() => {
+        setRecordAudioPlaying(false);
+        setRecordAudioError("音频无法播放");
+      });
   }
 
   function updateRecordPlayback(currentMs: number) {
-    setPlaybackMs(currentMs);
+    const boundedMs = selectedRecord ? Math.min(currentMs, selectedRecord.durationMs) : currentMs;
+    setPlaybackMs(boundedMs);
     if (!selectedRecord) {
       return;
     }
-    setActiveRecordSegmentId(selectSessionRecordPlaybackSegmentId(selectedRecord.segments, currentMs));
+    setActiveRecordSegmentId(selectSessionRecordPlaybackSegmentId(selectedRecord.segments, boundedMs));
   }
 
   return (
-    <aside className="recordWindow" aria-label="会议记录">
+    <aside className={isDetailView ? "recordWindow detail" : "recordWindow"} aria-label="会议记录">
       <header className={isDetailView ? "recordHeader detail" : "recordHeader"}>
         <div>
           <p>{isDetailView ? "内容自动保存 · 数据安全保护 · 译文由 AI 生成" : "记录"}</p>
@@ -2157,12 +2334,39 @@ function SessionRecordsWindow({
           </header>
           <div className="recordAudioPlayer" aria-label="原始音频回放">
             {recordAudioUrl ? (
-              <audio
-                controls
-                ref={recordAudioRef}
-                src={recordAudioUrl}
-                onTimeUpdate={(event) => updateRecordPlayback(Math.round(event.currentTarget.currentTime * 1000))}
-              />
+              <>
+                <audio
+                  preload="auto"
+                  ref={recordAudioRef}
+                  src={recordAudioUrl}
+                  onEnded={() => {
+                    setRecordAudioPlaying(false);
+                    updateRecordPlayback(selectedRecord.durationMs);
+                  }}
+                  onError={() => {
+                    setRecordAudioPlaying(false);
+                    setRecordAudioError("音频加载失败");
+                  }}
+                  onPause={() => setRecordAudioPlaying(false)}
+                  onPlay={() => setRecordAudioPlaying(true)}
+                  onTimeUpdate={(event) => updateRecordPlayback(Math.round(event.currentTarget.currentTime * 1000))}
+                />
+                <div className="recordAudioControls">
+                  <button onClick={toggleRecordAudioPlayback} type="button">
+                    {recordAudioPlaying ? "暂停" : "播放"}
+                  </button>
+                  <input
+                    aria-label="音频回放进度"
+                    max={selectedRecord.durationMs}
+                    min={0}
+                    onChange={(event) => seekRecordAudio(Number(event.target.value))}
+                    step={250}
+                    type="range"
+                    value={Math.min(playbackMs, selectedRecord.durationMs)}
+                  />
+                </div>
+                {recordAudioError ? <span className="recordAudioError" role="status">{recordAudioError}</span> : null}
+              </>
             ) : (
               <span>本地没有保存可回放音频。</span>
             )}
@@ -2195,11 +2399,18 @@ function SessionRecordsWindow({
                 <p className="eyebrow">摘要</p>
                 <h3>{sessionRecordSummaryStatusLabel(selectedRecord.summary.status)}</h3>
                 <p>{selectedRecord.summary.text || "摘要暂未生成。保存后仍可先查看完整双语记录。"}</p>
+                {selectedRecord.summary.status === "failed" && selectedRecord.summary.errorMessage ? (
+                  <p className="recordSummaryError">{selectedRecord.summary.errorMessage}</p>
+                ) : null}
                 {selectedRecord.summary.keywords.length > 0 ? (
                   <div className="recordKeywordList">
                     {selectedRecord.summary.keywords.map((keyword) => <span key={keyword}>{keyword}</span>)}
                   </div>
                 ) : null}
+                <RecordSummaryList title="行动项" items={selectedRecord.summary.actionItems} />
+                <RecordSummaryList title="主题" items={selectedRecord.summary.topics} />
+                <RecordSummaryList title="风险" items={selectedRecord.summary.risks} />
+                <RecordSummaryList title="术语建议" items={selectedRecord.summary.terminologySuggestions} />
               </section>
               <section className="recordMetadataGrid">
                 <span>开始</span><strong>{formatDateTimeForRecord(selectedRecord.startedAt)}</strong>
@@ -2225,6 +2436,23 @@ function SessionRecordsWindow({
         </section>
       ) : null}
     </aside>
+  );
+}
+
+function RecordSummaryList({ items, title }: { items: string[]; title: string }) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="recordSummaryList">
+      <strong>{title}</strong>
+      <ul>
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -2332,18 +2560,33 @@ function OverlayWindow({
   const showChrome = interaction.layer === "controls" || interaction.layer === "settings" || isPinned;
   const [displayBuffer, setDisplayBuffer] = useState<CaptionDisplayBuffer>(createInitialCaptionDisplayBuffer);
   const displayBufferRef = useRef<CaptionDisplayBuffer>(displayBuffer);
+  const overlayRenderMetricsLoggedAtRef = useRef(0);
   const [displayNowMs, setDisplayNowMs] = useState(() => Date.now());
   const [sessionStartedAtMs, setSessionStartedAtMs] = useState<number | null>(null);
   const [sessionNowMs, setSessionNowMs] = useState(() => Date.now());
-  const displaySelection = useMemo(
-    () => selectDisplayCaptionLines(displayBuffer, lines, displayNowMs),
-    [displayBuffer, displayNowMs, lines]
+  const overlayDisplayLines = useMemo(
+    () => selectOverlayDisplayWindow(lines, activeLine?.id),
+    [activeLine?.id, lines]
   );
+  const displaySelectionResult = useMemo(() => {
+    const selectStartedAt = performance.now();
+    const selection = selectDisplayCaptionLines(displayBuffer, overlayDisplayLines, displayNowMs);
+    return {
+      selection,
+      selectDisplayMs: performance.now() - selectStartedAt
+    };
+  }, [displayBuffer, displayNowMs, overlayDisplayLines]);
+  const displaySelection = displaySelectionResult.selection;
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
-  const displayPresentation = useMemo(
-    () => selectDisplayCaptionPresentation(displaySelection, displayMode),
-    [displayMode, displaySelection]
-  );
+  const displayPresentationResult = useMemo(() => {
+    const presentationStartedAt = performance.now();
+    const presentation = selectDisplayCaptionPresentation(displaySelection, displayMode);
+    return {
+      presentation,
+      presentationMs: performance.now() - presentationStartedAt
+    };
+  }, [displayMode, displaySelection]);
+  const displayPresentation = displayPresentationResult.presentation;
   const displayActiveLine = displayPresentation.activeLine ?? displayPresentation.settlingLines.at(-1);
   const captionLineForDisplay = displayActiveLine ?? activeLine;
   const historyLines = useMemo(
@@ -2374,10 +2617,10 @@ function OverlayWindow({
   }, [displayBuffer]);
 
   useEffect(() => {
-    const nextSelection = selectDisplayCaptionLines(displayBufferRef.current, lines, Date.now());
+    const nextSelection = selectDisplayCaptionLines(displayBufferRef.current, overlayDisplayLines, Date.now());
     displayBufferRef.current = nextSelection.buffer;
     setDisplayBuffer(nextSelection.buffer);
-  }, [lines]);
+  }, [overlayDisplayLines]);
 
   useEffect(() => {
     if (displaySelection.pendingLineIds.length === 0) {
@@ -2385,13 +2628,42 @@ function OverlayWindow({
     }
     const timer = window.setTimeout(() => {
       const nowMs = Date.now();
-      const nextSelection = selectDisplayCaptionLines(displayBufferRef.current, lines, nowMs);
+      const nextSelection = selectDisplayCaptionLines(displayBufferRef.current, overlayDisplayLines, nowMs);
       displayBufferRef.current = nextSelection.buffer;
       setDisplayBuffer(nextSelection.buffer);
       setDisplayNowMs(nowMs);
     }, 24);
     return () => window.clearTimeout(timer);
-  }, [displaySelection.pendingLineIds.length, displayNowMs, lines]);
+  }, [displaySelection.pendingLineIds.length, displayNowMs, overlayDisplayLines]);
+
+  useEffect(() => {
+    const nowMs = Date.now();
+    const selectDisplayMs = displaySelectionResult.selectDisplayMs;
+    const presentationMs = displayPresentationResult.presentationMs;
+    const shouldLog =
+      selectDisplayMs >= 2 ||
+      presentationMs >= 2 ||
+      nowMs - overlayRenderMetricsLoggedAtRef.current >= 1000;
+    if (!shouldLog) {
+      return;
+    }
+    overlayRenderMetricsLoggedAtRef.current = nowMs;
+    log.debug("caption_overlay_render_metrics", {
+      linesCount: lines.length,
+      pendingLineCount: displaySelection.pendingLineIds.length,
+      presentationMs: roundMetric(presentationMs),
+      selectDisplayMs: roundMetric(selectDisplayMs),
+      sessionId: snapshot.sessionId,
+      windowLineCount: overlayDisplayLines.length
+    });
+  }, [
+    displayPresentationResult.presentationMs,
+    displaySelection.pendingLineIds.length,
+    displaySelectionResult.selectDisplayMs,
+    lines.length,
+    overlayDisplayLines.length,
+    snapshot.sessionId
+  ]);
 
   useEffect(() => {
     const remove = window.echosyncDesktop?.onOverlayWake(() => {
@@ -3083,6 +3355,10 @@ function formatMetricMs(value: number | null) {
     return `${(value / 1000).toFixed(1)} s`;
   }
   return `${value} ms`;
+}
+
+function roundMetric(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
 function formatPercent(value: number | null) {

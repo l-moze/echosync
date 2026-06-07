@@ -81,7 +81,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--duration-ms", type=int, default=30_000)
     parser.add_argument("--chunk-ms", type=int, default=80)
     parser.add_argument("--source-lang", default="en")
-    parser.add_argument("--asr-provider", choices=["funasr", "voxtral"], default=None)
+    parser.add_argument("--asr-provider", choices=["funasr", "voxtral", "deepgram"], default=None)
     parser.add_argument(
         "--translator-provider",
         choices=["deepseek", "mock"],
@@ -188,10 +188,12 @@ def format_benchmark_result(result: RealAgentBenchmarkResult) -> str:
                     f"  translation_started={summary.translation_started} "
                     f"translation_finished={summary.translation_finished} "
                     f"translation_skipped={summary.translation_skipped} "
+                    f"translation_dropped={summary.translation_dropped} "
                     f"skip_ratio={summary.translation_skip_ratio:.3f} "
                     f"simul_wait={summary.simul_wait}"
                 ),
                 f"  skipped_reasons={_format_counter(summary.skipped_reasons)}",
+                f"  dropped_reasons={_format_counter(summary.dropped_reasons)}",
                 f"  queue_wait_ms={_format_distribution(summary.queue_wait_ms)}",
                 f"  first_token_ms={_format_distribution(summary.first_token_ms)}",
                 f"  translation_latency_ms={_format_distribution(summary.translation_latency_ms)}",
@@ -308,10 +310,10 @@ def _with_cli_overrides(settings: Settings, args: argparse.Namespace) -> Setting
 def _validate_benchmark_settings(settings: Settings) -> None:
     if settings.asr_provider == "mock":
         raise ValueError(
-            "真实 Agent benchmark 需要 FunASR 或 Voxtral ASR；请配置 "
-            "ECHOSYNC_ASR_PROVIDER=funasr/voxtral，或传入 --asr-provider。"
+            "真实 Agent benchmark 需要 FunASR、Voxtral 或 Deepgram ASR；请配置 "
+            "ECHOSYNC_ASR_PROVIDER=funasr/voxtral/deepgram，或传入 --asr-provider。"
         )
-    if settings.asr_provider not in {"funasr", "voxtral"}:
+    if settings.asr_provider not in {"funasr", "voxtral", "deepgram"}:
         raise ValueError(f"不支持的 benchmark ASR provider：{settings.asr_provider}")
     if settings.translator_provider not in {"deepseek", "mock"}:
         raise ValueError(f"不支持的 benchmark 翻译 provider：{settings.translator_provider}")
@@ -484,6 +486,7 @@ def _format_deltas(results: Sequence[TranslationRunResult]) -> list[str]:
     current_summary = summarize_log_lines(current.log_lines)
     started_delta = current_summary.translation_started - old_summary.translation_started
     skipped_delta = current_summary.translation_skipped - old_summary.translation_skipped
+    dropped_delta = current_summary.translation_dropped - old_summary.translation_dropped
     first_token_delta = _format_delta_float(
         _avg(current_summary.first_token_ms),
         _avg(old_summary.first_token_ms),
@@ -495,6 +498,7 @@ def _format_deltas(results: Sequence[TranslationRunResult]) -> list[str]:
     rows = ["delta_current_vs_old_like:"]
     rows.append(f"  translation_started={started_delta:+d}")
     rows.append(f"  translation_skipped={skipped_delta:+d}")
+    rows.append(f"  translation_dropped={dropped_delta:+d}")
     rows.append(
         "  first_committed_target_ms="
         f"{_format_delta_ms(current.first_committed_target_ms, old.first_committed_target_ms)}"

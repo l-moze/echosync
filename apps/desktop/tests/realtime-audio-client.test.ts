@@ -306,6 +306,42 @@ describe("renderer realtime audio client", () => {
     await client.stop();
   });
 
+  it("declares Deepgram when selected as the realtime ASR provider", async () => {
+    const stream = createFakeMediaStream();
+    const sockets: FakeWebSocket[] = [];
+    vi.stubGlobal("WebSocket", class extends FakeWebSocket {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    });
+    vi.stubGlobal("navigator", {
+      mediaDevices: {
+        getDisplayMedia: vi.fn().mockResolvedValue(stream)
+      }
+    });
+    vi.stubGlobal("window", {
+      AudioContext: FakeAudioContext,
+      webkitAudioContext: undefined
+    });
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+
+    const client = createRealtimeAudioClient({
+      asrProvider: "deepgram",
+      endpointBaseUrl: "ws://agent/realtime",
+      sessionId: "sess_deepgram_provider",
+      sourceId: "windows-system"
+    });
+
+    await client.start();
+
+    expect(JSON.parse(sockets[0]?.sentMessages[0] as string)).toMatchObject({
+      asr_provider: "deepgram",
+      type: "audio.start"
+    });
+    await client.stop();
+  });
+
   it("declares the selected translation provider when starting a realtime session", async () => {
     const stream = createFakeMediaStream();
     const sockets: FakeWebSocket[] = [];

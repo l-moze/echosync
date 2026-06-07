@@ -217,7 +217,7 @@ class _RealtimeWebSocketSession:
             if self._is_mock_asr_receiving_real_audio():
                 await self._send_error(
                     "当前是 mock ASR，不能处理 Windows/麦克风/文件这类真实音频 PCM。"
-                    "请设置 ECHOSYNC_ASR_PROVIDER=voxtral 或 funasr 后重启 Agent。"
+                    "请设置 ECHOSYNC_ASR_PROVIDER=voxtral、funasr 或 deepgram 后重启 Agent。"
                 )
                 self._stop_reason = "start_error"
                 return True
@@ -439,7 +439,11 @@ class _RealtimeWebSocketSession:
         await self._publish_caption_event("realtime.error", payload)
 
     async def _send_done(self) -> None:
-        payload = {"type": "realtime.done", "session_id": self.session_id, "trace_id": self.trace_id}
+        payload = {
+            "type": "realtime.done",
+            "session_id": self.session_id,
+            "trace_id": self.trace_id,
+        }
         try:
             await self.websocket.send_json(payload)
         except Exception:

@@ -27,7 +27,7 @@
 
 - [x] 写 Vitest，验证 `createRealtimeAudioClient({ asrProvider: "funasr", asrLatencyMode: "balanced" })` 会在 `audio.start` 中携带 `asr_provider` 和 `asr_latency_mode`。
 - [x] 运行 `npm --prefix apps/desktop test -- realtime-audio-client.test.ts`，确认新增测试先失败。
-- [x] 给 `RealtimeAudioClientOptions` 增加 `asrProvider?: "mock" | "funasr" | "voxtral"` 和 `asrLatencyMode?: "low_latency" | "balanced" | "accuracy"`。
+- [x] 给 `RealtimeAudioClientOptions` 增加 `asrProvider?: "mock" | "funasr" | "voxtral"` 和 `asrLatencyMode?: "low_latency" | "balanced" | "accuracy"`。当前后续实现已把 `deepgram` 也纳入可选 ASR provider。
 - [x] 只有用户显式选择 ASR provider 时才发送 `asr_provider`；始终发送 `asr_latency_mode`。`server-default` 保留 Agent `.env` 默认语义；Desktop 通过 capabilities/preflight 阻止真实音频的无效组合，不再静默强制 FunASR。
 - [x] 运行聚焦桌面端测试并确认通过。
 
@@ -54,7 +54,7 @@
 
 - [x] 更新 README 本地测试说明：ASR 可以按会话选择，`.env` 仍是默认。
 - [x] 更新架构文档：传输 frame 是 80ms，但 FunASR 推理窗口由 provider 内部决定，默认约 600ms。
-- [x] 更新技术路线文档 provider 候选：FunASR 本地、Voxtral 云端、Deepgram/Azure 下一批、OpenAI Realtime 作为端到端候选。
+- [x] 更新技术路线文档 provider 候选：FunASR 本地、Voxtral 云端、Deepgram/Azure 下一批、OpenAI Realtime 作为端到端候选。当前后续实现已接入 Deepgram Streaming STT，Azure 仍是下一批候选。
 - [x] 搜索并修正“Desktop 不能选择 ASR”或“FunASR 每 80ms frame 调一次模型”等过期表述。
 
 ---
@@ -62,5 +62,5 @@
 ## 自审
 
 - 没有剩余占位任务。
-- 范围限定在会话级 provider 选择、FunASR buffering 和文档同步；本轮不实现 Deepgram/Azure 网络适配。
+- 范围限定在会话级 provider 选择、FunASR buffering 和文档同步；该计划执行时不实现 Deepgram/Azure 网络适配。当前后续实现已补充 Deepgram Streaming STT，Azure 仍未接入。
 - 测试覆盖 Desktop start payload、Agent 会话 override 和 FunASR buffering 行为。

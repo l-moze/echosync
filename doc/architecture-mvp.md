@@ -81,7 +81,7 @@ Electron getDisplayMedia(loopback)
   -> Electron overlay caption-store
 ```
 
-Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit` 和可选的 `tts.audio`。Agent 同时暴露 `/healthz` 和 `/v1/realtime/capabilities`，用于 Desktop 启动前确认默认 provider、缺失密钥和缺失依赖。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值；API key、base URL、voice id 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr` 或 `voxtral`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，字幕事件携带 `published_at_ms` 和模型指标，方便现场拆分采集、传输、ASR、翻译和 UI 接收延迟。
+Agent 实时服务和字幕事件服务共用 `8766` 端口，输入和输出分成两个 WebSocket：桌面端向 `/v1/realtime/sessions/{session_id}` 发送 JSON 控制帧 `audio.start`、`audio.end`，音频正文使用 `pcm16.binary.v1` 二进制帧；主进程保持连接 `/v1/caption/events` 接收 `transcript.partial`、`translation.partial`、`translation.patch`、`segment.commit` 和可选的 `tts.audio`。Agent 同时暴露 `/healthz` 和 `/v1/realtime/capabilities`，用于 Desktop 启动前确认默认 provider、缺失密钥和缺失依赖。`audio.start` 默认声明本次会话的 `asr_latency_mode`，只在用户显式选择 provider 时声明 `asr_provider`、`translation_provider` 或 `tts_provider` 覆盖后端 `.env` 默认值；API key、base URL、voice id 与模型密钥仍只来自后端环境变量。Agent 会在启动 pipeline 前校验本次音频源与 ASR provider，默认 `mock` 只接受 `network_stream` 演示输入；真实 PCM 音频必须走 `funasr`、`voxtral` 或 `deepgram`。Python 后端兼容旧的 JSON `audio.chunk` / `pcm_base64`，但新桌面链路默认走二进制 PCM。后端每秒聚合打印音频帧数、音频时长、字节数、传输延迟和队列深度，字幕事件携带 `published_at_ms` 和模型指标，方便现场拆分采集、传输、ASR、翻译和 UI 接收延迟。
 
 桌面 UI 生命周期：
 
@@ -137,11 +137,11 @@ SessionArchiveDraft
 - 依赖倒置：级联链路依赖 `Transcriber`、`Translator`、`CorrectionEngine`、`SubtitleSink` 抽象；端到端链路依赖 `InterpretationEngine` 抽象。
 - 接口隔离：ASR、翻译、修正、字幕输出、TTS 是小接口，互不强迫对方实现无关方法。
 
-### 4. FunASR / Voxtral / DeepSeek / TTS 作为 MVP 供应商方向
+### 4. FunASR / Voxtral / Deepgram / DeepSeek / TTS 作为 MVP 供应商方向
 
 选型：
 
-- ASR：当前 provider 支持 `mock`、`funasr`、`voxtral`。FunASR 本地 AutoModel 适配器在 `services/asr/funasr_transcriber.py`，会把 80ms 传输帧聚合成推理窗口：`low_latency` 约 320ms、`balanced` 默认 600ms、`accuracy` 约 900ms；Voxtral Realtime 云端适配器在 `services/asr/voxtral_transcriber.py`，并按 `asr_latency_mode` 映射目标等待：`low_latency` 最多 480ms、`balanced` 沿用 `VOXTRAL_TARGET_DELAY_MS`、`accuracy` 至少 1600ms。Deepgram/Azure 属于下一批低延迟/高稳定云端候选，尚未进入可选 provider。媒体文件抽音频由 `services/media/ffmpeg_audio_source.py` 完成，默认使用 ffmpeg stdout 流式读取并在线分帧，避免 MP4 复盘时等待完整文件解码。
+- ASR：当前 provider 支持 `mock`、`funasr`、`voxtral`、`deepgram`。FunASR 本地 AutoModel 适配器在 `services/asr/funasr_transcriber.py`，会把 80ms 传输帧聚合成推理窗口：`low_latency` 约 320ms、`balanced` 默认 600ms、`accuracy` 约 900ms；Voxtral Realtime 云端适配器在 `services/asr/voxtral_transcriber.py`，并按 `asr_latency_mode` 映射目标等待：`low_latency` 最多 480ms、`balanced` 沿用 `VOXTRAL_TARGET_DELAY_MS`、`accuracy` 至少 1600ms；Deepgram Streaming STT 适配器在 `services/asr/deepgram_transcriber.py`，默认模型 `nova-3`，发送 PCM16 WebSocket 二进制帧，`interim_results=true`，`speech_final=true` 映射为 endpoint final，`asr_latency_mode` 会把 endpointing 映射为约 200/300/500ms。Deepgram 的 `is_final=true` 只更新当前 utterance 的 finalized span，适配器会累积到 `speech_final=true` 再提交，并在静音门控期间发送 WebSocket `KeepAlive`。Deepgram Voice Agent 是端到端对话管线，本轮不接管 EchoSync 主链路。Azure 属于下一批低延迟/高稳定云端候选，尚未进入可选 provider。媒体文件抽音频由 `services/media/ffmpeg_audio_source.py` 完成，默认使用 ffmpeg stdout 流式读取并在线分帧，避免 MP4 复盘时等待完整文件解码。
 - 翻译：当前 provider 支持 `mock`、`deepseek`。DeepSeek 兼容 OpenAI API 的适配器在 `services/translation/deepseek_translator.py`；Desktop 的“通用模型”不发送覆盖字段，沿用 Agent `.env`，显式选择 `DeepSeek-V3` 时只发送 `translation_provider=deepseek`。Desktop 会通过 capabilities 在启动前发现缺失的 `DEEPSEEK_API_KEY` 或 SDK。
 - TTS：当前 provider 支持 `disabled`、`edge-tts`、`elevenlabs`。`edge-tts` 适配器在 `services/tts/edge_tts_synthesizer.py`；ElevenLabs HTTP streaming 适配器在 `services/tts/elevenlabs_synthesizer.py`，使用 `ELEVENLABS_API_KEY`、`ELEVENLABS_VOICE_ID`、`ELEVENLABS_MODEL` 和 `ELEVENLABS_OUTPUT_FORMAT`。TTS 默认关闭，启用后由 pipeline 旁路消费最终 `segment.commit` 译文并发布 `tts.audio`，不阻塞字幕事件，也不对 DeepSeek committed 流式增量重复合成。ElevenLabs 默认模型是面向实时低延迟的 `eleven_flash_v2_5`；质量优先或长文本播报可用 `.env` 覆盖为 `eleven_multilingual_v2`。`ELEVENLABS_OPTIMIZE_STREAMING_LATENCY` 仅保留兼容，默认不启用；官方已将该参数标记为 deprecated，更推荐 Flash 模型、streaming、就近区域和合适 voice。Desktop 启动预检会检查 TTS provider 是否可用，本次会话可通过 `audio.start.tts_provider` 覆盖后端默认值；控制中心窗口负责播放 `tts.audio`，字幕窗只显示字幕，避免双窗口重复播报。Agent 对 TTS 音频分片立即发布 `final=false`，供应商流结束后再发布一个空音频 `final=true` 结束包，避免为了判断最后一包而增加首音延迟。renderer 优先用 MediaSource 追加播放音频分片并用结束包关闭流，不支持时回退为同一 segment/rev 等结束包后拼接 Blob 播放。每个 TTS 音频事件会携带 `tts_first_audio_ms`、`tts_total_ms`、`tts_audio_chunks` 和 `tts_audio_bytes`，最终用真实 TTFA 判断是否需要升级 ElevenLabs WebSocket TTS。
 
@@ -315,7 +315,7 @@ AudioFrame 流
 - 使用 `transcript.partial` 驱动源文 hypothesis，使用 `translation.partial` 驱动译文字幕，使用 `segment.commit` 锁定最终字幕。
 - 为 DeepL 等非流式翻译器保留 batch-only 路线：只实现 `Translator.translate()`，由级联引擎自动回退，并允许录播/可访问视频场景打时间差。
 - 保持 TTS 默认关闭，避免语音合成增加首版字幕延迟；需要语音播报时可设置 `ECHOSYNC_TTS_PROVIDER=edge-tts` 或 `elevenlabs`。
-- 默认 `mock` 只用于事件演示；真实 PCM 音频测试必须使用 `funasr` 或 `voxtral`。会话级 `audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以覆盖 `.env` 默认 provider，但密钥、voice id、base URL 与模型配置仍由服务端 `.env` 控制。
+- 默认 `mock` 只用于事件演示；真实 PCM 音频测试必须使用 `funasr`、`voxtral` 或 `deepgram`。会话级 `audio.start.asr_provider`、`audio.start.translation_provider` 和 `audio.start.tts_provider` 可以覆盖 `.env` 默认 provider，但密钥、voice id、base URL 与模型配置仍由服务端 `.env` 控制。
 - `realtime.error` 与 `realtime.done` 保持互斥：启动失败、provider 不匹配或非停止态 pipeline 异常只发 error；正常 `audio.end` 才发 done。`audio.end(reason="user_stop")` 是用户主动停止，后端会取消 pipeline，并把停止期间晚到的 provider timeout/连接异常记录为日志而不是发布到字幕面板。
 - `TranscriptAssembler` 当前按标点、最大约 3.8 秒音频窗口或约 90 字符强制提交，避免中文无标点识别结果长期堆成一个字幕块。
 

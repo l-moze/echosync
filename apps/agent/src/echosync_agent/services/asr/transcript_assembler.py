@@ -72,9 +72,11 @@ class TranscriptAssembler:
                 not force_checkpointed
                 and self._should_force_checkpoint(current_text, first, last)
             )
-            should_commit = self._should_commit(current_text) or self._should_endpoint_commit(
-                current_text,
-                segment,
+            should_commit = self._should_commit(current_text, segment) or (
+                self._should_endpoint_commit(
+                    current_text,
+                    segment,
+                )
             )
             should_checkpoint = (
                 not should_commit
@@ -141,7 +143,9 @@ class TranscriptAssembler:
                 SegmentStatus.COMMITTED,
             )
 
-    def _should_commit(self, text: str) -> bool:
+    def _should_commit(self, text: str, segment: TranscriptSegment) -> bool:
+        if _is_cumulative_utterance_before_endpoint(segment):
+            return False
         return text.rstrip().endswith(tuple(self.commit_punctuation))
 
     @staticmethod
@@ -218,3 +222,9 @@ def _visible_chars(text: str) -> str:
 
 def _word_count(text: str) -> int:
     return len([part for part in text.replace("-", " ").split() if part.strip()])
+
+
+def _is_cumulative_utterance_before_endpoint(segment: TranscriptSegment) -> bool:
+    if float(segment.metrics.get("asr_cumulative_utterance", 0.0)) < 1.0:
+        return False
+    return float(segment.metrics.get("asr_endpoint_final", 0.0)) < 1.0

@@ -83,6 +83,17 @@ def _build_translator(settings: Settings):
             model=settings.deepseek_model,
             target_lang=settings.target_lang,
         )
+    if settings.translator_provider == "deepl":
+        if not settings.deepl_api_key:
+            raise ValueError("使用 DeepL 翻译器时必须配置 DEEPL_API_KEY。")
+        from echosync_agent.services.translation.deepl_translator import DeepLTranslator
+
+        return DeepLTranslator(
+            api_key=settings.deepl_api_key,
+            base_url=settings.deepl_base_url,
+            target_lang=settings.target_lang,
+            model_type=settings.deepl_model_type,
+        )
     raise ValueError(f"不支持的翻译供应商：{settings.translator_provider}")
 
 

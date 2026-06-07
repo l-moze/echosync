@@ -320,6 +320,39 @@ def test_transcript_assembler_does_not_force_commit_single_cjk_token_from_cumula
     assert len({segment.segment_id for segment in segments}) == 1
 
 
+def test_transcript_assembler_waits_for_endpoint_before_committing_cumulative_utterance(
+) -> None:
+    assembler = TranscriptAssembler(
+        checkpoint_audio_ms=1_000,
+        max_segment_audio_ms=10_000,
+        max_segment_chars=200,
+    )
+
+    cumulative_metrics = {"asr_cumulative_utterance": 1.0}
+    segments = asyncio.run(
+        _collect(
+            assembler.stream(
+                _timed_segments(
+                    [
+                        ("hello.", 0, 1_000, SegmentStatus.STABLE),
+                        ("hello. I can continue", 0, 2_000, SegmentStatus.STABLE),
+                        ("hello. I can continue.", 0, 3_000, SegmentStatus.COMMITTED),
+                    ],
+                    final_metrics={
+                        0: cumulative_metrics,
+                        1: cumulative_metrics,
+                        2: {**cumulative_metrics, "asr_endpoint_final": 1.0},
+                    },
+                )
+            )
+        )
+    )
+
+    committed = [segment for segment in segments if segment.status == SegmentStatus.COMMITTED]
+    assert [segment.text for segment in committed] == ["hello. I can continue."]
+    assert len({segment.segment_id for segment in segments}) == 1
+
+
 async def _partial_segments(texts: list[str]) -> AsyncIterator[TranscriptSegment]:
     for index, text in enumerate(texts):
         yield TranscriptSegment(

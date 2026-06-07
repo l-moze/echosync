@@ -66,6 +66,8 @@ const READABLE_DWELL_MAX_MS = 6200;
 const SOURCE_READ_MS_PER_GRAPHEME = 28;
 const TARGET_READ_MS_PER_GRAPHEME = 42;
 const graphemeSegmenter = createGraphemeSegmenter();
+const GRAPHEME_CACHE_LIMIT = 2048;
+const graphemeCache = new Map<string, string[]>();
 
 export function createInitialCaptionDisplayBuffer(): CaptionDisplayBuffer {
   return { entries: {} };
@@ -358,10 +360,24 @@ function hasVisibleTextForMode(line: CaptionLine, displayMode: CaptionLineDispla
 }
 
 function graphemes(text: string): string[] {
-  if (graphemeSegmenter) {
-    return Array.from(graphemeSegmenter.segment(text), (segment) => segment.segment);
+  const cached = graphemeCache.get(text);
+  if (cached) {
+    return cached;
   }
-  return Array.from(text);
+  let segments: string[];
+  if (graphemeSegmenter) {
+    segments = Array.from(graphemeSegmenter.segment(text), (segment) => segment.segment);
+  } else {
+    segments = Array.from(text);
+  }
+  if (graphemeCache.size >= GRAPHEME_CACHE_LIMIT) {
+    const oldestKey = graphemeCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      graphemeCache.delete(oldestKey);
+    }
+  }
+  graphemeCache.set(text, segments);
+  return segments;
 }
 
 function createGraphemeSegmenter(): GraphemeSegmenter | null {
