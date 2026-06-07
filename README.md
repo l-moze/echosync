@@ -9,8 +9,8 @@
   </p>
   <p>
     <img alt="Competition Demo" src="https://img.shields.io/badge/status-competition%20demo-1f6feb?style=flat-square" />
-    <img alt="Node.js >=20.19" src="https://img.shields.io/badge/Node.js-%3E%3D20.19-339933?style=flat-square&logo=node.js" />
-    <img alt="Python >=3.11" src="https://img.shields.io/badge/Python-%3E%3D3.11-3776AB?style=flat-square&logo=python" />
+    <img alt="Node.js 20.19+" src="https://img.shields.io/badge/Node.js-20.19%2B-339933?style=flat-square&logo=node.js" />
+    <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python" />
     <img alt="Electron desktop" src="https://img.shields.io/badge/Electron-desktop-47848F?style=flat-square&logo=electron" />
     <img alt="Windows first" src="https://img.shields.io/badge/platform-Windows%20first-0078D4?style=flat-square&logo=windows" />
   </p>
@@ -24,8 +24,6 @@
     <a href="#核心工作流"><strong>核心工作流</strong></a>
     ·
     <a href="#技术方案"><strong>技术方案</strong></a>
-    ·
-    <a href="#项目状态"><strong>项目状态</strong></a>
   </p>
   <p><sub>Realtime Caption · Streaming ASR · Simultaneous Translation · Glossary · Overlay · Session Review</sub></p>
 </div>
