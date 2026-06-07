@@ -28,7 +28,7 @@ describe("悬浮字幕窗主进程行为", () => {
     expect(state.ignoreMouse).toBe(true);
   });
 
-  it("Pin 后必须保持可交互", () => {
+  it("Pin 只切换置顶，不取消锁定穿透", () => {
     const state = reduceOverlayWindowState(
       { visible: true, pinned: false, locked: true, ignoreMouse: true },
       {
@@ -38,10 +38,10 @@ describe("悬浮字幕窗主进程行为", () => {
     );
 
     expect(state.pinned).toBe(true);
-    expect(state.ignoreMouse).toBe(false);
+    expect(state.ignoreMouse).toBe(true);
   });
 
-  it("取消 Pin 后按锁定意图恢复穿透", () => {
+  it("取消 Pin 不吞掉当前交互态，回默认层后按锁定恢复穿透", () => {
     const state = reduceOverlayWindowState(
       { visible: true, pinned: true, locked: true, ignoreMouse: false },
       {
@@ -49,9 +49,14 @@ describe("悬浮字幕窗主进程行为", () => {
         pinned: false
       }
     );
+    const defaultState = reduceOverlayWindowState(state, {
+      type: "overlay.layer",
+      layer: "default"
+    });
 
     expect(state.pinned).toBe(false);
-    expect(state.ignoreMouse).toBe(true);
+    expect(state.ignoreMouse).toBe(false);
+    expect(defaultState.ignoreMouse).toBe(true);
   });
 
   it("fallback 唤醒后显示弹窗并取消穿透", () => {
@@ -83,6 +88,21 @@ describe("悬浮字幕窗主进程行为", () => {
     expect(mainSource).toContain("window.isMinimized()");
     expect(mainSource).toContain("window.restore()");
     expect(mainSource).toContain("revealWindowInactive(window);");
+  });
+
+  it("字幕窗默认不强制置顶，Pin 才切换 always-on-top", () => {
+    expect(OVERLAY_WINDOW_PRESET.alwaysOnTop).toBe(false);
+    expect(mainSource).toContain("function applyOverlayAlwaysOnTop");
+    expect(mainSource).toContain('window?.setAlwaysOnTop(overlayWindowState.pinned, "screen-saver")');
+    expect(mainSource).toContain("applyOverlayAlwaysOnTop();");
+  });
+
+  it("Windows 系统声停止后缓存录音，并在保存草稿时补齐音频", () => {
+    expect(mainSource).toContain("let pendingWasapiRecording");
+    expect(mainSource).toContain("pendingWasapiRecording = recording;");
+    expect(mainSource).toContain('ipcMain.handle("audio:get-pending-recording"');
+    expect(mainSource).toContain("!input.audio && pendingRecording");
+    expect(mainSource).toContain("pendingWasapiRecording = null;");
   });
 
   it("设置和控制 layer 必须强制可交互，回默认态再按锁定恢复穿透", () => {

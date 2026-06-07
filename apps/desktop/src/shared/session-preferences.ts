@@ -6,6 +6,7 @@ import type { TtsProviderSelection } from "./tts-provider-catalog";
 export type SessionPreferencesState = {
   asrLatencyMode: AsrLatencyMode;
   asrProvider: AsrProviderSelection;
+  endToEndSourceBackfill: boolean;
   languageDirectionId: string;
   sourceId: DesktopAudioSourceId;
   translationProvider: TranslationProviderSelection;
@@ -15,6 +16,7 @@ export type SessionPreferencesState = {
 export const defaultSessionPreferences: SessionPreferencesState = {
   asrLatencyMode: "balanced",
   asrProvider: "server-default",
+  endToEndSourceBackfill: true,
   languageDirectionId: "en-zh",
   sourceId: "windows-system",
   translationProvider: "server-default",

@@ -5,9 +5,10 @@ from dataclasses import replace
 
 from echosync_agent.domain import TranslationSegment
 
-_BOUNDARY_RE = re.compile(r"([^，,。！？!?；;：:\n]+[，,。！？!?；;：:\n]*|\n+)")
-_TRAILING_PUNCTUATION = "，,。！？!?；;：:"
-_SPLIT_PUNCTUATION = "，,。！？!?；;：:"
+_BOUNDARY_RE = re.compile(r"([^，,、。！？!?；;：:\n]+[，,、。！？!?；;：:\n]*|\n+)")
+_TRAILING_PUNCTUATION = "，,、。！？!?；;：:"
+_PREFERRED_SPLIT_PUNCTUATION = "，,、；;：:"
+_SENTENCE_PUNCTUATION = "。！？!?\n"
 
 
 class TtsUtteranceSplitter:
@@ -56,8 +57,6 @@ def _split_text(text: str, max_chars: int, min_chars: int) -> tuple[str, ...]:
     normalized = _normalize_tts_text(text)
     if not normalized:
         return ()
-    if len(normalized) <= max_chars:
-        return (normalized,)
 
     raw_parts = _rough_split(normalized, max_chars)
     parts: list[str] = []
@@ -68,9 +67,7 @@ def _split_text(text: str, max_chars: int, min_chars: int) -> tuple[str, ...]:
         if not pending:
             pending = raw
             continue
-        if not _ends_with_split_boundary(pending) and (
-            len(pending) < min_chars or len(pending) + len(raw) <= max_chars
-        ):
+        if not _should_emit_pending(pending, raw, max_chars, min_chars):
             pending = _join_parts(pending, raw)
             continue
         parts.append(pending)
@@ -133,5 +130,23 @@ def _normalize_tts_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _ends_with_split_boundary(text: str) -> bool:
-    return text.rstrip().endswith(tuple(_SPLIT_PUNCTUATION))
+def _should_emit_pending(pending: str, raw: str, max_chars: int, min_chars: int) -> bool:
+    pending_text = pending.rstrip()
+    if not pending_text:
+        return False
+    if len(pending_text) + len(raw) > max_chars:
+        return True
+    if _ends_with_preferred_boundary(pending_text) and len(pending_text) >= min_chars:
+        return True
+    return _ends_with_sentence_boundary(pending_text) and len(pending_text) >= max(
+        min_chars,
+        max_chars // 2,
+    )
+
+
+def _ends_with_preferred_boundary(text: str) -> bool:
+    return text.rstrip().endswith(tuple(_PREFERRED_SPLIT_PUNCTUATION))
+
+
+def _ends_with_sentence_boundary(text: str) -> bool:
+    return text.rstrip().endswith(tuple(_SENTENCE_PUNCTUATION))

@@ -283,6 +283,9 @@ describe("renderer visual style contract", () => {
     expect(overlayToolbarSource).toContain("overlayDropdown top");
     expect(overlayToolbarSource).toContain("role=\"menuitemradio\"");
     expect(overlayToolbarSource).toContain("ToolbarIcon name={isInteractionLocked ? \"unlock\" : \"lock\"}");
+    expect(overlayToolbarSource).toContain("lockToggleWrap");
+    expect(overlayToolbarSource).toContain("lockToggleHint");
+    expect(overlayToolbarSource).toContain("解锁字幕");
     expect(overlayToolbarSource).toContain("ToolbarIcon name=\"minimize\"");
     expect(overlayToolbarSource).not.toContain("onWakeHome");
     expect(overlayToolbarSource).not.toContain("onRecenter");
@@ -301,7 +304,9 @@ describe("renderer visual style contract", () => {
     expect(cssRule(".overlayToolbar")).toContain("grid-template-columns: auto minmax(0, 1fr) auto");
     expect(cssRule(".overlayIconGroup button")).toContain("width: 30px");
     expect(cssRule(".overlayIconGroup button")).toContain("height: 30px");
-    expect(cssRule(".overlayIconGroup button.unlockButton")).toContain("min-width: 66px");
+    expect(cssRule(".lockToggleWrap")).toContain("position: relative");
+    expect(cssRule(".lockToggleHint")).toContain("position: absolute");
+    expect(cssRule(".lockToggleWrap:hover .lockToggleHint,\n.lockToggleWrap:focus-within .lockToggleHint,\n.lockToggleWrap.locked .lockToggleHint")).toContain("opacity: 1");
     expect(cssRule(".overlaySessionBar")).toContain("display: grid");
     expect(cssRule(".overlaySessionBar")).toContain("grid-template-columns: auto auto max-content minmax(96px, max-content) auto max-content");
     expect(cssRule(".overlayMenuTrigger")).toContain("min-height: 30px");
@@ -318,6 +323,9 @@ describe("renderer visual style contract", () => {
     expect(cssRule(".captionText")).toContain("-webkit-user-select: none");
     expect(cssRule(".overlayCaptionHistory")).toContain("user-select: none");
     expect(cssRule(".overlayCaptionHistory")).toContain("-webkit-user-select: none");
+    expect(cssRule(".overlayCaptionHistory")).not.toContain("-webkit-app-region: no-drag");
+    expect(cssRule(".zonedCaptionLane")).not.toContain("-webkit-app-region: no-drag");
+    expect(cssRule(".captionTopChrome,\n.captionBottomChrome")).not.toContain("-webkit-app-region: no-drag");
     expect(captionTextRule).toContain("user-select: none");
     expect(captionTextRule).toContain("-webkit-user-select: none");
     expect(compactChromeSourceRule).toContain("font-size: min(var(--source-size, 18px), 16px)");
@@ -347,7 +355,7 @@ describe("renderer visual style contract", () => {
     expect(cssRule(".overlayCaptionHistory")).toContain("overflow-anchor: none");
     expect(cssRule(".overlayStage.layer-default .overlayCaptionHistory")).toContain("max-height: none");
     expect(cssRule(".overlayStage.layer-default .overlayCaptionHistory")).toContain("height: 100%");
-    expect(cssRule(".historyLine.clipped,\n.zonedCaptionLine.clipped")).toContain("visibility: hidden");
+    expect(cssRule(".historyLine.clipped,\n.zonedCaptionStream.clipped,\n.zonedCaptionLine.clipped")).toContain("visibility: hidden");
     expect(cssRule(".historyLine")).not.toContain("animation");
     expect(stylesheet).not.toContain("@keyframes historyLineLift");
     expect(historyTextRule).toContain("overflow: hidden");
@@ -361,6 +369,10 @@ describe("renderer visual style contract", () => {
   it("renders caption text as paired blocks and gives zoned mode real source/target regions", () => {
     const captionTextSource = rendererSource.slice(
       rendererSource.indexOf("function CaptionText"),
+      rendererSource.indexOf("function OverlayCaptionHistory")
+    );
+    const zonedLaneSource = rendererSource.slice(
+      rendererSource.indexOf("function ZonedCaptionLane"),
       rendererSource.indexOf("function OverlayCaptionHistory")
     );
 
@@ -383,7 +395,51 @@ describe("renderer visual style contract", () => {
     }
     expect(cssRule(".captionText.mode-zonedPair")).toContain("height: 100%");
     expect(cssRule(".captionText.mode-zonedPair .captionTextBlock")).toContain("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)");
-    expect(cssRule(".captionText.mode-zonedPair .overlaySource")).toContain("-webkit-line-clamp: 3");
-    expect(cssRule(".captionText.mode-zonedPair h1")).toContain("-webkit-line-clamp: 3");
+    const zonedCaptionTextFallbackRule = cssRule(".captionText.mode-zonedPair .overlaySource,\n.captionText.mode-zonedPair h1");
+    expect(zonedCaptionTextFallbackRule).toContain("display: block");
+    expect(zonedCaptionTextFallbackRule).toContain("white-space: normal");
+    expect(zonedCaptionTextFallbackRule).toContain("overflow-wrap: anywhere");
+    expect(zonedCaptionTextFallbackRule).toContain("-webkit-line-clamp: unset");
+    expect(cssRule(".zonedCaptionText")).toContain("display: block");
+    expect(cssRule(".zonedCaptionText")).toContain("white-space: normal");
+    expect(cssRule(".zonedCaptionText")).toContain("overflow-wrap: anywhere");
+    expect(cssRule(".zonedCaptionText")).toContain("text-overflow: clip");
+    expect(cssRule(".zonedCaptionText.sourceText,\n.zonedCaptionText.targetText")).toContain("-webkit-line-clamp: unset");
+    expect(zonedLaneSource).toContain("selectZonedCaptionLaneChunks");
+    expect(zonedLaneSource).toContain("useZonedCaptionLaneViewport");
+    expect(zonedLaneSource).toContain("className={`zonedCaptionStream");
+    expect(zonedLaneSource).toContain("className={`zonedCaptionChunk");
+    expect(zonedLaneSource).not.toContain("textParts.join");
+    expect(zonedLaneSource).toContain("selectZonedCaptionAlignedScrollTop");
+    expect(zonedLaneSource).toContain("measureZonedCaptionLineOffsets");
+    expect(zonedLaneSource).toContain("stream.scrollTop = scrollTop");
+    expect(zonedLaneSource).not.toContain("stream.scrollHeight - stream.clientHeight);\n      if");
+    expect(zonedLaneSource).not.toContain("behavior: \"smooth\"");
+    expect(zonedLaneSource).not.toContain("lines.map((line, index)");
+    expect(cssRule(".zonedCaptionLane")).toContain("overflow-y: hidden");
+    expect(cssRule(".zonedCaptionStream,\n.zonedCaptionLine")).toContain("max-height: var(--zoned-visible-height, 100%)");
+    expect(cssRule(".zonedCaptionStream,\n.zonedCaptionLine")).toContain("white-space: normal");
+    expect(cssRule(".zonedCaptionChunk")).toContain("display: inline");
+    expect(cssRule(".zonedCaptionChunk + .zonedCaptionChunk::before")).toContain("content: \" \"");
+  });
+
+  it("keeps the finished review layout inside the viewport with adaptive columns", () => {
+    const finishedDashboardSource = rendererSource.slice(
+      rendererSource.indexOf("function FinishedDashboard"),
+      rendererSource.indexOf("function PreflightAudioVisualizer")
+    );
+
+    expect(finishedDashboardSource).toContain("function selectTranscriptReviewColumnTemplate");
+    expect(finishedDashboardSource).toContain("84px minmax(0, ${sourceRatio.toFixed(2)}fr) minmax(0, ${targetRatio.toFixed(2)}fr)");
+    expect(cssRule(".controlShell")).toContain("overflow: hidden");
+    expect(cssRule(".homeShell")).toContain("height: calc(100vh - 58px)");
+    expect(cssRule(".homeShell")).toContain("overflow-y: auto");
+    expect(cssRule(".controlCenter.lifecycle-finished .transcriptReviewGrid")).toContain("height: clamp(240px, 38vh, 430px)");
+    expect(cssRule(".controlCenter.lifecycle-finished .archivePlaybackPanel,\n.controlCenter.lifecycle-finished .archiveMissing")).toContain("order: 1");
+    expect(cssRule(".controlCenter.lifecycle-finished .archivePlaybackPanel")).not.toContain("position: sticky");
+    expect(cssRule(".archivePlaybackPanel")).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(cssRule(".archiveAudioControls")).toContain("grid-template-columns: max-content minmax(0, 1fr) max-content");
+    expect(cssRule(".archiveAudioTime")).toContain("white-space: nowrap");
+    expect(cssRule(".archiveAudioStatus,\n.archiveAudioError")).toContain("overflow-wrap: anywhere");
   });
 });

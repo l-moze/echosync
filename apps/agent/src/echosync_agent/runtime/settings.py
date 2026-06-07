@@ -3,12 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from os import getenv
 
-SUPPORTED_ASR_PROVIDERS = frozenset(
-    {"mock", "funasr", "voxtral", "deepgram", "qwen-asr", "qwen-livetranslate"}
-)
+SUPPORTED_ASR_PROVIDERS = frozenset({"mock", "funasr", "voxtral", "deepgram", "qwen-asr"})
 NEXT_ASR_PROVIDER_CANDIDATES = frozenset({"azure"})
 SUPPORTED_ASR_LATENCY_MODES = frozenset({"low_latency", "balanced", "accuracy"})
-SUPPORTED_TRANSLATION_PROVIDERS = frozenset({"mock", "deepseek", "deepl"})
+SUPPORTED_TRANSLATION_PROVIDERS = frozenset({"mock", "deepseek", "deepl", "qwen-livetranslate"})
 SUPPORTED_TRANSLATION_REPAIR_PROVIDERS = frozenset({"disabled", "deepseek"})
 SUPPORTED_TRANSLATION_REPAIR_MODES = frozenset({"suspect_only", "debug_all"})
 SUPPORTED_TTS_PROVIDERS = frozenset({"disabled", "edge-tts", "elevenlabs"})
@@ -41,6 +39,10 @@ class Settings:
     voxtral_target_delay_ms: int
     edge_tts_rate: str = "+15%"
     elevenlabs_speed: float = 1.15
+    elevenlabs_stability: float = 0.85
+    elevenlabs_similarity_boost: float = 0.75
+    elevenlabs_style: float = 0.0
+    elevenlabs_use_speaker_boost: bool = False
     tts_utterance_max_chars: int = 42
     tts_utterance_min_chars: int = 8
     tts_prefetch_concurrency: int = 2
@@ -56,6 +58,7 @@ class Settings:
     qwen_livetranslate_model: str = "qwen3.5-livetranslate-flash-realtime"
     qwen_livetranslate_source_lang: str = "auto"
     qwen_livetranslate_output_audio: bool = False
+    qwen_livetranslate_source_backfill: bool = True
     asr_latency_mode: str = "balanced"
     funasr_vad_enabled: bool = False
     funasr_vad_silence_ms: int = 300
@@ -71,9 +74,26 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        raw_asr_provider = getenv("ECHOSYNC_ASR_PROVIDER", "mock")
+        raw_translation_provider = getenv("ECHOSYNC_TRANSLATOR_PROVIDER", "mock")
+        asr_provider = raw_asr_provider
+        translator_provider = raw_translation_provider
+        if raw_asr_provider.strip().lower() == "qwen-livetranslate":
+            asr_provider = getenv("ECHOSYNC_LIVETRANSLATE_SOURCE_ASR_PROVIDER", "qwen-asr")
+            if raw_translation_provider.strip().lower() == "mock":
+                translator_provider = "qwen-livetranslate"
+
         return cls(
-            asr_provider=getenv("ECHOSYNC_ASR_PROVIDER", "mock"),
-            translator_provider=getenv("ECHOSYNC_TRANSLATOR_PROVIDER", "mock"),
+            asr_provider=_validated_choice(
+                asr_provider,
+                SUPPORTED_ASR_PROVIDERS,
+                "ECHOSYNC_ASR_PROVIDER",
+            ),
+            translator_provider=_validated_choice(
+                translator_provider,
+                SUPPORTED_TRANSLATION_PROVIDERS,
+                "ECHOSYNC_TRANSLATOR_PROVIDER",
+            ),
             tts_provider=getenv("ECHOSYNC_TTS_PROVIDER", "disabled"),
             target_lang=getenv("ECHOSYNC_TARGET_LANG", "zh-CN"),
             funasr_model=getenv("FUNASR_MODEL", "paraformer-zh-streaming"),
@@ -96,6 +116,16 @@ class Settings:
                 getenv("ELEVENLABS_OPTIMIZE_STREAMING_LATENCY", "")
             ),
             elevenlabs_speed=float(getenv("ELEVENLABS_SPEED", "1.15")),
+            elevenlabs_stability=float(getenv("ELEVENLABS_STABILITY", "0.85")),
+            elevenlabs_similarity_boost=float(
+                getenv("ELEVENLABS_SIMILARITY_BOOST", "0.75")
+            ),
+            elevenlabs_style=float(getenv("ELEVENLABS_STYLE", "0.0")),
+            elevenlabs_use_speaker_boost=getenv(
+                "ELEVENLABS_USE_SPEAKER_BOOST",
+                "false",
+            ).lower()
+            in ("true", "1", "yes"),
             tts_utterance_max_chars=int(getenv("ECHOSYNC_TTS_UTTERANCE_MAX_CHARS", "42")),
             tts_utterance_min_chars=int(getenv("ECHOSYNC_TTS_UTTERANCE_MIN_CHARS", "8")),
             tts_prefetch_concurrency=max(
@@ -124,6 +154,10 @@ class Settings:
             qwen_livetranslate_source_lang=getenv("QWEN_LIVETRANSLATE_SOURCE_LANG", "auto"),
             qwen_livetranslate_output_audio=getenv(
                 "QWEN_LIVETRANSLATE_OUTPUT_AUDIO", "false"
+            ).lower()
+            in ("true", "1", "yes"),
+            qwen_livetranslate_source_backfill=getenv(
+                "QWEN_LIVETRANSLATE_SOURCE_BACKFILL", "true"
             ).lower()
             in ("true", "1", "yes"),
             asr_latency_mode=getenv("ECHOSYNC_ASR_LATENCY_MODE", "balanced"),
@@ -190,14 +224,18 @@ def with_session_asr_overrides(
     updates: dict[str, str] = {}
     if asr_provider is not None:
         provider = str(asr_provider).strip().lower()
-        if provider in NEXT_ASR_PROVIDER_CANDIDATES:
+        if provider == "qwen-livetranslate":
+            updates["asr_provider"] = "qwen-asr"
+            updates["translator_provider"] = "qwen-livetranslate"
+        elif provider in NEXT_ASR_PROVIDER_CANDIDATES:
             raise ValueError(
                 f"{provider.title()} ASR 尚未接入，"
-                "本轮可选 provider：mock、funasr、voxtral、deepgram、qwen-asr、qwen-livetranslate"
+                "本轮可选 provider：mock、funasr、voxtral、deepgram、qwen-asr"
             )
-        if provider not in SUPPORTED_ASR_PROVIDERS:
-            raise ValueError(f"不支持的 ASR provider：{provider}")
-        updates["asr_provider"] = provider
+        else:
+            if provider not in SUPPORTED_ASR_PROVIDERS:
+                raise ValueError(f"不支持的 ASR provider：{provider}")
+            updates["asr_provider"] = provider
 
     if asr_latency_mode is not None:
         mode = str(asr_latency_mode).strip().lower()
@@ -214,23 +252,37 @@ def with_session_translation_overrides(
     settings: Settings,
     *,
     translation_provider: object | None = None,
+    end_to_end_source_backfill: object | None = None,
 ) -> Settings:
     """应用来自单个 realtime session 的翻译模型选择。
 
     客户端只声明 provider id；API key、base URL 和模型名仍由服务端环境变量控制。
     """
 
-    if translation_provider is None:
-        return settings
+    updates: dict[str, object] = {}
+    if translation_provider is not None:
+        provider = str(translation_provider).strip().lower()
+        if provider:
+            if provider not in SUPPORTED_TRANSLATION_PROVIDERS:
+                raise ValueError(f"不支持的翻译 provider：{provider}")
+            updates["translator_provider"] = provider
 
-    provider = str(translation_provider).strip().lower()
-    if not provider:
+    if end_to_end_source_backfill is not None:
+        updates["qwen_livetranslate_source_backfill"] = _bool_from_client(
+            end_to_end_source_backfill
+        )
+
+    if not updates:
         return settings
-    if provider not in SUPPORTED_TRANSLATION_PROVIDERS:
-        raise ValueError(f"不支持的翻译 provider：{provider}")
-    if provider == settings.translator_provider:
-        return settings
-    return replace(settings, translator_provider=provider)
+    return replace(settings, **updates)
+
+
+def _bool_from_client(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return value != 0
+    return str(value).strip().lower() in ("true", "1", "yes", "on")
 
 
 def with_session_tts_overrides(

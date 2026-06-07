@@ -39,7 +39,7 @@ def build_demo_pipeline(
     if caption_event_bus is not None:
         _subscribe_caption_pusher(event_bus, caption_event_bus)
 
-    if resolved.asr_provider == "qwen-livetranslate":
+    if resolved.translator_provider == "qwen-livetranslate":
         pipeline = _build_qwen_livetranslate_pipeline(
             resolved,
             event_bus=event_bus,
@@ -140,25 +140,39 @@ def _build_qwen_livetranslate_pipeline(
     if not settings.qwen_api_key:
         raise ValueError("使用 Qwen LiveTranslate 时必须配置 DASHSCOPE_API_KEY 或 QWEN_API_KEY。")
 
+    from echosync_agent.services.engine.hybrid_livetranslate_engine import (
+        SourceBackfilledLiveTranslateEngine,
+    )
     from echosync_agent.services.engine.qwen_livetranslate_engine import (
         QwenLiveTranslateConfig,
         QwenLiveTranslateEngine,
     )
 
+    live_engine = QwenLiveTranslateEngine(
+        QwenLiveTranslateConfig(
+            api_key=settings.qwen_api_key,
+            model=settings.qwen_livetranslate_model,
+            base_url=settings.qwen_realtime_base_url,
+            source_lang=settings.qwen_livetranslate_source_lang,
+            target_lang=settings.target_lang,
+            output_audio=settings.qwen_livetranslate_output_audio,
+            vad_silence_duration_ms=_qwen_livetranslate_vad_silence_ms_for_latency_mode(
+                latency_mode=settings.asr_latency_mode,
+            ),
+        )
+    )
+    engine = (
+        SourceBackfilledLiveTranslateEngine(
+            source_transcriber=_build_transcriber(settings),
+            target_engine=live_engine,
+            target_lang=settings.target_lang,
+        )
+        if settings.qwen_livetranslate_source_backfill
+        else live_engine
+    )
+
     return EngineDrivenInterpretationPipeline(
-        engine=QwenLiveTranslateEngine(
-            QwenLiveTranslateConfig(
-                api_key=settings.qwen_api_key,
-                model=settings.qwen_livetranslate_model,
-                base_url=settings.qwen_realtime_base_url,
-                source_lang=settings.qwen_livetranslate_source_lang,
-                target_lang=settings.target_lang,
-                output_audio=settings.qwen_livetranslate_output_audio,
-                vad_silence_duration_ms=_qwen_livetranslate_vad_silence_ms_for_latency_mode(
-                    latency_mode=settings.asr_latency_mode,
-                ),
-            )
-        ),
+        engine=engine,
         subtitle_sink=EventSubtitleSink(event_bus),
         audio_sink=EventTranslatedAudioSink(event_bus),
     )

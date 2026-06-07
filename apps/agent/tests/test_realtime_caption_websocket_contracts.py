@@ -31,6 +31,7 @@ def test_realtime_websocket_publishes_translated_captions_to_caption_clients() -
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
@@ -106,6 +107,7 @@ def test_realtime_websocket_rejects_mock_asr_for_real_audio_sources() -> None:
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
@@ -134,6 +136,7 @@ def test_caption_app_exposes_realtime_capabilities() -> None:
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
@@ -687,6 +690,7 @@ async def _run_realtime_session_start_error_does_not_send_done_test() -> None:
         Settings.from_env(),
         asr_provider="mock",
         translator_provider="mock",
+        tts_provider="disabled",
         glossary_enabled=False,
     )
     websocket = _MemoryWebSocket(

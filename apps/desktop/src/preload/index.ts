@@ -24,6 +24,7 @@ const desktopApi: DesktopApi = {
   getSessionPreferences: () => ipcRenderer.invoke("session-preferences:get"),
   updateSessionPreferences: (patch) => ipcRenderer.invoke("session-preferences:update", patch),
   getCaptureState: () => ipcRenderer.invoke("audio:get-state"),
+  getPendingCaptureRecording: (sessionId) => ipcRenderer.invoke("audio:get-pending-recording", sessionId),
   startCapture: (request) => ipcRenderer.invoke("audio:start", request),
   stopCapture: () => ipcRenderer.invoke("audio:stop"),
   sendRealtimeEvent: (event) => ipcRenderer.invoke("caption:event", event),

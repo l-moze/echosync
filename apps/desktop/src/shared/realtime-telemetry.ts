@@ -38,6 +38,7 @@ export type RealtimeEventTelemetry = {
   translationFirstTokenMs?: number;
   translationLatencyMs?: number;
   ttsFirstAudioMs?: number;
+  ttsQueueWaitMs?: number;
   ttsTotalMs?: number;
   ttsAudioChunks?: number;
   ttsAudioBytes?: number;
@@ -97,6 +98,7 @@ export function buildRealtimeEventTelemetry(
     translationFirstTokenMs: metrics?.translation_first_token_ms,
     translationLatencyMs: metrics?.translation_latency_ms,
     ttsFirstAudioMs: metrics?.tts_first_audio_ms,
+    ttsQueueWaitMs: metrics?.tts_queue_wait_ms,
     ttsTotalMs: metrics?.tts_total_ms,
     ttsAudioChunks: metrics?.tts_audio_chunks,
     ttsAudioBytes: metrics?.tts_audio_bytes,

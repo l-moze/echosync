@@ -4,7 +4,7 @@ import path from "node:path";
 import WebSocket from "ws";
 
 import { DESKTOP_AUDIO_SOURCES, type DesktopAudioSourceId } from "../shared/audio-source-catalog";
-import type { DesktopCaptureSnapshot, DesktopCaptureStartRequest } from "../shared/desktop-api";
+import type { DesktopCaptureRecording, DesktopCaptureSnapshot, DesktopCaptureStartRequest } from "../shared/desktop-api";
 import type { RealtimeEvent } from "../shared/realtime-events";
 import { defaultSubtitleStyle, reduceSubtitleStyleState, type SubtitleStyleState } from "../shared/subtitle-style-state";
 import {
@@ -40,6 +40,7 @@ import { runSessionSummaryGeneration } from "./session-summary-runner";
 import {
   resolveWasapiSidecarPath,
   startWasapiSidecarCapture,
+  type WasapiSidecarRecording,
   type WasapiSidecarSession
 } from "./wasapi-sidecar-client";
 import { CONTROL_WINDOW_PRESET, OVERLAY_WINDOW_PRESET, type DesktopWindowPreset } from "./window-config";
@@ -84,6 +85,7 @@ let sessionPreferences: SessionPreferencesState = defaultSessionPreferences;
 let subtitleStyle: SubtitleStyleState = defaultSubtitleStyle;
 let captionWs: WebSocket | null = null;
 let wasapiSidecarSession: WasapiSidecarSession | null = null;
+let pendingWasapiRecording: WasapiSidecarRecording | null = null;
 let captionReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 const captionEventBuffer = createCaptionEventBuffer();
@@ -137,7 +139,12 @@ function createWindow(preset: DesktopWindowPreset, role: "control" | "overlay" |
     }
   });
 
-  if (role === "overlay" || role === "subtitle-style") {
+  if (role === "overlay") {
+    window.setAlwaysOnTop(overlayWindowState.pinned, "screen-saver");
+    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  }
+
+  if (role === "subtitle-style") {
     window.setAlwaysOnTop(true, "screen-saver");
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   }
@@ -182,13 +189,30 @@ async function stopWasapiSidecarSession() {
   const session = wasapiSidecarSession;
   wasapiSidecarSession = null;
   if (!session) {
-    return;
+    return null;
   }
   try {
-    await session.stop();
+    const recording = await session.stop();
+    if (recording) {
+      pendingWasapiRecording = recording;
+    }
+    return recording;
   } catch (error) {
     log.warn("[wasapi-sidecar] 停止原生采集失败:", error);
+    return null;
   }
+}
+
+function getPendingWasapiRecording(sessionId: string): DesktopCaptureRecording | null {
+  if (!pendingWasapiRecording || pendingWasapiRecording.sessionId !== sessionId) {
+    return null;
+  }
+  return {
+    activityRanges: pendingWasapiRecording.activityRanges,
+    data: pendingWasapiRecording.data,
+    mimeType: pendingWasapiRecording.mimeType,
+    sessionId: pendingWasapiRecording.sessionId
+  };
 }
 
 function ensureOverlayWindow() {
@@ -257,6 +281,10 @@ function applyOverlayMousePolicy(window = overlayWindow) {
   window?.setIgnoreMouseEvents(overlayWindowState.ignoreMouse, { forward: true });
 }
 
+function applyOverlayAlwaysOnTop(window = overlayWindow) {
+  window?.setAlwaysOnTop(overlayWindowState.pinned, "screen-saver");
+}
+
 function revealWindowInactive(window: BrowserWindow) {
   if (window.isMinimized()) {
     window.restore();
@@ -279,7 +307,20 @@ function registerIpc() {
   ipcMain.handle("session-records:list", () => sessionRecordStore.list());
   ipcMain.handle("session-records:get", (_event, id: string) => sessionRecordStore.get(id));
   ipcMain.handle("session-records:save-draft", async (_event, input: SessionRecordDraftInput) => {
-    const record = await sessionRecordStore.saveDraft(input);
+    const pendingRecording = pendingWasapiRecording?.sessionId === input.id ? pendingWasapiRecording : null;
+    const draftInput = !input.audio && pendingRecording
+      ? {
+          ...input,
+          audio: {
+            data: pendingRecording.data,
+            mimeType: pendingRecording.mimeType
+          }
+        }
+      : input;
+    const record = await sessionRecordStore.saveDraft(draftInput);
+    if (pendingWasapiRecording?.sessionId === input.id) {
+      pendingWasapiRecording = null;
+    }
     void generateSessionSummary(record.id).catch((error) => {
       log.warn("[session-records] 会议摘要后台任务失败:", error);
     });
@@ -316,10 +357,14 @@ function registerIpc() {
     return sessionPreferences;
   });
   ipcMain.handle("audio:get-state", () => captureSnapshot);
+  ipcMain.handle("audio:get-pending-recording", (_event, sessionId: string) => getPendingWasapiRecording(sessionId));
 
   ipcMain.handle("audio:start", async (_event, request: DesktopCaptureStartRequest) => {
     await stopWasapiSidecarSession();
     const { sourceId, sessionId } = request;
+    if (pendingWasapiRecording?.sessionId !== sessionId) {
+      pendingWasapiRecording = null;
+    }
     const source = DESKTOP_AUDIO_SOURCES.find((item) => item.id === sourceId);
     captionEventBuffer.clear();
     log.info("[audio:start] 收到桌面采集请求", {
@@ -343,6 +388,7 @@ function registerIpc() {
             agentRealtimeBaseUrl: AGENT_REALTIME_WS_BASE_URL,
             asrLatencyMode: request.asrLatencyMode,
             asrProvider: request.asrProvider,
+            endToEndSourceBackfill: request.endToEndSourceBackfill,
             mode: "exclude-process-tree",
             sessionId,
             sidecarPath,
@@ -414,6 +460,7 @@ function registerIpc() {
   ipcMain.handle("overlay:pinned", (_event, pinned: boolean) => {
     overlayWindowState = reduceOverlayWindowState(overlayWindowState, { type: "overlay.pinned", pinned });
     applyOverlayLayout(pinned ? "pinned" : "default");
+    applyOverlayAlwaysOnTop();
     applyOverlayMousePolicy();
     sendToWindow(overlayWindow, "overlay:wake-controls");
   });

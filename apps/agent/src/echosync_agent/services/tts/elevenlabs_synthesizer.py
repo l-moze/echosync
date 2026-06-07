@@ -32,8 +32,12 @@ class ElevenLabsStreamingClient:
         model: str,
         output_format: str,
         optimize_streaming_latency: int | None,
+        similarity_boost: float,
         speed: float,
+        stability: float,
+        style: float,
         text: str,
+        use_speaker_boost: bool,
     ) -> AsyncIterator[bytes]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[bytes | BaseException | None] = asyncio.Queue()
@@ -46,8 +50,12 @@ class ElevenLabsStreamingClient:
                     model=model,
                     output_format=output_format,
                     optimize_streaming_latency=optimize_streaming_latency,
+                    similarity_boost=similarity_boost,
                     speed=speed,
+                    stability=stability,
+                    style=style,
                     text=text,
+                    use_speaker_boost=use_speaker_boost,
                 ):
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
             except BaseException as exc:
@@ -75,8 +83,12 @@ class ElevenLabsStreamingClient:
         model: str,
         output_format: str,
         optimize_streaming_latency: int | None,
+        similarity_boost: float,
         speed: float,
+        stability: float,
+        style: float,
         text: str,
+        use_speaker_boost: bool,
     ) -> AsyncIterator[bytes]:
         parsed = urlparse(self.base_url)
         if parsed.scheme != "https":
@@ -93,7 +105,11 @@ class ElevenLabsStreamingClient:
                 "text": text,
                 "model_id": model,
                 "voice_settings": {
+                    "similarity_boost": _clamp_unit(similarity_boost),
                     "speed": _clamp_speed(speed),
+                    "stability": _clamp_unit(stability),
+                    "style": _clamp_unit(style),
+                    "use_speaker_boost": use_speaker_boost,
                 },
             }
         ).encode("utf-8")
@@ -129,7 +145,11 @@ class ElevenLabsTtsSynthesizer(TtsSynthesizer):
     model: str = "eleven_flash_v2_5"
     output_format: str = "mp3_44100_128"
     optimize_streaming_latency: int | None = None
+    similarity_boost: float = 0.75
     speed: float = 1.15
+    stability: float = 0.85
+    style: float = 0.0
+    use_speaker_boost: bool = False
     client: ElevenLabsStreamingClient | None = None
 
     async def synthesize(self, segment: TranslationSegment) -> AsyncIterator[bytes]:
@@ -140,11 +160,19 @@ class ElevenLabsTtsSynthesizer(TtsSynthesizer):
             model=self.model,
             output_format=self.output_format,
             optimize_streaming_latency=self.optimize_streaming_latency,
+            similarity_boost=self.similarity_boost,
             speed=self.speed,
+            stability=self.stability,
+            style=self.style,
             text=segment.target_text,
+            use_speaker_boost=self.use_speaker_boost,
         ):
             yield chunk
 
 
 def _clamp_speed(speed: float) -> float:
     return min(max(float(speed), 0.7), 1.2)
+
+
+def _clamp_unit(value: float) -> float:
+    return min(max(float(value), 0.0), 1.0)

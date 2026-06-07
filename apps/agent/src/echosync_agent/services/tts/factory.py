@@ -28,7 +28,11 @@ def build_tts_synthesizer_from_settings(settings: Settings) -> TtsSynthesizer | 
             model=settings.elevenlabs_model,
             output_format=settings.elevenlabs_output_format,
             optimize_streaming_latency=settings.elevenlabs_optimize_streaming_latency,
+            similarity_boost=settings.elevenlabs_similarity_boost,
             speed=settings.elevenlabs_speed,
+            stability=settings.elevenlabs_stability,
+            style=settings.elevenlabs_style,
+            use_speaker_boost=settings.elevenlabs_use_speaker_boost,
         )
 
     raise ValueError(f"不支持的 TTS provider：{provider}")

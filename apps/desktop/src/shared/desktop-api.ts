@@ -26,9 +26,20 @@ export type DesktopCaptureSnapshot = {
   sessionId?: string;
 };
 
+export type DesktopCaptureRecording = {
+  activityRanges?: Array<{
+    startMs: number;
+    endMs: number;
+  }>;
+  data: ArrayBuffer;
+  mimeType: string;
+  sessionId: string;
+};
+
 export type DesktopCaptureStartRequest = {
   asrLatencyMode: AsrLatencyMode;
   asrProvider?: AsrProviderId;
+  endToEndSourceBackfill?: boolean;
   sessionId: string;
   sourceId: DesktopAudioSourceId;
   sourceLang?: string;
@@ -62,6 +73,7 @@ export type DesktopApi = {
   getSessionPreferences: () => Promise<SessionPreferencesState>;
   updateSessionPreferences: (patch: Partial<SessionPreferencesState>) => Promise<SessionPreferencesState>;
   getCaptureState: () => Promise<DesktopCaptureSnapshot>;
+  getPendingCaptureRecording: (sessionId: string) => Promise<DesktopCaptureRecording | null>;
   startCapture: (request: DesktopCaptureStartRequest) => Promise<DesktopCaptureSnapshot>;
   stopCapture: () => Promise<DesktopCaptureSnapshot>;
   sendRealtimeEvent: (event: RealtimeEvent) => Promise<void>;

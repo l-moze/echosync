@@ -9,14 +9,20 @@ import type { TtsProviderId } from "../shared/agent-capabilities";
 import type { TranslationProviderId } from "../shared/translation-provider-catalog";
 
 const AUDIO_START_PROTOCOL = "pcm16.binary.v1";
+const AUDIO_FRAME_MAGIC = 0x46415345;
+const AUDIO_FRAME_HEADER_BYTES = 24;
 const FRAME_DURATION_MS = 80;
 const TARGET_SAMPLE_RATE = 16_000;
 const LENGTH_PREFIX_BYTES = 4;
+const PCM16_BYTES_PER_SAMPLE = 2;
 const WASAPI_CAPTURE_METRICS_INFO_INTERVAL_MS = 10_000;
 const WASAPI_CAPTURE_METRICS_WARN_INTERVAL_MS = 5_000;
 const WASAPI_WAKEUP_P95_WARN_MS = 40;
 const WASAPI_STDOUT_WRITE_P95_WARN_MS = 20;
 const WASAPI_CAPTURE_QUEUE_WARN_BYTES = 1_048_576;
+const WASAPI_ACTIVITY_START_RMS = 0.008;
+const WASAPI_ACTIVITY_START_PEAK = 0.03;
+const REALTIME_DONE_WAIT_TIMEOUT_MS = 5000;
 
 type WasapiSidecarProcess = ChildProcessByStdio<null, Readable, Readable>;
 
@@ -26,6 +32,7 @@ export type WasapiSidecarStartRequest = {
   agentRealtimeBaseUrl: string;
   asrLatencyMode: AsrLatencyMode;
   asrProvider?: AsrProviderId;
+  endToEndSourceBackfill?: boolean;
   mode?: WasapiCaptureMode;
   sessionId: string;
   sidecarPath: string;
@@ -45,7 +52,17 @@ export type WasapiSidecarSession = {
   readonly mode: WasapiCaptureMode;
   readonly pid: number;
   readonly sessionId: string;
-  stop: () => Promise<void>;
+  stop: () => Promise<WasapiSidecarRecording | null>;
+};
+
+export type WasapiSidecarRecording = {
+  activityRanges?: Array<{
+    startMs: number;
+    endMs: number;
+  }>;
+  data: ArrayBuffer;
+  mimeType: "audio/wav";
+  sessionId: string;
 };
 
 export type WasapiDiagnosticLogGateState = {
@@ -108,6 +125,8 @@ export async function startWasapiSidecarCapture(
   });
   const closed = onceClosed(sidecarProcess, logger);
   const stderrPump = pumpSidecarDiagnostics(sidecarProcess, logger, closed);
+  const pcmChunks: Buffer[] = [];
+  const activityRanges: NonNullable<WasapiSidecarRecording["activityRanges"]> = [];
   await waitForSidecarSpawn(sidecarProcess);
   let socket: WebSocket;
   try {
@@ -124,7 +143,16 @@ export async function startWasapiSidecarCapture(
     socket.close();
     throw new Error("WASAPI 原生采集进程启动后提前退出，请查看 wasapi-sidecar 日志。");
   }
-  const stdoutPump = pumpSidecarFramesToAgent(sidecarProcess, socket, closed);
+  const stdoutPump = pumpSidecarFramesToAgent(sidecarProcess, socket, closed, (packet) => {
+    const payload = extractPcm16PayloadFromBinaryFrame(packet);
+    if (payload.length > 0) {
+      pcmChunks.push(Buffer.from(payload));
+    }
+    const range = readPcm16FrameRange(packet);
+    if (range && isAudiblePcm16Payload(payload)) {
+      recordWasapiActivityRange(activityRanges, range.startMs, range.endMs);
+    }
+  });
   socket.on("error", (error) => {
     logger.warn("[wasapi-sidecar] Agent WebSocket 运行时错误", error);
   });
@@ -134,6 +162,7 @@ export async function startWasapiSidecarCapture(
     asrLatencyMode: audioStartMessage.asr_latency_mode,
     asrProvider: audioStartMessage.asr_provider ?? "server-default",
     deviceId: audioStartMessage.device_id,
+    endToEndSourceBackfill: audioStartMessage.end_to_end_source_backfill,
     sessionId: request.sessionId,
     translationProvider: audioStartMessage.translation_provider ?? "server-default",
     ttsProvider: audioStartMessage.tts_provider ?? "server-default"
@@ -150,14 +179,17 @@ export async function startWasapiSidecarCapture(
     pid: targetPid,
     sessionId: request.sessionId,
     async stop() {
-      if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "audio.end", reason: "user_stop" }));
-      }
       if (!sidecarProcess.killed) {
         sidecarProcess.kill();
       }
-      socket.close();
       await Promise.allSettled([stdoutPump, stderrPump]);
+      if (socket.readyState === WebSocket.OPEN) {
+        const realtimeDone = waitForRealtimeDone(socket, request.sessionId, logger);
+        socket.send(JSON.stringify({ type: "audio.end", reason: "user_stop" }));
+        await realtimeDone;
+      }
+      socket.close();
+      return createWasapiSidecarRecording(request.sessionId, pcmChunks, activityRanges);
     }
   };
 }
@@ -199,7 +231,8 @@ export function createAudioStartMessage(
     source_kind: "windows_system",
     device_id: `wasapi:${mode}:${targetPid}`,
     trace_id: request.sessionId,
-    asr_latency_mode: request.asrLatencyMode
+    asr_latency_mode: request.asrLatencyMode,
+    end_to_end_source_backfill: request.endToEndSourceBackfill ?? true
   };
   if (request.asrProvider) {
     message.asr_provider = request.asrProvider;
@@ -221,6 +254,69 @@ function openAgentSocket(url: string) {
   });
 }
 
+export function parseRealtimeControlMessage(data: WebSocket.RawData) {
+  const text = Array.isArray(data)
+    ? Buffer.concat(data).toString("utf8")
+    : Buffer.isBuffer(data)
+      ? data.toString("utf8")
+      : data instanceof ArrayBuffer
+        ? Buffer.from(data).toString("utf8")
+        : Buffer.from(data).toString("utf8");
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function waitForRealtimeDone(
+  socket: WebSocket,
+  sessionId: string,
+  logger: WasapiSidecarLogger,
+  timeoutMs = REALTIME_DONE_WAIT_TIMEOUT_MS
+) {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (done: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      socket.off("message", onMessage);
+      socket.off("close", onClose);
+      socket.off("error", onError);
+      resolve(done);
+    };
+    const onMessage = (data: WebSocket.RawData) => {
+      const message = parseRealtimeControlMessage(data);
+      if (!message || message.session_id !== sessionId) {
+        return;
+      }
+      if (message.type === "realtime.done") {
+        logger.info("[wasapi-sidecar] Agent realtime.done 已返回", { sessionId });
+        finish(true);
+      }
+      if (message.type === "realtime.error") {
+        logger.warn("[wasapi-sidecar] Agent realtime.error", message);
+        finish(true);
+      }
+    };
+    const onClose = () => finish(false);
+    const onError = () => finish(false);
+    const timer = setTimeout(() => {
+      logger.warn("[wasapi-sidecar] 等待 Agent realtime.done 超时", {
+        sessionId,
+        timeoutMs
+      });
+      finish(false);
+    }, timeoutMs);
+    socket.on("message", onMessage);
+    socket.once("close", onClose);
+    socket.once("error", onError);
+  });
+}
+
 function waitForSidecarSpawn(sidecar: WasapiSidecarProcess) {
   return new Promise<void>((resolve, reject) => {
     sidecar.once("spawn", () => resolve());
@@ -231,7 +327,8 @@ function waitForSidecarSpawn(sidecar: WasapiSidecarProcess) {
 async function pumpSidecarFramesToAgent(
   sidecar: WasapiSidecarProcess,
   socket: WebSocket,
-  closed: Promise<void>
+  closed: Promise<void>,
+  onPacket?: (packet: Buffer<ArrayBufferLike>) => void
 ) {
   let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   sidecar.stdout.on("data", (chunk: Buffer) => {
@@ -239,6 +336,7 @@ async function pumpSidecarFramesToAgent(
     const parsed = parseLengthPrefixedPackets(buffer);
     buffer = parsed.remaining;
     for (const packet of parsed.packets) {
+      onPacket?.(packet);
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(packet);
       }
@@ -268,6 +366,123 @@ export function parseLengthPrefixedPackets(buffer: Buffer<ArrayBufferLike>): {
     packets,
     remaining: buffer.subarray(cursor)
   };
+}
+
+export function extractPcm16PayloadFromBinaryFrame(packet: Buffer<ArrayBufferLike>) {
+  if (packet.length <= AUDIO_FRAME_HEADER_BYTES || !hasAudioFrameMagic(packet)) {
+    return Buffer.alloc(0);
+  }
+  return packet.subarray(AUDIO_FRAME_HEADER_BYTES);
+}
+
+export function readPcm16FrameRange(packet: Buffer<ArrayBufferLike>) {
+  if (packet.length < AUDIO_FRAME_HEADER_BYTES || !hasAudioFrameMagic(packet)) {
+    return null;
+  }
+  const startMs = packet.readUInt32LE(12);
+  const endMs = packet.readUInt32LE(16);
+  if (endMs <= startMs) {
+    return null;
+  }
+  return { startMs, endMs };
+}
+
+export function calculatePcm16AudioLevel(payload: Buffer<ArrayBufferLike>) {
+  if (payload.length < PCM16_BYTES_PER_SAMPLE) {
+    return { peak: 0, rms: 0 };
+  }
+
+  let peak = 0;
+  let sumSquares = 0;
+  let samples = 0;
+  for (let offset = 0; offset + 1 < payload.length; offset += PCM16_BYTES_PER_SAMPLE) {
+    const value = Math.abs(payload.readInt16LE(offset)) / 32768;
+    peak = Math.max(peak, value);
+    sumSquares += value * value;
+    samples += 1;
+  }
+
+  return {
+    peak,
+    rms: samples === 0 ? 0 : Math.sqrt(sumSquares / samples)
+  };
+}
+
+export function isAudiblePcm16Payload(payload: Buffer<ArrayBufferLike>) {
+  const level = calculatePcm16AudioLevel(payload);
+  return level.rms >= WASAPI_ACTIVITY_START_RMS || level.peak >= WASAPI_ACTIVITY_START_PEAK;
+}
+
+export function createPcm16WavBuffer(pcm: Buffer<ArrayBufferLike>, sampleRate = TARGET_SAMPLE_RATE, channels = 1) {
+  const headerBytes = 44;
+  const wav = Buffer.alloc(headerBytes + pcm.byteLength);
+  const byteRate = sampleRate * channels * PCM16_BYTES_PER_SAMPLE;
+  const blockAlign = channels * PCM16_BYTES_PER_SAMPLE;
+
+  wav.write("RIFF", 0, "ascii");
+  wav.writeUInt32LE(36 + pcm.byteLength, 4);
+  wav.write("WAVE", 8, "ascii");
+  wav.write("fmt ", 12, "ascii");
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(channels, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(byteRate, 28);
+  wav.writeUInt16LE(blockAlign, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36, "ascii");
+  wav.writeUInt32LE(pcm.byteLength, 40);
+  pcm.copy(wav, headerBytes);
+  return wav;
+}
+
+export function createWasapiSidecarRecording(
+  sessionId: string,
+  pcmChunks: Buffer<ArrayBufferLike>[],
+  activityRanges: NonNullable<WasapiSidecarRecording["activityRanges"]> = []
+): WasapiSidecarRecording | null {
+  const pcm = Buffer.concat(pcmChunks);
+  if (pcm.byteLength <= 0) {
+    return null;
+  }
+  const wav = createPcm16WavBuffer(pcm);
+  return {
+    activityRanges: activityRanges.length > 0 ? [...activityRanges] : undefined,
+    data: arrayBufferFromBuffer(wav),
+    mimeType: "audio/wav",
+    sessionId
+  };
+}
+
+function hasAudioFrameMagic(packet: Buffer<ArrayBufferLike>) {
+  return packet.length >= AUDIO_FRAME_HEADER_BYTES && packet.readUInt32LE(0) === AUDIO_FRAME_MAGIC;
+}
+
+function recordWasapiActivityRange(
+  activityRanges: NonNullable<WasapiSidecarRecording["activityRanges"]>,
+  startMs: number,
+  endMs: number
+) {
+  const normalizedStartMs = Math.max(0, Math.round(startMs));
+  const normalizedEndMs = Math.max(normalizedStartMs, Math.round(endMs));
+  if (normalizedEndMs <= normalizedStartMs) {
+    return;
+  }
+  const previous = activityRanges.at(-1);
+  if (previous && normalizedStartMs <= previous.endMs + 1) {
+    previous.endMs = Math.max(previous.endMs, normalizedEndMs);
+    return;
+  }
+  activityRanges.push({
+    endMs: normalizedEndMs,
+    startMs: normalizedStartMs
+  });
+}
+
+function arrayBufferFromBuffer(buffer: Buffer<ArrayBufferLike>) {
+  const data = new Uint8Array(buffer.byteLength);
+  data.set(buffer);
+  return data.buffer;
 }
 
 async function pumpSidecarDiagnostics(

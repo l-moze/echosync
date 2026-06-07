@@ -46,16 +46,16 @@ export function reduceOverlayWindowState(state: OverlayWindowState, event: Overl
   }
 
   if (event.type === "overlay.locked") {
-    return { ...state, locked: event.locked, ignoreMouse: event.locked && !state.pinned };
+    return { ...state, locked: event.locked, ignoreMouse: event.locked };
   }
 
   if (event.type === "overlay.pinned") {
-    return { ...state, pinned: event.pinned, ignoreMouse: event.pinned ? false : state.locked };
+    return { ...state, pinned: event.pinned };
   }
 
   if (event.type === "overlay.layer") {
     const interactiveLayer = event.layer === "controls" || event.layer === "settings" || event.layer === "pinned";
-    return { ...state, ignoreMouse: interactiveLayer ? false : state.locked && !state.pinned };
+    return { ...state, ignoreMouse: interactiveLayer ? false : state.locked };
   }
 
   if (event.type === "overlay.wake_controls") {

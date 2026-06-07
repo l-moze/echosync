@@ -45,6 +45,8 @@ describe("会议记录窗口契约", () => {
   it("停止会话后把复盘草稿保存到本地会议记录", () => {
     const stopSource = sourceAround("async function stopCapture", 0, 3400);
 
+    expect(rendererSource).toContain("async function getPendingNativeCaptureRecording");
+    expect(rendererSource).toContain("getPendingCaptureRecording(sessionId)");
     expect(rendererSource).toContain("async function buildSessionRecordDraftInput");
     expect(stopSource).toContain("const archive = buildSessionArchiveDraft");
     expect(stopSource).toContain("setSessionArchiveDraft(archive);");
@@ -55,9 +57,22 @@ describe("会议记录窗口契约", () => {
   it("停止会话保存记录不依赖采集状态快照成功返回", () => {
     const stopSource = sourceAround("async function stopCapture", 0, 5200);
 
+    expect(stopSource).toContain("const stoppedSessionId = currentClient?.sessionId ?? activeSessionIdRef.current;");
     expect(stopSource).toContain("if (nextSnapshot) {\n      setSnapshot(nextSnapshot);\n    }\n    const endedAt");
     expect(stopSource).toContain("const elapsedDurationMs");
     expect(stopSource).toContain("Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0)");
+  });
+
+  it("Windows 系统声停止后从主进程取回 WAV 录音用于即时复盘", () => {
+    const stopSource = sourceAround("async function stopCapture", 0, 5600);
+    const nativeRecordingSource = sourceAround("async function getPendingNativeCaptureRecording", 0, 1200);
+
+    expect(nativeRecordingSource).toContain("window.echosyncDesktop?.getPendingCaptureRecording(sessionId)");
+    expect(nativeRecordingSource).toContain("new Blob([recording.data], { type: mimeType })");
+    expect(nativeRecordingSource).toContain("activityRanges: recording.activityRanges");
+    expect(stopSource).toContain("const nativeRecording = recording ? null : await getPendingNativeCaptureRecording(stoppedSessionId);");
+    expect(stopSource).toContain("ensureSeekableSessionRecording(recording ?? nativeRecording, durationMs)");
+    expect(stopSource).toContain("id: stoppedSessionId ?? nextSnapshot?.sessionId");
   });
 
   it("本次复盘点击片段在音频元数据就绪后补偿跳转", () => {
@@ -74,6 +89,9 @@ describe("会议记录窗口契约", () => {
     expect(finishedSource).toContain("audio.readyState === 0");
     expect(finishedSource).toContain("audio.load();");
     expect(finishedSource).toContain("setPlaybackMs(line.startMs);");
+    expect(finishedSource).toContain("className=\"archiveAudioControls\"");
+    expect(finishedSource).toContain("className=\"archiveAudioTime\"");
+    expect(finishedSource).not.toContain("className=\"recordAudioControls\"");
     expect(archiveProgressSource).toContain("max={archiveReviewDurationMs}");
     expect(archiveProgressSource).toContain("value={Math.min(archiveReviewPlaybackMs, archiveReviewDurationMs)}");
     expect(finishedSource).not.toContain("<audio\n              controls");

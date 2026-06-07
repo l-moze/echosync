@@ -196,59 +196,97 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 checkpoint_available.set()
 
         async def translate_checkpoints() -> None:
+            active_task: asyncio.Task[None] | None = None
+            active_checkpoint: _QueuedCheckpoint | None = None
+
+            async def run_checkpoint(queued: _QueuedCheckpoint) -> None:
+                queue_wait_ms = max((time.perf_counter() - queued.queued_at) * 1000, 0.0)
+                item = _with_metric(
+                    _with_simul_policy_decision(
+                        queued.transcript,
+                        queued.simul_decision,
+                    ),
+                    "translation_queue_wait_ms",
+                    queue_wait_ms,
+                )
+                async for event in self._translate_checkpoint(
+                    item,
+                    queued.simul_decision,
+                ):
+                    await event_queue.put(event)
+
             try:
                 while True:
-                    await checkpoint_available.wait()
-                    while pending_order:
-                        checkpoint_key = pending_order.popleft()
-                        queued = pending_checkpoints.pop(checkpoint_key, None)
-                        if queued is None:
-                            continue
-                        queue_wait_ms = max((time.perf_counter() - queued.queued_at) * 1000, 0.0)
-                        item = _with_metric(
-                            _with_simul_policy_decision(
-                                queued.transcript,
-                                queued.simul_decision,
-                            ),
-                            "translation_queue_wait_ms",
-                            queue_wait_ms,
+                    if active_task is None:
+                        checkpoint_key, queued = self._pop_next_checkpoint(
+                            pending_checkpoints,
+                            pending_order,
                         )
-                        has_backlog_after_current = bool(pending_checkpoints)
-                        if item.status != SegmentStatus.COMMITTED and not producer_done:
-                            await asyncio.sleep(0)
-                            newer_draft = pending_checkpoints.get(checkpoint_key)
-                            if (
-                                newer_draft is not None
-                                and newer_draft.transcript.rev > item.rev
-                            ):
-                                self._log_dropped_checkpoint(
-                                    queued,
-                                    reason="newer_draft_backlog",
-                                    pending_checkpoints=len(pending_checkpoints),
-                                    committed_transcript=None,
-                                )
-                                continue
-                            if (
-                                has_backlog_after_current
-                                and self._has_pending_committed_checkpoint(pending_checkpoints)
-                            ):
-                                self._log_dropped_checkpoint(
-                                    queued,
-                                    reason="committed_backlog",
-                                    pending_checkpoints=len(pending_checkpoints),
-                                )
-                                continue
-                        async for event in self._translate_checkpoint(
-                            item,
-                            queued.simul_decision,
+                        if queued is not None:
+                            active_checkpoint = queued
+                            active_task = asyncio.create_task(run_checkpoint(queued))
+                        elif producer_done:
+                            break
+                        else:
+                            await checkpoint_available.wait()
+                            checkpoint_available.clear()
+                            continue
+
+                    assert active_task is not None
+                    wait_for_checkpoint = asyncio.create_task(checkpoint_available.wait())
+                    done_tasks, _pending_tasks = await asyncio.wait(
+                        {active_task, wait_for_checkpoint},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+                    if wait_for_checkpoint in done_tasks:
+                        checkpoint_available.clear()
+                        if (
+                            active_checkpoint is not None
+                            and active_task not in done_tasks
+                            and active_checkpoint.transcript.status != SegmentStatus.COMMITTED
                         ):
-                            await event_queue.put(event)
-                    if producer_done:
+                            committed = self._pending_committed_checkpoint_for_segment(
+                                pending_checkpoints,
+                                active_checkpoint.transcript.segment_id,
+                            )
+                            if committed is not None:
+                                active_task.cancel()
+                                with suppress(asyncio.CancelledError):
+                                    await active_task
+                                self._log_dropped_checkpoint(
+                                    active_checkpoint,
+                                    reason="preempted_by_committed",
+                                    pending_checkpoints=len(pending_checkpoints),
+                                    committed_transcript=committed.transcript,
+                                )
+                                active_task = None
+                                active_checkpoint = None
+                                wait_for_checkpoint = None
+                                continue
+
+                    if active_task in done_tasks:
+                        try:
+                            exc = active_task.exception()
+                        except asyncio.CancelledError as cancel_exc:
+                            exc = cancel_exc
+                        active_task = None
+                        active_checkpoint = None
+                        if exc is not None:
+                            raise exc
+
+                    if wait_for_checkpoint not in done_tasks:
+                        wait_for_checkpoint.cancel()
+                        await asyncio.gather(wait_for_checkpoint, return_exceptions=True)
+
+                    if producer_done and active_task is None and not pending_order:
                         break
-                    checkpoint_available.clear()
             except BaseException as exc:
                 await event_queue.put(exc)
             finally:
+                if active_task is not None and not active_task.done():
+                    active_task.cancel()
+                    await asyncio.gather(active_task, return_exceptions=True)
                 await event_queue.put(done)
 
         producer_task = asyncio.create_task(produce_transcripts())
@@ -419,7 +457,7 @@ class CascadedInterpretationEngine(InterpretationEngine):
                 self.correction_engine.revise(translation, context),
                 timeout=self.correction_timeout_ms / 1000,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.info(
                 "translation_revision_timeout session_id=%s segment_id=%s "
                 "rev=%d timeout_ms=%d",
@@ -621,6 +659,37 @@ class CascadedInterpretationEngine(InterpretationEngine):
         pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint],
     ) -> bool:
         return any(key[1] == SegmentStatus.COMMITTED for key in pending_checkpoints)
+
+    @staticmethod
+    def _pending_committed_checkpoint_for_segment(
+        pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint],
+        segment_id: str,
+    ) -> _QueuedCheckpoint | None:
+        return pending_checkpoints.get((segment_id, SegmentStatus.COMMITTED))
+
+    @staticmethod
+    def _pop_next_checkpoint(
+        pending_checkpoints: dict[tuple[str, SegmentStatus], _QueuedCheckpoint],
+        pending_order: deque[tuple[str, SegmentStatus]],
+    ) -> tuple[tuple[str, SegmentStatus] | None, _QueuedCheckpoint | None]:
+        if not pending_order:
+            return None, None
+
+        committed_index = next(
+            (
+                index
+                for index, checkpoint_key in enumerate(pending_order)
+                if checkpoint_key[1] == SegmentStatus.COMMITTED
+                and checkpoint_key in pending_checkpoints
+            ),
+            None,
+        )
+        if committed_index is None:
+            checkpoint_key = pending_order.popleft()
+        else:
+            checkpoint_key = pending_order[committed_index]
+            del pending_order[committed_index]
+        return checkpoint_key, pending_checkpoints.pop(checkpoint_key, None)
 
     @staticmethod
     def _log_dropped_checkpoint(
