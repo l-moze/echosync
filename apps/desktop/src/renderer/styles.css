@@ -1723,54 +1723,68 @@ button:focus-visible {
 }
 
 .transcriptReviewGrid {
-  --review-column-template: minmax(0, 1fr) minmax(0, 1fr);
+  --review-column-template: 92px minmax(0, 1fr) minmax(0, 1fr);
   display: grid;
-  grid-template-columns: var(--review-column-template);
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   min-height: 360px;
-  overflow: hidden;
+  max-height: min(56vh, 560px);
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #ffffff;
+  scrollbar-gutter: stable;
 }
 
 .transcriptReviewGrid.stacked {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.reviewColumn {
-  display: block;
-  min-width: 0;
-  max-height: min(52vh, 520px);
-  overflow: auto;
-  scrollbar-gutter: stable;
-  padding: 0;
-}
-
-.reviewColumn + .reviewColumn {
-  border-left: 1px solid var(--line);
-  background: #fcfdff;
-}
-
-.transcriptReviewGrid.stacked .reviewColumn {
-  max-height: min(34vh, 360px);
-}
-
-.transcriptReviewGrid.stacked .reviewColumn + .reviewColumn {
-  border-top: 1px solid var(--line);
-  border-left: 0;
-}
-
-.reviewColumn h2 {
+.reviewHeader {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: var(--review-column-template);
+}
+
+.reviewHeader span {
   margin: 0;
   padding: 13px 18px 11px;
   border-bottom: 1px solid rgba(226, 231, 238, 0.92);
-  background: inherit;
+  background: #ffffff;
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.reviewHeader span + span {
+  border-left: 1px solid rgba(226, 231, 238, 0.92);
+}
+
+.reviewPair {
+  display: grid;
+  grid-template-columns: var(--review-column-template);
+  min-width: 0;
+}
+
+.reviewPair:focus {
+  outline: 0;
+}
+
+.reviewPair:focus-visible .reviewTimestamp,
+.reviewPair:focus-visible .reviewSegment {
+  outline: 2px solid rgba(40, 120, 255, 0.2);
+  outline-offset: -2px;
+}
+
+.reviewPair.active .reviewTimestamp,
+.reviewPair.active .reviewSegment,
+.reviewPair:hover .reviewTimestamp,
+.reviewPair:hover .reviewSegment {
+  background: #f2f7ff;
+  color: #1f355a;
 }
 
 .reviewSegment {
@@ -1779,7 +1793,7 @@ button:focus-visible {
   gap: 5px;
   width: 100%;
   height: auto;
-  min-height: 44px;
+  min-height: 72px;
   padding: 12px 18px;
   border: 0;
   border-bottom: 1px solid rgba(235, 239, 245, 0.9);
@@ -1795,18 +1809,19 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.reviewSegment:focus-visible {
-  outline: 2px solid rgba(40, 120, 255, 0.2);
-  outline-offset: -2px;
-}
-
 .reviewTimestamp {
   display: block;
-  margin-bottom: 3px;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 72px;
+  padding: 12px 12px 12px 18px;
+  border-bottom: 1px solid rgba(235, 239, 245, 0.9);
+  background: transparent;
   color: var(--quiet);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 720;
-  line-height: 1.2;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .reviewText {
@@ -1817,10 +1832,36 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.reviewSegment:hover,
-.reviewSegment.active {
-  background: #f2f7ff;
-  color: #1f355a;
+.reviewSegment.reviewSource {
+  grid-column: 2;
+}
+
+.reviewSegment.reviewTarget {
+  grid-column: 3;
+  border-left: 1px solid rgba(226, 231, 238, 0.72);
+  background: #fcfdff;
+}
+
+.transcriptReviewGrid.stacked .reviewHeader {
+  display: none;
+}
+
+.transcriptReviewGrid.stacked .reviewPair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  border-bottom: 1px solid rgba(235, 239, 245, 0.9);
+}
+
+.transcriptReviewGrid.stacked .reviewTimestamp,
+.transcriptReviewGrid.stacked .reviewSegment {
+  min-height: 0;
+  border-bottom: 0;
+}
+
+.transcriptReviewGrid.stacked .reviewSegment.reviewSource,
+.transcriptReviewGrid.stacked .reviewSegment.reviewTarget {
+  grid-column: 1;
+  border-left: 0;
 }
 
 .preExportDetails {
@@ -2617,22 +2658,59 @@ button:focus-visible {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  gap: 5px;
-  align-items: start;
+  gap: 14px;
+  align-items: end;
+  align-content: end;
   justify-items: start;
   text-align: left;
   overflow: hidden;
 }
 
-.captionText.mode-sentencePair,
-.captionText.mode-zonedPair {
+.captionTextBlock {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  align-content: start;
+  align-items: start;
+  overflow: hidden;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease;
+}
+
+.captionText.mode-sentencePair .captionTextBlock {
   grid-template-rows:
     minmax(calc(var(--source-size, 18px) * 1.28), auto)
     minmax(calc(var(--target-size, 30px) * 1.2), auto);
 }
 
 .captionText.mode-zonedPair {
-  gap: 10px;
+  height: 100%;
+  gap: 0;
+  align-content: stretch;
+  align-items: stretch;
+}
+
+.captionText.mode-zonedPair .captionTextBlock {
+  height: 100%;
+  gap: 12px;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  align-content: stretch;
+  align-items: stretch;
+}
+
+.captionText.mode-zonedPair .overlaySource,
+.captionText.mode-zonedPair h1 {
+  align-self: start;
+  -webkit-line-clamp: 3;
+}
+
+.captionText.mode-zonedPair .overlaySource {
+  -webkit-line-clamp: 3;
+}
+
+.captionText.mode-zonedPair h1 {
+  -webkit-line-clamp: 3;
 }
 
 .floatingCaption > .captionText {
@@ -3393,6 +3471,10 @@ button:focus-visible {
 }
 
 .historyLine .captionText {
+  gap: 4px;
+}
+
+.historyLine .captionTextBlock {
   gap: 4px;
 }
 

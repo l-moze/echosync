@@ -477,6 +477,8 @@ python -m pytest tests/test_realtime_caption_websocket_contracts.py::test_realti
 
 2026-06-07 体验修正：前端主字幕选择从“最新 active 优先”调整为“readable dwell 未结束的已提交片段优先”。这样新源文片段到达时，上一句不会在用户刚看到译文时立刻被挤到历史区。readable dwell 公式同步放宽为 `base=2200ms`、短句最少 `3600ms`、长双语最多 `9000ms`，并按源文/译文字素数增加驻留时间。对应回归测试在 `apps/desktop/tests/caption-display-buffer.test.ts`。
 
+2026-06-07 二次体验修正：此前 `zonedPair` 只是名字和 gap，实际仍是紧凑逐句布局；现在 `CaptionText` 引入 `CaptionTextBlock` 视图层，`zonedPair` 使用真实上下分区，源文区和译文区各占稳定区域。`sentencePair` 则会在单个 segment 过长时做显示层 soft block：优先按英文/中文句末标点拆，其次按英文常见新句起点（如 `I would` / `That is`）或字符阈值在词边界拆。这个拆分只影响视觉呈现，不改变 `segment_id`、`rev` 或 DeepSeek patch 协议，因此后续修订仍按原 segment 的 `base_rev + char index` 生效。
+
 2026-06-06 真实日志回放结论：本机 `main.old.log + main.log` 共解析到 `translation.partial=1234`、`transcript.partial=1354`、`segment.commit=57`、`realtime.error=2`。其中译文长度缩短回退 `129` 次，新的策略全部覆盖：`transcript.partial` 不清空已有译文，`translation.partial` 不缩短已可见译文，真正缩短/替换由 `translation.patch` 或 `segment.commit` 负责。源文侧仍允许小范围 ASR 修订，严重前缀回退由 display buffer 保持可见稳定。
 
 停止播放或主动停止时出现的 `RealtimeTranscriptionErrorDetail(... code=3804)` 不应进入字幕文本。根因分两类：

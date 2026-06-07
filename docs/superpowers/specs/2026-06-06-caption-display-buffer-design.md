@@ -161,8 +161,8 @@ type VisualTextLane = {
 
 Overlay 主入口只保留两种双语对照模式，不再把 `interim` / `stable` / `revised` / `locked` 这类工程状态作为可见标签呈现。`locked` 仍是数据层和导出层概念，但字幕弹窗里不能出现“已锁定”“稳定”“已修订”等状态徽标；修订只用轻微视觉变化和短暂衰减表达。
 
-- `sentencePair` / 逐句对照：默认模式。每个 segment 是一个双语块，英文源文在上，中文译文在下；当前块在底部稳定生长，上一块在用户可读驻留后再自然上滚。
-- `zonedPair` / 分区对照：长段或演示模式。上区稳定显示当前源文 lane，下区稳定显示当前译文 lane，历史区只保留最近 1-2 个压缩双语块。
+- `sentencePair` / 逐句对照：默认模式。每个 segment 是一个双语块，英文源文在上，中文译文在下；当前块在底部稳定生长，上一块在用户可读驻留后再自然上滚。若同一 segment 过长，显示层可以把它拆成多个 soft caption blocks，但这些 block 仍共享同一个 `segment_id` 和修订生命周期。
+- `zonedPair` / 分区对照：长段或演示模式。上区稳定显示当前源文 lane，下区稳定显示当前译文 lane，二者各占稳定区域，不再只是增加行间距；历史区只保留最近 1-2 个压缩双语块。
 - Overlay 不再把“只看原文”“只看译文”放在主显示模式里；这类调试/辅助视图可以以后放到开发设置或复盘页，不能打断双语同传主路径。
 - 源文永远在上，译文永远在下。`translationFirst` 不再作为 overlay 主模式行为，避免翻译流式更新时把英文锚点挤走。
 - 译文尚未返回时不显示“正在翻译...”占位；保留译文行槽位，显示为空，让中文 lane 在真实译文到达后从左到右生成。
@@ -180,7 +180,7 @@ loading -> interim -> interim -> stable -> revised -> locked
 - 同一句话没有 locked 前，永远更新同一个 `segment_id`。
 - `transcript.partial` 和 `translation.partial` 都是“当前 segment 的最新假设”，不是新增字幕行。
 - `segment.commit` 只表示数据层终稿到达；显示层先进入可读驻留，不立刻进入 history。
-- 视觉换行不等于 final；软换行只解决可读性，不改变 segment 生命周期。
+- 视觉换行或 soft caption block 不等于 final；它只解决可读性，不改变 segment 生命周期，也不生成新的 `segment_id`。
 - UI 使用 `active` / `readable` / `past` 这类呈现阶段，不暴露 `locked` 字样。
 
 ### 稳定区与可变区
@@ -221,7 +221,7 @@ function longestCommonPrefix(a: string, b: string): number {
 - 短暂停顿 `< 800ms` 不切段。
 - `800ms-1500ms` 停顿只有在存在标点、语义完整或长度压力时才切段。
 - `> 1500ms` 静音可强制切段。
-- 当前字幕超过 2-3 行时允许软换行或 soft checkpoint，但不等于 final。
+- 当前字幕超过 2-3 行时允许软换行、按句末标点拆 soft block，或按字符阈值在词边界拆 soft block；这些都不等于 final。
 
 ### 翻译发射层
 

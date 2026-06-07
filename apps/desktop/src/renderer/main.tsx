@@ -36,7 +36,7 @@ import {
   selectDisplayCaptionLines,
   type CaptionDisplayBuffer
 } from "../shared/caption-display-buffer";
-import { selectCaptionTextParts } from "../shared/caption-text-view";
+import { selectCaptionTextBlocks } from "../shared/caption-text-view";
 import {
   applyRealtimeEvent,
   isRealtimeEventForActiveSession,
@@ -1747,38 +1747,29 @@ function TranscriptReviewGrid({
       ref={gridRef}
       aria-label="双语会话记录"
     >
-      <div className="reviewColumn">
-        <h2>原文</h2>
-        {lines.map((line) => (
-          <article
-            className={line.id === activeSegmentId ? "reviewSegment active" : "reviewSegment"}
-            key={`source-${line.id}`}
-            onClick={() => onLineClick(line)}
-            onKeyDown={(event) => handleReviewSegmentKeyDown(line, event)}
-            role="button"
-            tabIndex={0}
-          >
-            <span className="reviewTimestamp">{formatTime(line.startMs)}-{formatTime(line.endMs)}</span>
-            <span className="reviewText">{line.sourceText}</span>
-          </article>
-        ))}
+      <div className="reviewHeader" aria-hidden="true">
+        <span>时间</span>
+        <span>原文</span>
+        <span>译文</span>
       </div>
-      <div className="reviewColumn">
-        <h2>译文</h2>
-        {lines.map((line) => (
-          <article
-            className={line.id === activeSegmentId ? "reviewSegment active" : "reviewSegment"}
-            key={`target-${line.id}`}
-            onClick={() => onLineClick(line)}
-            onKeyDown={(event) => handleReviewSegmentKeyDown(line, event)}
-            role="button"
-            tabIndex={0}
-          >
-            <span className="reviewTimestamp">{formatTime(line.startMs)}-{formatTime(line.endMs)}</span>
-            <span className="reviewText">{line.targetText}</span>
-          </article>
-        ))}
-      </div>
+      {lines.map((line) => (
+        <article
+          className={line.id === activeSegmentId ? "reviewPair active" : "reviewPair"}
+          key={line.id}
+          onClick={() => onLineClick(line)}
+          onKeyDown={(event) => handleReviewSegmentKeyDown(line, event)}
+          role="button"
+          tabIndex={0}
+        >
+          <span className="reviewTimestamp">{formatPreciseTime(line.startMs)}-{formatPreciseTime(line.endMs)}</span>
+          <span className="reviewSegment reviewSource">
+            <span className="reviewText reviewSource">{line.sourceText || "原文为空"}</span>
+          </span>
+          <span className="reviewSegment reviewTarget">
+            <span className="reviewText reviewTarget">{line.targetText || "译文待补全"}</span>
+          </span>
+        </article>
+      ))}
     </section>
   );
 }
@@ -1789,7 +1780,7 @@ function selectTranscriptReviewColumnTemplate(lines: CaptionLine[]) {
   const totalWeight = Math.max(sourceWeight + targetWeight, 1);
   const sourceRatio = Math.min(0.62, Math.max(0.38, sourceWeight / totalWeight));
   const targetRatio = 1 - sourceRatio;
-  return `minmax(280px, ${sourceRatio.toFixed(2)}fr) minmax(260px, ${targetRatio.toFixed(2)}fr)`;
+  return `92px minmax(280px, ${sourceRatio.toFixed(2)}fr) minmax(260px, ${targetRatio.toFixed(2)}fr)`;
 }
 
 function selectReviewTextWeight(texts: string[]) {
@@ -3066,35 +3057,29 @@ function resizeBoundsFromPointer(
 }
 
 function CaptionText({ line, subtitleStyle }: { line?: CaptionLine; subtitleStyle: SubtitleStyleState }) {
-  const parts = selectCaptionTextParts(line, subtitleStyle);
+  const blocks = selectCaptionTextBlocks(line, subtitleStyle);
   const displayMode = normalizeSubtitleDisplayMode(subtitleStyle.displayMode);
 
   return (
     <div className={`captionText mode-${displayMode}`}>
-      {parts.map((part) => {
-        if (part.kind === "source") {
-          return (
-            <p
-              className={`overlaySource ${part.state}`}
-              key="source"
-              style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: selectSubtitleFontWeight("source", subtitleStyle.sourceBold) }}
-            >
-              {part.text}
-            </p>
-          );
-        }
-
-        return (
+      {blocks.map((block) => (
+        <article className="captionTextBlock" key={block.id}>
+          <p
+            aria-hidden={block.isSourcePlaceholder ? true : undefined}
+            className={`overlaySource ${block.state}${block.isSourcePlaceholder ? " placeholderText" : ""}`}
+            style={{ fontFamily: fontFamilyValue(subtitleStyle.sourceFont), fontWeight: selectSubtitleFontWeight("source", subtitleStyle.sourceBold) }}
+          >
+            {block.sourceText}
+          </p>
           <h1
-            aria-hidden={part.isPlaceholder ? true : undefined}
-            className={`${part.state}${part.isPlaceholder ? " placeholderText" : ""}`}
-            key="target"
+            aria-hidden={block.isTargetPlaceholder ? true : undefined}
+            className={`${block.state}${block.isTargetPlaceholder ? " placeholderText" : ""}`}
             style={{ fontFamily: fontFamilyValue(subtitleStyle.targetFont), fontWeight: selectSubtitleFontWeight("target", subtitleStyle.targetBold) }}
           >
-            {part.text}
+            {block.targetText}
           </h1>
-        );
-      })}
+        </article>
+      ))}
     </div>
   );
 }
@@ -3590,6 +3575,14 @@ function formatTime(ms: number) {
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return `${minutes}:${rest.toString().padStart(2, "0")}`;
+}
+
+function formatPreciseTime(ms: number) {
+  const safeMs = Math.max(0, Math.round(ms));
+  const minutes = Math.floor(safeMs / 60_000);
+  const seconds = Math.floor((safeMs % 60_000) / 1000);
+  const centiseconds = Math.floor((safeMs % 1000) / 10);
+  return `${minutes}:${seconds.toString().padStart(2, "0")}.${centiseconds.toString().padStart(2, "0")}`;
 }
 
 function formatClock(ms: number) {

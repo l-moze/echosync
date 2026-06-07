@@ -121,10 +121,12 @@ describe("renderer visual style contract", () => {
 
   it("keeps finished transcript review segments in readable block flow", () => {
     const gridRule = cssRule(".transcriptReviewGrid");
-    const stackedGridRule = cssRule(".transcriptReviewGrid.stacked");
-    const columnRule = cssRule(".reviewColumn");
-    const stackedColumnRule = cssRule(".transcriptReviewGrid.stacked .reviewColumn");
-    const stackedDividerRule = cssRule(".transcriptReviewGrid.stacked .reviewColumn + .reviewColumn");
+    const headerRule = cssRule(".reviewHeader");
+    const headerCellRule = cssRule(".reviewHeader span");
+    const pairRule = cssRule(".reviewPair");
+    const stackedPairRule = cssRule(".transcriptReviewGrid.stacked .reviewPair");
+    const sourceRule = cssRule(".reviewSegment.reviewSource");
+    const targetRule = cssRule(".reviewSegment.reviewTarget");
     const segmentRule = cssRule(".reviewSegment");
     const textRule = cssRule(".reviewText");
     const timestampRule = cssRule(".reviewTimestamp");
@@ -143,24 +145,29 @@ describe("renderer visual style contract", () => {
     expect(rendererSource).toContain("role=\"button\"");
     expect(rendererSource).toContain("tabIndex={0}");
     expect(rendererSource).toContain("handleReviewSegmentKeyDown");
-    expect(rendererSource).toContain("<span className=\"reviewTimestamp\">{formatTime(line.startMs)}-{formatTime(line.endMs)}</span>");
-    expect(rendererSource).toContain("<span className=\"reviewText\">{line.sourceText}</span>");
-    expect(rendererSource).toContain("<span className=\"reviewText\">{line.targetText}</span>");
+    expect(rendererSource).toContain("key={line.id}");
+    expect(rendererSource).toContain("<span className=\"reviewTimestamp\">{formatPreciseTime(line.startMs)}-{formatPreciseTime(line.endMs)}</span>");
+    expect(rendererSource).toContain("<span className=\"reviewText reviewSource\">{line.sourceText || \"原文为空\"}</span>");
+    expect(rendererSource).toContain("<span className=\"reviewText reviewTarget\">{line.targetText || \"译文待补全\"}</span>");
+    expect(rendererSource).not.toContain("key={`source-${line.id}`}");
+    expect(rendererSource).not.toContain("key={`target-${line.id}`}");
     expect(gridRule).toContain("--review-column-template");
-    expect(gridRule).toContain("grid-template-columns: var(--review-column-template)");
-    expect(stackedGridRule).toContain("grid-template-columns: minmax(0, 1fr)");
-    expect(columnRule).toContain("display: block");
-    expect(columnRule).toContain("scrollbar-gutter: stable");
-    expect(stackedColumnRule).toContain("max-height: min(34vh, 360px)");
-    expect(stackedDividerRule).toContain("border-top: 1px solid var(--line)");
-    expect(stackedDividerRule).toContain("border-left: 0");
+    expect(gridRule).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(gridRule).toContain("overflow-y: auto");
+    expect(headerRule).toContain("position: sticky");
+    expect(headerRule).toContain("grid-template-columns: var(--review-column-template)");
+    expect(pairRule).toContain("display: grid");
+    expect(pairRule).toContain("grid-template-columns: var(--review-column-template)");
+    expect(stackedPairRule).toContain("display: grid");
+    expect(sourceRule).toContain("grid-column: 2");
+    expect(targetRule).toContain("grid-column: 3");
     expect(segmentRule).toContain("display: grid");
     expect(segmentRule).toContain("height: auto");
     expect(segmentRule).toContain("align-content: start");
     expect(segmentRule).toContain("gap: 5px");
     expect(segmentRule).toContain("cursor: pointer");
     expect(segmentRule).toContain("font: inherit");
-    expect(timestampRule).toContain("line-height: 1.2");
+    expect(timestampRule).toContain("line-height: 1.35");
     expect(textRule).toContain("display: block");
     expect(textRule).toContain("margin: 0");
     expect(textRule).toContain("line-height: 1.55");
@@ -214,5 +221,22 @@ describe("renderer visual style contract", () => {
     expect(historyTextRule).toContain("-webkit-box-orient: vertical");
     expect(cssRule(".historyLine .overlaySource")).toContain("-webkit-line-clamp: 1");
     expect(cssRule(".historyLine h1")).toContain("-webkit-line-clamp: 1");
+  });
+
+  it("renders caption text as paired blocks and gives zoned mode real source/target regions", () => {
+    const captionTextSource = rendererSource.slice(
+      rendererSource.indexOf("function CaptionText"),
+      rendererSource.indexOf("function OverlayCaptionHistory")
+    );
+
+    expect(captionTextSource).toContain("selectCaptionTextBlocks");
+    expect(captionTextSource).toContain("captionTextBlock");
+    expect(cssRule(".captionText")).toContain("align-content: end");
+    expect(cssRule(".captionTextBlock")).toContain("display: grid");
+    expect(cssRule(".captionTextBlock")).toContain("transition: transform 220ms");
+    expect(cssRule(".captionText.mode-zonedPair")).toContain("height: 100%");
+    expect(cssRule(".captionText.mode-zonedPair .captionTextBlock")).toContain("grid-template-rows: minmax(0, 1fr) minmax(0, 1fr)");
+    expect(cssRule(".captionText.mode-zonedPair .overlaySource")).toContain("-webkit-line-clamp: 3");
+    expect(cssRule(".captionText.mode-zonedPair h1")).toContain("-webkit-line-clamp: 3");
   });
 });
