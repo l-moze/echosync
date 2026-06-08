@@ -65,7 +65,8 @@ import {
   selectSessionHealthMetrics,
   type SessionSummary,
   type StartupUiState,
-  type SessionUiEvent
+  type SessionUiEvent,
+  type SessionUiState
 } from "../shared/session-ui-state";
 import type { SessionPreferencesState } from "../shared/session-preferences";
 import { shouldSurfaceRealtimeError } from "../shared/realtime-error-policy";
@@ -1310,7 +1311,7 @@ const leaveDialogCopy: Record<Exclude<NavigationConfirmReason, null>, { title: s
   }
 };
 
-function pageTitleForSession(sessionUi: ReturnType<typeof createInitialSessionUiState>) {
+function pageTitleForSession(sessionUi: SessionUiState) {
   if (sessionUi.startup.phase !== "idle") {
     return "启动同传";
   }
@@ -1397,7 +1398,7 @@ function ControlCenter({
   sessionArchive: SessionArchiveDraft | null;
   sessionArchiveSaveStatus: SessionArchiveSaveStatus;
   sessionRecords: SessionRecordListItem[];
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
   sourceId: DesktopAudioSourceId;
   toggleOverlayLocked: () => void;
   translationProvider: TranslationProviderSelection;
@@ -1501,7 +1502,7 @@ function IdleDashboard({
   onSessionRecordsChanged: () => Promise<void>;
   onStart: () => void;
   sessionRecords: SessionRecordListItem[];
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
   sourceId: DesktopAudioSourceId;
   translationProvider: TranslationProviderSelection;
   ttsProvider: TtsProviderSelection;
@@ -1986,7 +1987,7 @@ function ActiveDashboard({
   onStop: () => void;
   overlayLocked: boolean;
   dispatchSessionUi: (event: SessionUiEvent) => void;
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
   sourceId: DesktopAudioSourceId;
   toggleOverlayLocked: () => void;
 }) {
@@ -2034,7 +2035,7 @@ function FinishedDashboard({
   sessionArchive: SessionArchiveDraft | null;
   sessionArchiveSaveStatus: SessionArchiveSaveStatus;
   sessionRecords: SessionRecordListItem[];
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
 }) {
   const [editableTranscript, setEditableTranscript] = useState(() => transcriptLinesToEditableText(lines));
   const [exportStatus, setExportStatus] = useState("等待导出");
@@ -2363,7 +2364,7 @@ function selectReviewTextWeight(texts: string[]) {
   }, 0);
 }
 
-function PreflightAudioVisualizer({ sessionUi }: { sessionUi: ReturnType<typeof createInitialSessionUiState> }) {
+function PreflightAudioVisualizer({ sessionUi }: { sessionUi: SessionUiState }) {
   const width = `${Math.round(sessionUi.preflight.level.rms * 100)}%`;
   return (
     <div className="preflightMeter">
@@ -2382,7 +2383,7 @@ function TranscriptMonitor({
   activeLine?: CaptionLine;
   dispatchSessionUi: (event: SessionUiEvent) => void;
   lines: CaptionLine[];
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
 }) {
   const monitorRef = useRef<HTMLDivElement | null>(null);
   const contentRevisionKey = lines.map((line) => `${line.id}:${line.rev}`).join("|");
@@ -2456,7 +2457,7 @@ function HealthPanel({
   sourceId
 }: {
   lines: CaptionLine[];
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
   sourceId: DesktopAudioSourceId;
 }) {
   const metrics = selectSessionHealthMetrics({ lines, sessionUi, sourceLabel: sourceLabel(sourceId) });
@@ -2479,7 +2480,7 @@ function LiveSessionStatusPanel({
   sourceId
 }: {
   lines: CaptionLine[];
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
   sourceId: DesktopAudioSourceId;
 }) {
   const metrics = selectSessionHealthMetrics({ lines, sessionUi, sourceLabel: sourceLabel(sourceId) });
@@ -2499,7 +2500,7 @@ function TermQuickAdd({
   sessionUi
 }: {
   dispatchSessionUi: (event: SessionUiEvent) => void;
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
 }) {
   const [source, setSource] = useState("");
   const [target, setTarget] = useState("");
@@ -2558,7 +2559,7 @@ function SessionSummaryPanel({
   sessionUi
 }: {
   lines: CaptionLine[];
-  sessionUi: ReturnType<typeof createInitialSessionUiState>;
+  sessionUi: SessionUiState;
 }) {
   return (
     <div className="summaryMetrics">
@@ -4927,8 +4928,8 @@ function seekAudioElement(audio: HTMLAudioElement, nextMs: number) {
   }
 }
 
-function audioActivityLabel(activity: ReturnType<typeof createInitialSessionUiState>["audioActivity"]) {
-  const labels: Record<ReturnType<typeof createInitialSessionUiState>["audioActivity"], string> = {
+function audioActivityLabel(activity: SessionUiState["audioActivity"]) {
+  const labels: Record<SessionUiState["audioActivity"], string> = {
     active: "有输入",
     clipping: "过载",
     device_missing: "设备缺失",
@@ -4959,8 +4960,8 @@ function formatPercent(value: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
-function termStatusLabel(status: ReturnType<typeof createInitialSessionUiState>["terms"][number]["status"]) {
-  const labels: Record<ReturnType<typeof createInitialSessionUiState>["terms"][number]["status"], string> = {
+function termStatusLabel(status: SessionUiState["terms"][number]["status"]) {
+  const labels: Record<SessionUiState["terms"][number]["status"], string> = {
     active: "已生效",
     failed: "失败",
     syncing: "同步中"
