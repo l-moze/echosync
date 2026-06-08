@@ -136,6 +136,8 @@ import { LauncherRow } from "./components/home/LauncherRow";
 import { PreferenceMiniCard } from "./components/home/PreferenceMiniCard";
 import { RecordSummaryList } from "./components/records/RecordSummaryList";
 import { StyleSection } from "./components/settings/StyleSection";
+import { PreflightAudioVisualizer } from "./components/session/PreflightAudioVisualizer";
+import { SessionSummaryPanel } from "./components/session/SessionSummaryPanel";
 
 import "./styles.css";
 
@@ -2364,15 +2366,6 @@ function selectReviewTextWeight(texts: string[]) {
   }, 0);
 }
 
-function PreflightAudioVisualizer({ sessionUi }: { sessionUi: SessionUiState }) {
-  const width = `${Math.round(sessionUi.preflight.level.rms * 100)}%`;
-  return (
-    <div className="preflightMeter">
-      <div className="meterTrack"><span className="meterFill" style={{ width }} /></div>
-      <p>{sessionUi.preflight.warning ?? "音频输入正常，可以开始。"}</p>
-    </div>
-  );
-}
 
 function TranscriptMonitor({
   activeLine,
@@ -2554,22 +2547,6 @@ function TermQuickAdd({
   );
 }
 
-function SessionSummaryPanel({
-  lines,
-  sessionUi
-}: {
-  lines: CaptionLine[];
-  sessionUi: SessionUiState;
-}) {
-  return (
-    <div className="summaryMetrics">
-      <HealthMetric label="片段数" value={`${sessionUi.summary?.segmentCount ?? lines.length}`} />
-      <HealthMetric label="修订次数" value={`${sessionUi.summary?.patchCount ?? 0}`} />
-      <HealthMetric label="总字数" value={`${sessionUi.summary?.wordCount ?? 0}`} />
-      <HealthMetric label="平均延迟" value={`${sessionUi.summary?.averageLatencyMs ?? 0} ms`} />
-    </div>
-  );
-}
 
 function RecentSessionsPanel({ records }: { records: SessionRecordListItem[] }) {
   const visibleRecords = records.slice(0, 2);
