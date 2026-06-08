@@ -133,6 +133,7 @@ import { PreferenceRow } from "./components/common/PreferenceRow";
 import { HealthMetric } from "./components/common/HealthMetric";
 import { LauncherRow } from "./components/home/LauncherRow";
 import { PreferenceMiniCard } from "./components/home/PreferenceMiniCard";
+import { RecordSummaryList } from "./components/records/RecordSummaryList";
 
 import "./styles.css";
 
@@ -3197,22 +3198,6 @@ function SessionRecordsWindow({
   );
 }
 
-function RecordSummaryList({ items, title }: { items: string[]; title: string }) {
-  if (items.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="recordSummaryList">
-      <strong>{title}</strong>
-      <ul>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
 
 function normalizeSessionRecordForReview(record: SessionRecord): SessionRecord {
   const normalizedTiming = normalizeSessionRecordSegmentsTiming(record.segments);
