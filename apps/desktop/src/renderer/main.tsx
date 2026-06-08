@@ -134,6 +134,7 @@ import { HealthMetric } from "./components/common/HealthMetric";
 import { LauncherRow } from "./components/home/LauncherRow";
 import { PreferenceMiniCard } from "./components/home/PreferenceMiniCard";
 import { RecordSummaryList } from "./components/records/RecordSummaryList";
+import { StyleSection } from "./components/settings/StyleSection";
 
 import "./styles.css";
 
@@ -4583,14 +4584,6 @@ function SubtitleStylePanel({
   );
 }
 
-function StyleSection({ children, title }: { children: ReactNode; title: string }) {
-  return (
-    <section className="styleSection">
-      <h2>{title}</h2>
-      <div>{children}</div>
-    </section>
-  );
-}
 
 function StepperRow({
   label,
