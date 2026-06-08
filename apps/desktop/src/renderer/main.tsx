@@ -128,6 +128,9 @@ import { createRealtimeAudioClient, type RealtimeAudioClient } from "./realtime-
 import { ensureSeekableSessionRecording, type SessionRecording } from "./session-recorder";
 import { createTtsAudioPlaybackQueue, type TtsAudioPlaybackQueue } from "./tts-audio-playback";
 import { resolveDesktopWindowRole } from "./window-role";
+import { AudioLoadingBars } from "./components/common/AudioLoadingBars";
+import { PreferenceRow } from "./components/common/PreferenceRow";
+import { HealthMetric } from "./components/common/HealthMetric";
 
 import "./styles.css";
 
@@ -1281,18 +1284,6 @@ function SessionStartupOverlay({
   );
 }
 
-function AudioLoadingBars({ active }: { active: boolean }) {
-  return (
-    <div className={active ? "audioLoadingBars active" : "audioLoadingBars"} aria-hidden="true">
-      <span />
-      <span />
-      <span />
-      <span />
-      <span />
-      <span />
-    </div>
-  );
-}
 
 const leaveDialogCopy: Record<Exclude<NavigationConfirmReason, null>, { title: string; detail: string; cancelLabel: string; confirmLabel: string }> = {
   active_session: {
@@ -1959,14 +1950,6 @@ function PreferenceMiniCard({
   );
 }
 
-function PreferenceRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="preferenceRow">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
 
 function EngineChoiceRow({
   label,
@@ -2542,9 +2525,6 @@ function LiveSessionStatusPanel({
   );
 }
 
-function HealthMetric({ label, value }: { label: string; value: string }) {
-  return <div className="healthMetric"><span>{label}</span><strong>{value}</strong></div>;
-}
 
 function TermQuickAdd({
   dispatchSessionUi,
