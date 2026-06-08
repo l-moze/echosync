@@ -131,6 +131,8 @@ import { resolveDesktopWindowRole } from "./window-role";
 import { AudioLoadingBars } from "./components/common/AudioLoadingBars";
 import { PreferenceRow } from "./components/common/PreferenceRow";
 import { HealthMetric } from "./components/common/HealthMetric";
+import { LauncherRow } from "./components/home/LauncherRow";
+import { PreferenceMiniCard } from "./components/home/PreferenceMiniCard";
 
 import "./styles.css";
 
@@ -1608,23 +1610,6 @@ function IdleDashboard({
   );
 }
 
-function LauncherRow({
-  children,
-  label,
-  value
-}: {
-  children?: ReactNode;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="launcherRow">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {children ? <div className="launcherRowControl">{children}</div> : null}
-    </div>
-  );
-}
 
 function PreferenceSettingsPanel({
   agentCapabilities,
@@ -1930,25 +1915,6 @@ function PreferenceSettingsPanel({
   );
 }
 
-function PreferenceMiniCard({
-  label,
-  title,
-  values
-}: {
-  label: string;
-  title: string;
-  values: string[];
-}) {
-  return (
-    <article className="preferenceMiniCard">
-      <span>{label}</span>
-      <strong>{title}</strong>
-      {values.map((value) => (
-        <small key={value}>{value}</small>
-      ))}
-    </article>
-  );
-}
 
 
 function EngineChoiceRow({
