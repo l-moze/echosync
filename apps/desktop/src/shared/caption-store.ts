@@ -48,12 +48,23 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
   if (event.type === "segment.commit") {
     const previousIndex = findLineIndexFromTail(lines, event.segment_id);
     const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
+
+    // 修复：commit 时优先使用之前累积的完整文本
+    // 如果 previousLine 的文本更长，说明实时流中累积了更多内容，使用累积的
+    const finalSourceText = previousLine?.sourceText && previousLine.sourceText.length > event.source_text.length
+      ? previousLine.sourceText
+      : event.source_text;
+
+    const finalTargetText = previousLine?.targetText && previousLine.targetText.length > event.target_text.length
+      ? previousLine.targetText
+      : event.target_text;
+
     const nextLine: CaptionLine = withReceivedAt({
       id: event.segment_id,
       rev: event.rev,
       state: "locked",
-      sourceText: event.source_text,
-      targetText: event.target_text,
+      sourceText: finalSourceText,
+      targetText: finalTargetText,
       stability: 1,
       startMs: event.start_ms,
       endMs: event.end_ms,
@@ -277,11 +288,26 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     return lines;
   }
 
+  // 修复：判断是完整替换还是需要累积
+  // 启发式规则：如果新文本比旧文本短很多，可能是 ASR 重新识别导致的回退，使用新文本
+  // 否则，如果新文本明显更长，说明是累积，保留较长的
+  let finalSourceText = event.source_text;
+  if (previousLine?.sourceText) {
+    const prevLen = previousLine.sourceText.length;
+    const newLen = event.source_text.length;
+
+    // 如果之前的文本明显更长（差距>20字符），且新文本很短，可能丢失了内容
+    // 这种情况保留之前更长的文本
+    if (prevLen > newLen + 20 && newLen < 50) {
+      finalSourceText = previousLine.sourceText;
+    }
+  }
+
   const nextLine: CaptionLine = withReceivedAt({
     id: event.segment_id,
     rev: event.rev,
     state: mapStatus(event.status),
-    sourceText: event.source_text,
+    sourceText: finalSourceText,
     targetText: previousLine?.targetText ?? "",
     stability: event.stability,
     startMs: event.start_ms,
