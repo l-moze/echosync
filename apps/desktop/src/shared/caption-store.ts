@@ -278,6 +278,22 @@ function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs:
 function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, receivedAtMs: number): CaptionLine[] {
   const previousIndex = findLineIndexFromTail(lines, event.segment_id);
   const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
+
+  // 调试日志：记录 transcript.partial 的行为模式
+  if (previousLine && typeof console !== "undefined") {
+    console.log("[transcript.partial] 行为分析", {
+      segment_id: event.segment_id,
+      rev: event.rev,
+      prev_rev: previousLine.rev,
+      prev_text_len: previousLine.sourceText.length,
+      prev_text_preview: previousLine.sourceText.substring(0, 50),
+      new_text_len: event.source_text.length,
+      new_text_preview: event.source_text.substring(0, 50),
+      is_longer: event.source_text.length > previousLine.sourceText.length,
+      contains_prev: event.source_text.includes(previousLine.sourceText.substring(0, 20))
+    });
+  }
+
   if (!previousLine && !event.source_text.trim()) {
     return lines;
   }
@@ -288,26 +304,12 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     return lines;
   }
 
-  // 修复：判断是完整替换还是需要累积
-  // 启发式规则：如果新文本比旧文本短很多，可能是 ASR 重新识别导致的回退，使用新文本
-  // 否则，如果新文本明显更长，说明是累积，保留较长的
-  let finalSourceText = event.source_text;
-  if (previousLine?.sourceText) {
-    const prevLen = previousLine.sourceText.length;
-    const newLen = event.source_text.length;
-
-    // 如果之前的文本明显更长（差距>20字符），且新文本很短，可能丢失了内容
-    // 这种情况保留之前更长的文本
-    if (prevLen > newLen + 20 && newLen < 50) {
-      finalSourceText = previousLine.sourceText;
-    }
-  }
-
+  // 暂时使用原始逻辑，等待日志确认实际行为
   const nextLine: CaptionLine = withReceivedAt({
     id: event.segment_id,
     rev: event.rev,
     state: mapStatus(event.status),
-    sourceText: finalSourceText,
+    sourceText: event.source_text,  // 先保持原样，观察日志
     targetText: previousLine?.targetText ?? "",
     stability: event.stability,
     startMs: event.start_ms,
