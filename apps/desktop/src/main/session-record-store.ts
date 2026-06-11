@@ -246,18 +246,36 @@ async function writeAudioFile(dir: string, audio: NonNullable<SessionRecordDraft
   };
 }
 
+// 构建会议记录摘要的默认结构，并清洗历史数据格式
 function buildDraftSummary(summary: Partial<SessionRecordSummary> | undefined, now: string): SessionRecordSummary {
   return {
     status: summary?.status ?? "pending",
     text: summary?.text ?? "",
-    keywords: summary?.keywords ?? [],
-    actionItems: summary?.actionItems ?? [],
-    topics: summary?.topics ?? [],
-    risks: summary?.risks ?? [],
-    terminologySuggestions: summary?.terminologySuggestions ?? [],
+    keywords: normalizeStringArray(summary?.keywords ?? []),
+    actionItems: normalizeStringArray(summary?.actionItems ?? []),
+    topics: normalizeStringArray(summary?.topics ?? []),
+    risks: normalizeStringArray(summary?.risks ?? []),
+    terminologySuggestions: normalizeStringArray(summary?.terminologySuggestions ?? []),
     errorMessage: summary?.errorMessage,
     updatedAt: summary?.updatedAt ?? now
   };
+}
+
+// 清洗摘要数组字段：兼容旧版对象格式 {id, text, confidence, evidence} 和新版字符串格式
+// 旧版数据（~2026-06-08）存储了增强格式，提取 text 字段以兼容类型定义
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(item => {
+    if (typeof item === 'string') {
+      return item;
+    }
+    if (typeof item === 'object' && item !== null && 'text' in item && typeof item.text === 'string') {
+      return item.text;
+    }
+    return '';
+  }).filter(Boolean);
 }
 
 function serializeRecord(record: SessionRecord, format: SessionRecordExportFormat) {

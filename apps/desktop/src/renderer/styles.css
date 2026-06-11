@@ -1303,27 +1303,32 @@ button:focus-visible {
   overflow: hidden;
 }
 
+/* 双语复盘字幕列表容器 - 使用 flex 布局以稳定处理动态高度 item */
 .recordTranscriptList {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 10px;
   min-height: 0;
   min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-gutter: stable;
 }
 
+/* 双语复盘字幕卡片 - 使用 flex 布局自适应内容高度，避免长文本重叠 */
 .recordSegmentPair {
-  display: grid;
-  align-content: start;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 0 auto;  /* 不伸缩，按内容大小 */
   width: 100%;
   height: auto;
-  min-height: 112px;
   min-width: 0;
-  gap: 6px;
+  gap: 8px;
   padding: 12px 14px;
+  overflow: visible;  /* 确保长文本不被裁切 */
   border: 1px solid rgba(226, 231, 238, 0.92);
   border-radius: 8px;
   background: #ffffff;
@@ -1347,18 +1352,26 @@ button:focus-visible {
   box-shadow: inset 3px 0 0 rgba(37, 105, 232, 0.7);
 }
 
+/* 时间戳和段落元素 - 明确不压缩，按内容自然高度 */
 .recordSegmentPair time {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
   color: var(--muted);
   font-size: 11px;
   font-weight: 760;
 }
 
 .recordSegmentPair p {
+  flex: 0 0 auto;  /* 不压缩段落 */
   display: block;
   max-width: 100%;
+  min-width: 0;
   margin: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;  /* 任意位置换行，防止长英文溢出 */
+  word-break: normal;
+  white-space: pre-wrap;  /* 保留换行符并自动换行 */
 }
 
 .recordSegmentSource {
