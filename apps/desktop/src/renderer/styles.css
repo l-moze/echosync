@@ -983,10 +983,10 @@ button:focus-visible {
   inset: 12px auto auto 50%;
   z-index: 9;
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   width: min(1040px, calc(100vw - 48px));
   max-height: calc(100vh - 92px);
   overflow: hidden;
-  scrollbar-gutter: stable;
   gap: 14px;
   min-width: 0;
   padding: 20px;
@@ -997,9 +997,17 @@ button:focus-visible {
   transform: translateX(-50%);
 }
 
+.recordListContainer {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .recordWindow.detail {
   height: min(820px, calc(100vh - 92px));
-  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .recordWindow > header {

@@ -2957,7 +2957,7 @@ function SessionRecordsWindow({
         <button aria-label="关闭会议记录" onClick={onClose}>×</button>
       </header>
       {!isDetailView ? (
-        <>
+        <div className="recordListContainer">
           <SessionRecordTable
             onDelete={(recordId) => setDeleteId(recordId)}
             onView={(recordId) => {
@@ -2975,7 +2975,7 @@ function SessionRecordsWindow({
           ) : null}
           {records.length === 0 ? <p className="archiveMissing">暂无已保存记录。</p> : null}
           {records.length > 0 && filteredRecords.length === 0 ? <p className="archiveMissing">没有匹配的会议记录。</p> : null}
-        </>
+        </div>
       ) : null}
       {isDetailView && selectedRecordLoading ? (
         <section className="recordDetailPanel" aria-label="记录详情">
