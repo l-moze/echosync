@@ -330,12 +330,45 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     return lines;
   }
 
-  // 暂时使用原始逻辑，等待日志确认实际行为
+  // 修复：保护已有的更长文本，防止短文本或错误文本覆盖
+  let finalSourceText = event.source_text;
+  if (previousLine && previousLine.sourceText.length > 0) {
+    // 如果新文本明显比旧文本短，且旧文本不是新文本的前缀，保留旧文本
+    const prevLen = previousLine.sourceText.length;
+    const newLen = event.source_text.length;
+
+    // 情况1：新文本是旧文本的扩展 → 使用新文本
+    if (event.source_text.startsWith(previousLine.sourceText)) {
+      finalSourceText = event.source_text;
+    }
+    // 情况2：新文本更长 → 使用新文本
+    else if (newLen >= prevLen) {
+      finalSourceText = event.source_text;
+    }
+    // 情况3：新文本短很多（可能是错误） → 保留旧文本
+    else if (prevLen > newLen + 10) {
+      console.warn("[transcript.partial] 检测到文本异常缩短", {
+        segment_id: event.segment_id,
+        rev: event.rev,
+        prev_len: prevLen,
+        new_len: newLen,
+        prev_preview: previousLine.sourceText.substring(0, 50),
+        new_preview: event.source_text.substring(0, 50),
+        action: "保留旧文本"
+      });
+      finalSourceText = previousLine.sourceText;
+    }
+    // 情况4：略短，可能是正常修正 → 使用新文本
+    else {
+      finalSourceText = event.source_text;
+    }
+  }
+
   const nextLine: CaptionLine = withReceivedAt({
     id: event.segment_id,
     rev: event.rev,
     state: mapStatus(event.status),
-    sourceText: event.source_text,  // 先保持原样，观察日志
+    sourceText: finalSourceText,
     targetText: previousLine?.targetText ?? "",
     stability: event.stability,
     startMs: event.start_ms,
