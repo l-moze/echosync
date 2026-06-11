@@ -142,40 +142,18 @@ import { engineOptionLabel, overlayDisplayModeAccessibleLabel, sessionRecordExpo
 import { normalizeSessionRecordForReview, selectedRecordSegmentSourceText, selectedRecordSegmentTargetText } from "./utils/session-records";
 import { fontFamilyValue } from "./utils/style";
 import { editableTextToTranscriptLines, extractEditableTranscriptField, transcriptLinesToEditableText } from "./utils/transcript";
+import { captionContentModes } from "./constants/caption";
+import { languageDirectionOptions } from "./constants/language";
+import { REVIEW_TIMELINE_COMPACT_GAP_MS, REVIEW_TIMELINE_THRESHOLD_MS, TRANSCRIPT_REVIEW_STACKED_WIDTH_PX } from "./constants/layout";
+import { LANGUAGE_DIRECTION_STORAGE_KEY } from "./constants/storage-keys";
+import { fontOptions } from "./constants/ui";
+import type { CaptionContentMode } from "./types/caption";
+import type { LanguageDirectionId, LanguageDirectionOption } from "./types/language";
+import type { NavigationConfirmReason } from "./types/navigation";
+import type { OverlayChromeMenu } from "./types/overlay";
+import type { SessionArchiveSaveStatus } from "./types/session";
 
 import "./styles.css";
-
-const fontOptions = ["System", "Inter", "Segoe UI", "Microsoft YaHei"];
-type LanguageDirectionId = "en-zh" | "zh-en" | "ja-zh" | "ko-zh";
-type LanguageDirectionOption = {
-  id: LanguageDirectionId;
-  label: string;
-  shortLabel: string;
-  sourceLang: string;
-  targetLang: string;
-};
-const languageDirectionOptions: LanguageDirectionOption[] = [
-  { id: "en-zh", label: "English → 中文", shortLabel: "英 → 中", sourceLang: "en", targetLang: "zh-CN" },
-  { id: "zh-en", label: "中文 → English", shortLabel: "中 → 英", sourceLang: "zh-CN", targetLang: "en" },
-  { id: "ja-zh", label: "日本語 → 中文", shortLabel: "日 → 中", sourceLang: "ja", targetLang: "zh-CN" },
-  { id: "ko-zh", label: "한국어 → 中文", shortLabel: "韩 → 中", sourceLang: "ko", targetLang: "zh-CN" }
-];
-type CaptionContentMode = "source" | "target" | "bilingual";
-const captionContentModes: Array<{ id: CaptionContentMode; label: string }> = [
-  { id: "source", label: "原文" },
-  { id: "target", label: "译文" },
-  { id: "bilingual", label: "双语" }
-];
-type OverlayChromeMenu = "display" | "plan" | "language" | null;
-const LANGUAGE_DIRECTION_STORAGE_KEY = "echosync.languageDirection";
-type NavigationConfirmReason = "active_session" | "startup_cancel" | "dirty_export" | null;
-type SessionArchiveSaveStatus = {
-  message: string;
-  state: "idle" | "saving" | "saved" | "failed";
-};
-const TRANSCRIPT_REVIEW_STACKED_WIDTH_PX = 720;
-const REVIEW_TIMELINE_THRESHOLD_MS = 2500;
-const REVIEW_TIMELINE_COMPACT_GAP_MS = 500;
 
 function languageDirectionForId(id: string | null | undefined): LanguageDirectionOption {
   return languageDirectionOptions.find((option) => option.id === id) ?? languageDirectionOptions[0];
@@ -3176,28 +3154,46 @@ function SessionRecordTable({
   records: SessionRecordListItem[];
   selectedId?: string;
 }) {
+  const [page, setPage] = useState(0);
+  const pageSize = 20;
+  const totalPages = Math.ceil(records.length / pageSize);
+  const visibleRecords = records.slice(page * pageSize, (page + 1) * pageSize);
   const hasRecordActions = Boolean(onView || onDelete);
+
   return (
-    <div className={compact ? "recordTable compact" : "recordTable"} role="table" aria-label="会议记录列表">
-      <div className="recordTableHead" role="row">
-        {RECORD_LIST_COLUMNS.map((column) => (
-          <span key={column} role="columnheader">{column}</span>
-        ))}
-      </div>
-      {records.map((record) => (
-        <div className={record.id === selectedId ? "recordTableRow selected" : "recordTableRow"} key={record.id} role="row">
-          <strong role="cell">{record.title}</strong>
-          <span role="cell">{record.endedAt}</span>
-          <span role="cell">{record.duration}</span>
-          {hasRecordActions ? (
-            <span className="recordActions" role="cell">
-              {onView ? <button onClick={() => onView(record.id)}>查看</button> : null}
-              {onDelete ? <button onClick={() => onDelete(record.id)}>删除</button> : null}
-            </span>
-          ) : null}
+    <>
+      <div className={compact ? "recordTable compact" : "recordTable"} role="table" aria-label="会议记录列表">
+        <div className="recordTableHead" role="row">
+          {RECORD_LIST_COLUMNS.map((column) => (
+            <span key={column} role="columnheader">{column}</span>
+          ))}
         </div>
-      ))}
-    </div>
+        <div className="recordTableBody">
+          {visibleRecords.map((record) => (
+            <div className={record.id === selectedId ? "recordTableRow selected" : "recordTableRow"} key={record.id} role="row">
+              <strong role="cell">{record.title}</strong>
+              <span role="cell">{record.endedAt}</span>
+              <span role="cell">{record.duration}</span>
+              {hasRecordActions ? (
+                <span className="recordActions" role="cell">
+                  {onView ? <button onClick={() => onView(record.id)}>查看</button> : null}
+                  {onDelete ? <button onClick={() => onDelete(record.id)}>删除</button> : null}
+                </span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </div>
+      {totalPages > 1 ? (
+        <div className="recordPagination">
+          <button disabled={page === 0} onClick={() => setPage(0)} type="button">首页</button>
+          <button disabled={page === 0} onClick={() => setPage(page - 1)} type="button">上一页</button>
+          <span>{page + 1} / {totalPages}</span>
+          <button disabled={page >= totalPages - 1} onClick={() => setPage(page + 1)} type="button">下一页</button>
+          <button disabled={page >= totalPages - 1} onClick={() => setPage(totalPages - 1)} type="button">末页</button>
+        </div>
+      ) : null}
+    </>
   );
 }
 
