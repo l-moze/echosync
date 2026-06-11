@@ -14,6 +14,7 @@ import {
   type SessionRecordExportFormat,
   type SessionRecordExportResult,
   type SessionRecordListItem,
+  type SessionRecordSegmentUpdate,
   type SessionRecordSummary
 } from "../shared/session-records";
 
@@ -22,6 +23,7 @@ export type SessionRecordStore = {
   get: (id: string) => Promise<SessionRecord | null>;
   saveDraft: (input: SessionRecordDraftInput) => Promise<SessionRecord>;
   updateSummary: (id: string, summary: Partial<SessionRecordSummary>) => Promise<SessionRecord>;
+  updateSegment: (id: string, update: SessionRecordSegmentUpdate) => Promise<SessionRecord>;
   rename: (id: string, title: string) => Promise<SessionRecord>;
   delete: (id: string) => Promise<void>;
   exportRecord: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
@@ -132,6 +134,35 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
           },
           now
         ),
+        updatedAt: now
+      };
+      await writeRecord(nextRecord);
+      return nextRecord;
+    },
+
+    async updateSegment(id, update) {
+      const record = await readRecord(id);
+      if (!record) {
+        throw new Error(`未找到会议记录：${id}`);
+      }
+      const segmentExists = record.segments.some((segment) => segment.id === update.segmentId);
+      if (!segmentExists) {
+        throw new Error(`未找到会议记录片段：${update.segmentId}`);
+      }
+      const now = new Date().toISOString();
+      const nextRecord = {
+        ...record,
+        segments: record.segments.map((segment) => {
+          if (segment.id !== update.segmentId) {
+            return segment;
+          }
+          return {
+            ...segment,
+            ...(update.sourceEditedText !== undefined ? { sourceEditedText: update.sourceEditedText } : {}),
+            ...(update.targetEditedText !== undefined ? { targetEditedText: update.targetEditedText } : {}),
+            ...(update.revisionState !== undefined ? { revisionState: update.revisionState } : {})
+          };
+        }),
         updatedAt: now
       };
       await writeRecord(nextRecord);

@@ -42,6 +42,10 @@ export type SessionRecordSegment = {
   patchCount: number;
 };
 
+export type SessionRecordSegmentUpdate = {
+  segmentId: string;
+} & Partial<Pick<SessionRecordSegment, "sourceEditedText" | "targetEditedText" | "revisionState">>;
+
 export type SessionRecordTimelineMode = "meeting" | "video" | "course";
 
 export type SessionRecordTimelineSpan = {
