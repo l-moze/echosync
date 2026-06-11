@@ -7,12 +7,14 @@ export type CaptionEventBuffer = {
   snapshot: (sessionId?: string) => RealtimeEvent[];
 };
 
-export function createCaptionEventBuffer(maxEvents = 1000): CaptionEventBuffer {
+export function createCaptionEventBuffer(maxEvents = 10000): CaptionEventBuffer {
   const events: RealtimeEvent[] = [];
+  let droppedCount = 0;
 
   return {
     clear() {
       events.splice(0, events.length);
+      droppedCount = 0;
     },
     clearSession(sessionId) {
       for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -27,7 +29,14 @@ export function createCaptionEventBuffer(maxEvents = 1000): CaptionEventBuffer {
       }
       events.push(event);
       if (events.length > maxEvents) {
-        events.splice(0, events.length - maxEvents);
+        const removeCount = events.length - maxEvents;
+        events.splice(0, removeCount);
+        droppedCount += removeCount;
+
+        // 警告：缓冲区溢出，内容可能丢失
+        if (droppedCount % 100 === 0) {
+          console.error(`[caption-event-buffer] 缓冲区溢出，已丢弃 ${droppedCount} 个事件！`);
+        }
       }
     },
     snapshot(sessionId) {
