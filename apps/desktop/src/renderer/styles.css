@@ -1120,10 +1120,50 @@ button:focus-visible {
 
 .recordTable {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: 100%;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #ffffff;
+}
+
+.recordTableBody {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.recordPagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.recordPagination button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.recordPagination button:hover:not(:disabled) {
+  border-color: rgba(37, 105, 232, 0.28);
+  background: var(--blue-soft);
+}
+
+.recordPagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .recordTableHead,
