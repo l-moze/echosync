@@ -305,19 +305,32 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
   const previousIndex = findLineIndexFromTail(lines, event.segment_id);
   const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
 
-  // 调试日志：记录 transcript.partial 的行为模式
+  // 🔍 关键调试：记录所有可能导致文本丢失的更新
   if (previousLine && typeof console !== "undefined") {
-    console.log("[transcript.partial] 行为分析", {
+    const logData = {
+      timestamp: new Date().toISOString(),
       segment_id: event.segment_id,
       rev: event.rev,
       prev_rev: previousLine.rev,
       prev_text_len: previousLine.sourceText.length,
-      prev_text_preview: previousLine.sourceText.substring(0, 50),
+      prev_text_full: previousLine.sourceText,
       new_text_len: event.source_text.length,
-      new_text_preview: event.source_text.substring(0, 50),
+      new_text_full: event.source_text,
       is_longer: event.source_text.length > previousLine.sourceText.length,
-      contains_prev: event.source_text.includes(previousLine.sourceText.substring(0, 20))
-    });
+      starts_with_prev: event.source_text.startsWith(previousLine.sourceText),
+      contains_prev_start: event.source_text.includes(previousLine.sourceText.substring(0, Math.min(20, previousLine.sourceText.length))),
+      text_shrink_amount: previousLine.sourceText.length - event.source_text.length
+    };
+
+    console.log("[transcript.partial] 行为分析", logData);
+
+    // 如果文本异常缩短 >10 字符，额外记录详细信息
+    if (logData.text_shrink_amount > 10) {
+      console.error("[transcript.partial] ⚠️ 检测到文本异常缩短！", {
+        ...logData,
+        alert: "文本从 " + logData.prev_text_len + " 缩短到 " + logData.new_text_len
+      });
+    }
   }
 
   if (!previousLine && !event.source_text.trim()) {
