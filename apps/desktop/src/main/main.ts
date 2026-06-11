@@ -171,6 +171,20 @@ function broadcastCaptionEvent(event: RealtimeEvent) {
   const telemetry = buildRealtimeEventTelemetry(event, Date.now());
   captionEventBuffer.push(event);
   const sentWindowCount = sendToWindows([controlWindow, overlayWindow], "caption:event", event);
+
+  // 🔍 详细记录 transcript.partial 事件，用于诊断文本丢失问题
+  if (event.type === "transcript.partial" && "source_text" in event) {
+    log.info("[transcript.partial] 后端发送", {
+      segment_id: event.segment_id,
+      rev: event.rev,
+      status: event.status,
+      text_len: event.source_text.length,
+      text_full: event.source_text,
+      start_ms: event.start_ms,
+      end_ms: event.end_ms
+    });
+  }
+
   log.info("[caption-event] main_forwarded", {
     ...telemetry,
     bufferedEvents: captionEventBuffer.snapshot(event.session_id).length,
