@@ -115,7 +115,6 @@ import {
   type SessionArchiveDraft
 } from "../shared/session-archive";
 import { logRealtimeEventTelemetry } from "../shared/realtime-telemetry";
-import type { TtsErrorEvent } from "../shared/realtime-events";
 import {
   HOME_LAUNCHER_COPY,
   PREFERENCE_ADVANCED_ENTRY,
@@ -138,6 +137,11 @@ import { RecordSummaryList } from "./components/records/RecordSummaryList";
 import { StyleSection } from "./components/settings/StyleSection";
 import { PreflightAudioVisualizer } from "./components/session/PreflightAudioVisualizer";
 import { SessionSummaryPanel } from "./components/session/SessionSummaryPanel";
+import { formatClock, formatMetricMs, formatPercent, formatPreciseTime, formatTime, formatTtsErrorNotice, compactStatusMessage, roundMetric } from "./utils/format";
+import { engineOptionLabel, overlayDisplayModeAccessibleLabel, sessionRecordExportFormatLabel, sessionRecordSummaryStatusLabel, sourceLabel, styleOptionLabel, termStatusLabel } from "./utils/labels";
+import { normalizeSessionRecordForReview, selectedRecordSegmentSourceText, selectedRecordSegmentTargetText } from "./utils/session-records";
+import { fontFamilyValue } from "./utils/style";
+import { editableTextToTranscriptLines, extractEditableTranscriptField, transcriptLinesToEditableText } from "./utils/transcript";
 
 import "./styles.css";
 
@@ -1326,20 +1330,6 @@ function pageTitleForSession(sessionUi: SessionUiState) {
   return "EchoSync";
 }
 
-function formatTtsErrorNotice(event: TtsErrorEvent) {
-  if (event.code) {
-    return `语音合成失败：${event.code}`;
-  }
-  return `语音合成失败：${compactStatusMessage(event.message)}`;
-}
-
-function compactStatusMessage(message: string, maxChars = 36) {
-  const compacted = message.replace(/\s+/g, " ").trim();
-  if (compacted.length <= maxChars) {
-    return compacted;
-  }
-  return `${compacted.slice(0, maxChars)}...`;
-}
 
 function ControlCenter({
   activeLine,
@@ -1959,12 +1949,6 @@ function isEndToEndTranslationSelected(
   return (selection === "server-default" ? defaultProvider : selection) === "qwen-livetranslate";
 }
 
-function engineOptionLabel(label: string, id: string) {
-  if (id === "server-default") {
-    return "自动";
-  }
-  return label;
-}
 
 function ActiveDashboard({
   activeLine,
@@ -3178,51 +3162,6 @@ function SessionRecordsWindow({
 }
 
 
-function normalizeSessionRecordForReview(record: SessionRecord): SessionRecord {
-  const normalizedTiming = normalizeSessionRecordSegmentsTiming(record.segments);
-  if (!normalizedTiming.hasTimingAnomaly) {
-    return {
-      ...record,
-      segments: normalizedTiming.segments
-    };
-  }
-
-  return {
-    ...record,
-    diagnostics: {
-      hasTimingAnomaly: true,
-      hasTranslationGap: Boolean(record.diagnostics?.hasTranslationGap),
-      logPath: record.diagnostics?.logPath
-    },
-    segments: normalizedTiming.segments
-  };
-}
-
-function selectedRecordSegmentSourceText(segment: SessionRecordSegment) {
-  return segment.sourceEditedText ?? segment.sourceText;
-}
-
-function selectedRecordSegmentTargetText(segment: SessionRecordSegment) {
-  return segment.targetEditedText ?? segment.targetText;
-}
-
-function sessionRecordExportFormatLabel(format: SessionRecordExportFormat) {
-  const labels: Record<SessionRecordExportFormat, string> = {
-    markdown: "Markdown",
-    srt: "SRT",
-    txt: "TXT"
-  };
-  return labels[format];
-}
-
-function sessionRecordSummaryStatusLabel(status: SessionRecord["summary"]["status"]) {
-  const labels: Record<SessionRecord["summary"]["status"], string> = {
-    failed: "摘要生成失败",
-    pending: "摘要待生成",
-    ready: "摘要已生成"
-  };
-  return labels[status];
-}
 
 function SessionRecordTable({
   compact = false,
@@ -4293,9 +4232,6 @@ function OverlayToolbar({
   );
 }
 
-function overlayDisplayModeAccessibleLabel(mode: SubtitleDisplayMode) {
-  return mode === "sentencePair" ? "逐句对照" : "分区对照";
-}
 
 function OverlaySessionBar({
   activeMenu,
@@ -4750,27 +4686,6 @@ function ToolbarIcon({ name }: { name: ToolbarIconName }) {
   );
 }
 
-function fontFamilyValue(value: string) {
-  if (value === "System") {
-    return undefined;
-  }
-  return value;
-}
-
-function styleOptionLabel(value: string) {
-  const labels: Record<string, string> = {
-    sentencePair: subtitleDisplayModeLabel("sentencePair"),
-    zonedPair: subtitleDisplayModeLabel("zonedPair"),
-    shadow: "阴影",
-    outline: "描边",
-    none: "无"
-  };
-  return labels[value] ?? value;
-}
-
-function sourceLabel(sourceId: DesktopAudioSourceId) {
-  return DESKTOP_AUDIO_SOURCES.find((source: DesktopAudioSource) => source.id === sourceId)?.label ?? "未知来源";
-}
 
 function useCompleteCaptionItemVisibility(
   containerRef: { current: HTMLDivElement | null },
@@ -4916,86 +4831,5 @@ function audioActivityLabel(activity: SessionUiState["audioActivity"]) {
   return labels[activity];
 }
 
-function formatMetricMs(value: number | null) {
-  if (value === null) {
-    return "--";
-  }
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(1)} s`;
-  }
-  return `${value} ms`;
-}
-
-function roundMetric(value: number) {
-  return Math.round(value * 100) / 100;
-}
-
-function formatPercent(value: number | null) {
-  if (value === null) {
-    return "--";
-  }
-  return `${Math.round(value * 100)}%`;
-}
-
-function termStatusLabel(status: SessionUiState["terms"][number]["status"]) {
-  const labels: Record<SessionUiState["terms"][number]["status"], string> = {
-    active: "已生效",
-    failed: "失败",
-    syncing: "同步中"
-  };
-  return labels[status];
-}
-
-function transcriptLinesToEditableText(lines: CaptionLine[]) {
-  return lines
-    .map((line) => [`原文: ${line.sourceText}`, `译文: ${line.targetText}`].join("\n"))
-    .join("\n\n");
-}
-
-function editableTextToTranscriptLines(text: string, fallbackLines: CaptionLine[]) {
-  const blocks = text.split(/\n{2,}/);
-  return fallbackLines.map((line, index) => {
-    const block = blocks[index]?.trim();
-    if (!block) {
-      return line;
-    }
-
-    const sourceText = extractEditableTranscriptField(block, "原文") ?? line.sourceText;
-    const targetText = extractEditableTranscriptField(block, "译文") ?? line.targetText;
-    return { ...line, sourceText, targetText };
-  });
-}
-
-function extractEditableTranscriptField(block: string, label: "原文" | "译文") {
-  const line = block
-    .split("\n")
-    .find((item) => item.trimStart().startsWith(`${label}:`) || item.trimStart().startsWith(`${label}：`));
-  if (!line) {
-    return undefined;
-  }
-  return line.replace(new RegExp(`^\\s*${label}[:：]\\s*`), "").trim();
-}
-
-function formatTime(ms: number) {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return `${minutes}:${rest.toString().padStart(2, "0")}`;
-}
-
-function formatPreciseTime(ms: number) {
-  const safeMs = Math.max(0, Math.round(ms));
-  const minutes = Math.floor(safeMs / 60_000);
-  const seconds = Math.floor((safeMs % 60_000) / 1000);
-  const centiseconds = Math.floor((safeMs % 1000) / 10);
-  return `${minutes}:${seconds.toString().padStart(2, "0")}.${centiseconds.toString().padStart(2, "0")}`;
-}
-
-function formatClock(ms: number) {
-  const totalSeconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
-}
 
 createRoot(document.getElementById("root")!).render(<App />);
