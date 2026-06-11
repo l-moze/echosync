@@ -29,6 +29,21 @@ export const OVERLAY_DISPLAY_WINDOW_LINE_LIMIT = 60;
 
 export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): CaptionLine[] {
   const receivedAtMs = Date.now();
+
+  // 🔍 调试日志：追踪事件处理
+  if (typeof console !== "undefined" && event.type !== "tts.audio") {
+    console.log("[caption-store] applyRealtimeEvent", {
+      type: event.type,
+      segment_id: "segment_id" in event ? event.segment_id : undefined,
+      rev: "rev" in event ? event.rev : undefined,
+      status: "status" in event ? event.status : undefined,
+      text_preview: "source_text" in event ? event.source_text?.substring(0, 40) : undefined,
+      text_len: "source_text" in event ? event.source_text?.length : undefined,
+      lines_count: lines.length,
+      timestamp: receivedAtMs
+    });
+  }
+
   if (event.type === "transcript.partial") {
     return upsertTranscriptDraft(lines, event, receivedAtMs);
   }
@@ -58,6 +73,17 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
     const finalTargetText = previousLine?.targetText && previousLine.targetText.length > event.target_text.length
       ? previousLine.targetText
       : event.target_text;
+
+    // 🔍 调试日志
+    if (typeof console !== "undefined" && previousLine) {
+      console.log("[caption-store] segment.commit", {
+        segment_id: event.segment_id,
+        prev_source_len: previousLine.sourceText.length,
+        event_source_len: event.source_text.length,
+        final_source_len: finalSourceText.length,
+        used_previous: finalSourceText === previousLine.sourceText
+      });
+    }
 
     const nextLine: CaptionLine = withReceivedAt({
       id: event.segment_id,

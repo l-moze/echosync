@@ -189,7 +189,7 @@ function buildBlocksFromEntry(line: CaptionLine, entry: CaptionTextBlockEntry): 
     ? blockCount - 1
     : -1;
 
-  return Array.from({ length: blockCount }, (_, index) => {
+  const blocks = Array.from({ length: blockCount }, (_, index) => {
     const sourceBlock = sourceBlocks[index] ?? "";
     const targetBlock = targetBlocks[index] ?? "";
     return {
@@ -202,6 +202,22 @@ function buildBlocksFromEntry(line: CaptionLine, entry: CaptionTextBlockEntry): 
       isTargetPlaceholder: !targetBlock
     };
   });
+
+  // 🔍 调试日志：追踪块拆分
+  if (typeof console !== "undefined" && blockCount > 1) {
+    console.log("[caption-text-view] buildBlocksFromEntry", {
+      line_id: line.id,
+      line_rev: line.rev,
+      block_count: blockCount,
+      source_breaks: entry.source.committedBreaks,
+      target_breaks: entry.target.committedBreaks,
+      pending_index: pendingBlockIndex,
+      block_ids: blocks.map(b => b.id),
+      block_previews: blocks.map(b => `${b.sourceText.substring(0, 20)}...`)
+    });
+  }
+
+  return blocks;
 }
 
 function updateBlockLane(
@@ -257,14 +273,37 @@ function reconcileLaneState(
   if (!previous) {
     return createLaneState(normalized);
   }
-  if (normalized.startsWith(previous.text)) {
+
+  const isExtension = normalized.startsWith(previous.text);
+  const isRevision = !isExtension && isLikelyStreamingRevision(previous.text, normalized);
+  const stablePrefixLength = isRevision ? longestCommonPrefixLength(previous.text, normalized) : 0;
+
+  // 🔍 调试日志：追踪文本更新类型
+  if (typeof console !== "undefined" && (previous.text.length > 20 || normalized.length > 20)) {
+    console.log("[caption-text-view] reconcileLaneState", {
+      prev_len: previous.text.length,
+      new_len: normalized.length,
+      prev_preview: previous.text.substring(0, 50),
+      new_preview: normalized.substring(0, 50),
+      is_extension: isExtension,
+      is_revision: isRevision,
+      stable_prefix_len: stablePrefixLength,
+      committed_breaks: previous.committedBreaks.length,
+      action: isExtension ? "EXTEND" : isRevision ? "REVISE" : "RESET",
+      will_reset_breaks: !isExtension && !isRevision
+    });
+  }
+
+  if (isExtension) {
     return { ...previous, text: normalized };
   }
-  if (!isLikelyStreamingRevision(previous.text, normalized)) {
+
+  if (!isRevision) {
+    // ⚠️ 完全重置：丢失所有 committedBreaks 和 pending 状态
     return createLaneState(normalized);
   }
 
-  const stablePrefixLength = longestCommonPrefixLength(previous.text, normalized);
+  // ✅ 局部修订：保留稳定前缀的 breaks
   return {
     text: normalized,
     committedBreaks: previous.committedBreaks.filter((breakAt) => breakAt <= stablePrefixLength && breakAt < normalized.length),
