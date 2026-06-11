@@ -299,7 +299,18 @@ function reconcileLaneState(
   }
 
   if (!isRevision) {
-    // ⚠️ 完全重置：丢失所有 committedBreaks 和 pending 状态
+    // 修复：即使判定为非修订，也尝试保留公共前缀的 breaks
+    // 避免短文本或不相关文本导致的完全重置
+    const commonPrefixLength = longestCommonPrefixLength(previous.text, normalized);
+    if (commonPrefixLength > 10) {
+      // 有明显的公共前缀，保留这部分的 breaks
+      return {
+        text: normalized,
+        committedBreaks: previous.committedBreaks.filter((breakAt) => breakAt <= commonPrefixLength && breakAt < normalized.length),
+        pendingSinceMs: null
+      };
+    }
+    // 完全不相关的文本，才真正重置
     return createLaneState(normalized);
   }
 
@@ -314,12 +325,30 @@ function reconcileLaneState(
 function isLikelyStreamingRevision(previousText: string, nextText: string): boolean {
   const previousLength = visibleLength(previousText);
   const nextLength = visibleLength(nextText);
-  if (Math.min(previousLength, nextLength) < 24) {
+
+  // 修复：放宽短文本限制，避免误判为 RESET
+  // 原逻辑：< 24 直接返回 false，导致实时流式更新时频繁触发 RESET
+  // 新逻�辑：只要有任何公共前缀，就尝试判断为修订
+  const prefixLength = longestCommonPrefixLength(previousText, nextText);
+  const minLength = Math.min(previousLength, nextLength);
+
+  // 如果公共前缀占比 > 40%，视为修订
+  if (prefixLength >= minLength * 0.4 && minLength >= 8) {
+    return true;
+  }
+
+  // 对于更短的文本（< 8字符），只要有 50% 以上公共前缀就视为修订
+  if (minLength < 8 && prefixLength >= minLength * 0.5) {
+    return true;
+  }
+
+  // 原有的相似度判断保留
+  if (minLength < 24) {
     return false;
   }
 
-  const stablePrefixLength = visibleLength(previousText.slice(0, longestCommonPrefixLength(previousText, nextText)));
-  if (stablePrefixLength >= Math.min(previousLength, nextLength) * 0.42) {
+  const stablePrefixLength = visibleLength(previousText.slice(0, prefixLength));
+  if (stablePrefixLength >= minLength * 0.42) {
     return true;
   }
 
