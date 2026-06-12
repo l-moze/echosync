@@ -627,11 +627,27 @@ function selectTranslationSourceText(previousLine: CaptionLine | undefined, sour
 }
 
 function selectCaptionUpdateSourceText(previousLine: CaptionLine | undefined, event: CaptionUpdateEvent): string {
-  if (event.state === "final" || !previousLine) {
-    return event.source.full_text;
+  const newText = event.source.full_text;
+
+  if (!previousLine) {
+    return newText;
   }
 
-  return selectTranslationSourceText(previousLine, event.source.full_text);
+  // 修复：即使 state === "final"，也要保护已有的更长文本
+  // 后端翻译服务在 interim → stable 切换时可能发送截断的文本
+  if (previousLine.sourceText.length > newText.length + 5) {
+    console.warn("[caption_update] 检测到文本异常缩短", {
+      segment_id: event.segment_id,
+      state: event.state,
+      prev_len: previousLine.sourceText.length,
+      new_len: newText.length,
+      shrink: previousLine.sourceText.length - newText.length,
+      action: "保留旧文本"
+    });
+    return previousLine.sourceText;
+  }
+
+  return newText;
 }
 
 function selectTranslationTargetText(
