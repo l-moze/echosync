@@ -76,3 +76,49 @@ def test_policy_replaces_when_source_revises_previous_words() -> None:
 
     assert result.text == "ice cream"
     assert result.mode == "replace_hypothesis"
+
+
+def test_policy_preserves_longer_text_when_incoming_is_truncated() -> None:
+    """Bug fix: prevent ASR COMMITTED (shorter) from truncating PARTIAL (longer)."""
+    policy = HypothesisUpdatePolicy()
+
+    # Real case from bug report: PARTIAL has 133 chars, COMMITTED has 77 chars
+    current = "an extremely resource-intensive research topic, can we also scale the science to allow the community to drive the collective progress"
+    incoming = "an extremely resource-intensive research topic, can we also scale the science"
+
+    result = policy.apply(current_text=current, incoming_text=incoming)
+
+    # Should preserve the longer current text
+    assert result.text == current
+    assert len(result.text) == 133
+    assert result.mode == "replace_hypothesis"
+
+
+def test_policy_replaces_with_longer_text_when_incoming_extends_current() -> None:
+    """Ensure we still replace when incoming is longer (normal case)."""
+    policy = HypothesisUpdatePolicy()
+
+    current = "an extremely resource-intensive research topic"
+    incoming = "an extremely resource-intensive research topic, can we also scale the science"
+
+    result = policy.apply(current_text=current, incoming_text=incoming)
+
+    # Should use the longer incoming text
+    assert result.text == incoming
+    assert len(result.text) > len(current)
+    assert result.mode == "replace_hypothesis"
+
+
+def test_policy_replaces_with_equal_length_text() -> None:
+    """Edge case: equal length should still replace (may have corrections)."""
+    policy = HypothesisUpdatePolicy()
+
+    current = "an extremely resource-intensive research topic"
+    incoming = "an extremely resource intensive research topics"  # Same length, different words
+
+    result = policy.apply(current_text=current, incoming_text=incoming)
+
+    # Should replace with incoming (equal length is okay)
+    assert result.text == incoming
+    assert result.mode == "replace_hypothesis"
+

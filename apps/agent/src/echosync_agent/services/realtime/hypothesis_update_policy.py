@@ -31,8 +31,13 @@ class HypothesisUpdatePolicy:
             return HypothesisUpdate(text=incoming_trimmed, mode="replace_hypothesis")
         if incoming_trimmed.startswith(current_text):
             return HypothesisUpdate(text=incoming_trimmed, mode="replace_hypothesis")
+        # Bug fix: only replace if incoming is longer or equal length
+        # Prevents ASR COMMITTED (shorter) from truncating PARTIAL (longer)
         if _has_meaningful_common_prefix(current_text, incoming_trimmed):
-            return HypothesisUpdate(text=incoming_trimmed, mode="replace_hypothesis")
+            if len(incoming_trimmed) >= len(current_text):
+                return HypothesisUpdate(text=incoming_trimmed, mode="replace_hypothesis")
+            # Incoming is shorter - preserve current text
+            return HypothesisUpdate(text=current_text, mode="replace_hypothesis")
         if _looks_like_append_delta(current_text=current_text, incoming_text=incoming_raw):
             return HypothesisUpdate(
                 text=f"{current_text}{_append_delta_text(current_text, incoming_raw)}",
