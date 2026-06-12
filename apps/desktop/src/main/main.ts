@@ -185,6 +185,18 @@ function broadcastCaptionEvent(event: RealtimeEvent) {
     });
   }
 
+  // 🔍 记录 caption_update 事件（可能覆盖 sourceText）
+  if (event.type === "caption_update" && "source" in event) {
+    log.info("[caption_update] 后端发送", {
+      segment_id: event.segment_id,
+      revision: event.revision,
+      state: event.state,
+      source_len: event.source?.full_text?.length || 0,
+      source_full: event.source?.full_text || "",
+      target_len: event.target?.full_text?.length || 0
+    });
+  }
+
   log.info("[caption-event] main_forwarded", {
     ...telemetry,
     bufferedEvents: captionEventBuffer.snapshot(event.session_id).length,
