@@ -6,6 +6,7 @@ import type {
   SubtitlePatchEvent
 } from "./realtime-events";
 import type { OverlayLayer } from "./overlay-interaction";
+import { countVisibleChars } from "./text-utils";
 
 export type CaptionLineState = "interim" | "stable" | "revised" | "locked";
 
@@ -422,7 +423,7 @@ function upsertCaptionUpdate(lines: CaptionLine[], event: CaptionUpdateEvent, re
   }
 
   if (previousLine && event.revision < previousLine.rev) {
-    if (previousLine.targetText.trim() === "" && targetText.trim() !== "" && countVisibleCharacters(sourceText) >= 8) {
+    if (previousLine.targetText.trim() === "" && targetText.trim() !== "" && countVisibleChars(sourceText) >= 8) {
       const nextLine = withReceivedAt(
         {
           ...previousLine,
@@ -478,7 +479,7 @@ function canFillEmptyTargetFromStaleTranslation(
   return (
     previousLine.targetText.trim() === "" &&
     event.target_text.trim() !== "" &&
-    countVisibleCharacters(event.source_text) >= 8
+    countVisibleChars(event.source_text) >= 8
   );
 }
 
@@ -610,16 +611,12 @@ function captionUpdateStability(event: CaptionUpdateEvent): number {
   return 0.5;
 }
 
-function countVisibleCharacters(text: string): number {
-  return Array.from(text).filter((char) => char.trim() !== "").length;
-}
-
 function selectTranslationSourceText(previousLine: CaptionLine | undefined, sourceText: string): string {
   if (!previousLine) {
     return sourceText;
   }
 
-  if (countVisibleCharacters(sourceText) < countVisibleCharacters(previousLine.sourceText)) {
+  if (countVisibleChars(sourceText) < countVisibleChars(previousLine.sourceText)) {
     return previousLine.sourceText;
   }
 
@@ -699,7 +696,7 @@ function shouldHoldTransientTargetShrink(
     return false;
   }
 
-  const previousLength = countVisibleCharacters(previousTarget);
-  const nextLength = countVisibleCharacters(nextTarget);
+  const previousLength = countVisibleChars(previousTarget);
+  const nextLength = countVisibleChars(nextTarget);
   return nextLength < previousLength;
 }

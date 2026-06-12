@@ -23,6 +23,7 @@
  */
 import type { CaptionLine } from "./caption-store";
 import { normalizeSubtitleDisplayMode, type SubtitleStyleState } from "./subtitle-style-state";
+import { countVisibleChars } from "./text-utils";
 
 export type CaptionTextPart = {
   kind: "source" | "target";
@@ -377,8 +378,8 @@ function reconcileLaneState(
 }
 
 function isLikelyStreamingRevision(previousText: string, nextText: string): boolean {
-  const previousLength = visibleLength(previousText);
-  const nextLength = visibleLength(nextText);
+  const previousLength = countVisibleChars(previousText);
+  const nextLength = countVisibleChars(nextText);
 
   // 修复：放宽短文本限制，避免误判为 RESET
   // 原逻辑：< 24 直接返回 false，导致实时流式更新时频繁触发 RESET
@@ -401,7 +402,7 @@ function isLikelyStreamingRevision(previousText: string, nextText: string): bool
     return false;
   }
 
-  const stablePrefixLength = visibleLength(previousText.slice(0, prefixLength));
+  const stablePrefixLength = countVisibleChars(previousText.slice(0, prefixLength));
   if (stablePrefixLength >= minLength * 0.42) {
     return true;
   }
@@ -468,12 +469,12 @@ function selectBlocksForBreaks(text: string, breaks: number[]): string[] {
  */
 function shouldStartPendingSplit(text: string, lane: "source" | "target"): boolean {
   const limit = lane === "source" ? SOURCE_PENDING_CHARS : TARGET_PENDING_CHARS;
-  return visibleLength(text) > limit && findNextCommittedBreak(text, 0, lane) < text.length;
+  return countVisibleChars(text) > limit && findNextCommittedBreak(text, 0, lane) < text.length;
 }
 
 function shouldHardSplit(text: string, lane: "source" | "target"): boolean {
   const limit = lane === "source" ? SOURCE_HARD_PENDING_CHARS : TARGET_HARD_PENDING_CHARS;
-  return visibleLength(text) > limit;
+  return countVisibleChars(text) > limit;
 }
 
 /**
@@ -533,13 +534,13 @@ function splitDisplayBlocks(text: string, lane: "source" | "target"): string[] {
  * 2. 经过 graceMs 延迟（SOFT_SPLIT_GRACE_MS = 380ms）
  * 3. 选择第一个自然边界
  */
-function splitByStrongBoundaries(text: string, lane: “source” | “target”): string[] {
-  const pattern = lane === “source” ? /[.!?]+[“’)\]]?\s+/g : /[。！？!?]+[“’”’）\]]?\s*/g;
+function splitByStrongBoundaries(text: string, lane: "source" | "target"): string[] {
+  const pattern = lane === "source" ? /[.!?]+[“’)\]]?\s+/g : /[。！？!?]+[“’”’）\]]?\s*/g;
   return splitAfterPattern(text, pattern);
 }
 
 function splitByDiscourseBoundary(text: string, lane: "source" | "target", softLimit: number): string[] {
-  if (lane !== "source" || visibleLength(text) <= softLimit) {
+  if (lane !== "source" || countVisibleChars(text) <= softLimit) {
     return [text];
   }
   return splitBeforePattern(text, SOURCE_DISCOURSE_BOUNDARY);
@@ -589,7 +590,7 @@ function splitBeforePattern(text: string, pattern: RegExp): string[] {
 function splitLongBlock(text: string, softLimit: number, hardLimit: number): string[] {
   const parts: string[] = [];
   let remaining = text.trim();
-  while (visibleLength(remaining) > hardLimit) {
+  while (countVisibleChars(remaining) > hardLimit) {
     const splitAt = findSoftSplitIndex(remaining, softLimit);
     const head = remaining.slice(0, splitAt).trim();
     if (!head) {
@@ -618,8 +619,4 @@ function findSoftSplitIndex(text: string, preferred: number): number {
     }
   }
   return maxIndex;
-}
-
-function visibleLength(text: string): number {
-  return Array.from(text).filter((char) => char.trim() !== "").length;
 }
