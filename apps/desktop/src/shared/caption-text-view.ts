@@ -65,6 +65,18 @@ export type CaptionTextBlockSelection = {
   pending: boolean;
 };
 
+/**
+ * 断行阈值常量
+ *
+ * 软断行（SOFT）：达到此字符数后开始考虑断行，延迟 900ms
+ * 硬断行（HARD）：达到此字符数后必须断行，延迟 450ms
+ * 待定断行（PENDING）：开始考虑断行的触发点
+ *
+ * 为什么是 118 字符？
+ * - 约 3 行英文文本的长度
+ * - 足够累积一个完整的语义单元
+ * - 避免短句子频繁断行造成闪烁
+ */
 const SOURCE_SOFT_BLOCK_CHARS = 112;
 const TARGET_SOFT_BLOCK_CHARS = 44;
 const SOURCE_HARD_BLOCK_CHARS = 148;
@@ -73,8 +85,27 @@ const SOURCE_PENDING_CHARS = 118;
 const TARGET_PENDING_CHARS = 68;
 const SOURCE_HARD_PENDING_CHARS = 230;
 const TARGET_HARD_PENDING_CHARS = 132;
+
+/**
+ * 断行延迟常量
+ *
+ * SOFT_SPLIT_GRACE_MS：正常情况下的延迟（900ms）
+ * HARD_SPLIT_GRACE_MS：文本过长时的延迟（450ms）
+ *
+ * 为什么需要延迟？
+ * - 给用户阅读前面内容的时间
+ * - 避免断行发生得太突然
+ * - 让打字机动画更自然
+ */
 const SOFT_SPLIT_GRACE_MS = 900;
 const HARD_SPLIT_GRACE_MS = 450;
+
+/**
+ * 话语边界模式（英文）
+ *
+ * 用于在连词、转折词前断行
+ * 例如："I think", "That is", "And", "But"
+ */
 const SOURCE_DISCOURSE_BOUNDARY = /\s+(?=(?:I would|I think|I mean|That is|This is|And|But|So|Now|Then)\b)/g;
 
 export function createInitialCaptionTextBlockBuffer(): CaptionTextBlockBuffer {
@@ -227,20 +258,6 @@ function buildBlocksFromEntry(line: CaptionLine, entry: CaptionTextBlockEntry): 
     };
   });
 
-  // 🔍 调试日志：追踪块拆分
-  if (typeof console !== "undefined" && blockCount > 1) {
-    console.log("[caption-text-view] buildBlocksFromEntry", {
-      line_id: line.id,
-      line_rev: line.rev,
-      block_count: blockCount,
-      source_breaks: entry.source.committedBreaks,
-      target_breaks: entry.target.committedBreaks,
-      pending_index: pendingBlockIndex,
-      block_ids: blocks.map(b => b.id),
-      block_previews: blocks.map(b => `${b.sourceText.substring(0, 20)}...`)
-    });
-  }
-
   return blocks;
 }
 
@@ -333,22 +350,6 @@ function reconcileLaneState(
   const isRevision = !isExtension && isLikelyStreamingRevision(previous.text, normalized);
   const stablePrefixLength = isRevision ? longestCommonPrefixLength(previous.text, normalized) : 0;
 
-  // 🔍 调试日志：追踪文本更新类型
-  if (typeof console !== "undefined" && (previous.text.length > 20 || normalized.length > 20)) {
-    console.log("[caption-text-view] reconcileLaneState", {
-      prev_len: previous.text.length,
-      new_len: normalized.length,
-      prev_preview: previous.text.substring(0, 50),
-      new_preview: normalized.substring(0, 50),
-      is_extension: isExtension,
-      is_revision: isRevision,
-      stable_prefix_len: stablePrefixLength,
-      committed_breaks: previous.committedBreaks.length,
-      action: isExtension ? "EXTEND" : isRevision ? "REVISE" : "RESET",
-      will_reset_breaks: !isExtension && !isRevision
-    });
-  }
-
   if (isExtension) {
     return { ...previous, text: normalized };
   }
@@ -377,36 +378,62 @@ function reconcileLaneState(
   };
 }
 
+/**
+ * 判断新文本是否是旧文本的"修订"（而非完全无关的新内容）
+ *
+ * 用途：reconcileLaneState 据此决定是保留已提交的断行位置（修订），
+ * 还是重置状态（无关文本）。误判为非修订会导致已显示文本重新逐字弹出。
+ *
+ * 判断顺序（从宽松到严格）：
+ * 1. 短文本（< 8 可见字符）：公共前缀占比 ≥ 50% 即视为修订
+ * 2. 一般文本（≥ 8 可见字符）：公共前缀占比 ≥ 40% 即视为修订
+ * 3. 极短文本（< 24 可见字符）且前两条都不满足：判定为非修订
+ * 4. 较长文本：前缀占比 ≥ 42% 或词级重叠率 ≥ 62% 视为修订
+ *
+ * 注意：所有"占比"统一使用可见字符数（countVisibleChars），
+ * 避免空格导致的单位不一致。
+ */
 function isLikelyStreamingRevision(previousText: string, nextText: string): boolean {
+  // Fix 1: Type safety - guard against null/undefined
+  if (!previousText || !nextText) {
+    return false;
+  }
+
   const previousLength = countVisibleChars(previousText);
   const nextLength = countVisibleChars(nextText);
 
-  // 修复：放宽短文本限制，避免误判为 RESET
-  // 原逻辑：< 24 直接返回 false，导致实时流式更新时频繁触发 RESET
-  // 新逻�辑：只要有任何公共前缀，就尝试判断为修订
-  const prefixLength = longestCommonPrefixLength(previousText, nextText);
+  // Fix 2: Empty/whitespace-only strings are not revisions
+  if (previousLength === 0 || nextLength === 0) {
+    return false;
+  }
+
   const minLength = Math.min(previousLength, nextLength);
 
-  // 如果公共前缀占比 > 40%，视为修订
-  if (prefixLength >= minLength * 0.4 && minLength >= 8) {
+  // CRITICAL: 单位一致性 - rawPrefixLength 是 UTF-16 索引，必须转换为可见字符数
+  const rawPrefixLength = longestCommonPrefixLength(previousText, nextText);
+  const visiblePrefixLength = countVisibleChars(previousText.slice(0, rawPrefixLength));
+
+  // 一般文本：公共前缀占比 ≥ 40% 视为修订
+  if (minLength >= 8 && visiblePrefixLength >= minLength * 0.4) {
     return true;
   }
 
-  // 对于更短的文本（< 8字符），只要有 50% 以上公共前缀就视为修订
-  if (minLength < 8 && prefixLength >= minLength * 0.5) {
+  // 极短文本（< 8 可见字符）：公共前缀占比 ≥ 50% 视为修订
+  if (minLength < 8 && visiblePrefixLength >= minLength * 0.5) {
     return true;
   }
 
-  // 原有的相似度判断保留
+  // 文本过短且前缀不足，无法可靠判断，按非修订处理
   if (minLength < 24) {
     return false;
   }
 
-  const stablePrefixLength = countVisibleChars(previousText.slice(0, prefixLength));
-  if (stablePrefixLength >= minLength * 0.42) {
+  // 较长文本：前缀占比 ≥ 42% 直接视为修订
+  if (visiblePrefixLength >= minLength * 0.42) {
     return true;
   }
 
+  // 否则按词级重叠率判断（应对中间词被替换、前缀较短的修订）
   const previousTokens = tokenizeForSimilarity(previousText);
   const nextTokens = tokenizeForSimilarity(nextText);
   if (Math.min(previousTokens.length, nextTokens.length) < 4) {
@@ -472,6 +499,12 @@ function shouldStartPendingSplit(text: string, lane: "source" | "target"): boole
   return countVisibleChars(text) > limit && findNextCommittedBreak(text, 0, lane) < text.length;
 }
 
+/**
+ * 判断是否应该强制断行（Hard Split）
+ *
+ * 当文本超过硬限制（230字符）时，必须立即断行
+ * 延迟时间从 SOFT_SPLIT_GRACE_MS (900ms) 降为 HARD_SPLIT_GRACE_MS (450ms)
+ */
 function shouldHardSplit(text: string, lane: "source" | "target"): boolean {
   const limit = lane === "source" ? SOURCE_HARD_PENDING_CHARS : TARGET_HARD_PENDING_CHARS;
   return countVisibleChars(text) > limit;
@@ -508,6 +541,18 @@ function findNextCommittedBreak(text: string, offset: number, lane: "source" | "
  *
  * 重要：这个函数只是"准备"分割点，不会立即应用
  * 真正的断行时机由 advanceLaneBreaks 中的 graceMs 延迟控制
+ */
+
+/**
+ * 分割显示文本块（用于静态显示，不涉及动态断行）
+ *
+ * 3 种分割优先级：
+ * 1. 强边界（句号、感叹号、问号）
+ * 2. 话语边界（连词、转折词）
+ * 3. 长块强制分割（超过硬限制）
+ *
+ * 注意：这个函数用于已完成的文本显示，不控制实时断行的 graceMs 延迟
+ * 实时断行的延迟由 updateBlockLane 中的 SOFT_SPLIT_GRACE_MS 控制
  */
 function splitDisplayBlocks(text: string, lane: "source" | "target"): string[] {
   const normalized = text.trim();

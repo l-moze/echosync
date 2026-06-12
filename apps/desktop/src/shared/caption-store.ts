@@ -31,20 +31,6 @@ export const OVERLAY_DISPLAY_WINDOW_LINE_LIMIT = 60;
 export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): CaptionLine[] {
   const receivedAtMs = Date.now();
 
-  // 🔍 调试日志：追踪事件处理
-  if (typeof console !== "undefined" && event.type !== "tts.audio") {
-    console.log("[caption-store] applyRealtimeEvent", {
-      type: event.type,
-      segment_id: "segment_id" in event ? event.segment_id : undefined,
-      rev: "rev" in event ? event.rev : undefined,
-      status: "status" in event ? event.status : undefined,
-      text_preview: "source_text" in event ? event.source_text?.substring(0, 40) : undefined,
-      text_len: "source_text" in event ? event.source_text?.length : undefined,
-      lines_count: lines.length,
-      timestamp: receivedAtMs
-    });
-  }
-
   if (event.type === "transcript.partial") {
     return upsertTranscriptDraft(lines, event, receivedAtMs);
   }
@@ -74,17 +60,6 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
     const finalTargetText = previousLine?.targetText && previousLine.targetText.length > event.target_text.length
       ? previousLine.targetText
       : event.target_text;
-
-    // 🔍 调试日志
-    if (typeof console !== "undefined" && previousLine) {
-      console.log("[caption-store] segment.commit", {
-        segment_id: event.segment_id,
-        prev_source_len: previousLine.sourceText.length,
-        event_source_len: event.source_text.length,
-        final_source_len: finalSourceText.length,
-        used_previous: finalSourceText === previousLine.sourceText
-      });
-    }
 
     const nextLine: CaptionLine = withReceivedAt({
       id: event.segment_id,
@@ -306,34 +281,6 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
   const previousIndex = findLineIndexFromTail(lines, event.segment_id);
   const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
 
-  // 🔍 关键调试：记录所有可能导致文本丢失的更新
-  if (previousLine && typeof console !== "undefined") {
-    const logData = {
-      timestamp: new Date().toISOString(),
-      segment_id: event.segment_id,
-      rev: event.rev,
-      prev_rev: previousLine.rev,
-      prev_text_len: previousLine.sourceText.length,
-      prev_text_full: previousLine.sourceText,
-      new_text_len: event.source_text.length,
-      new_text_full: event.source_text,
-      is_longer: event.source_text.length > previousLine.sourceText.length,
-      starts_with_prev: event.source_text.startsWith(previousLine.sourceText),
-      contains_prev_start: event.source_text.includes(previousLine.sourceText.substring(0, Math.min(20, previousLine.sourceText.length))),
-      text_shrink_amount: previousLine.sourceText.length - event.source_text.length
-    };
-
-    console.log("[transcript.partial] 行为分析", logData);
-
-    // 如果文本异常缩短 >10 字符，额外记录详细信息
-    if (logData.text_shrink_amount > 10) {
-      console.error("[transcript.partial] ⚠️ 检测到文本异常缩短！", {
-        ...logData,
-        alert: "文本从 " + logData.prev_text_len + " 缩短到 " + logData.new_text_len
-      });
-    }
-  }
-
   if (!previousLine && !event.source_text.trim()) {
     return lines;
   }
@@ -361,15 +308,9 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     }
     // 情况3：新文本短很多（可能是错误） → 保留旧文本
     else if (prevLen > newLen + 10) {
-      console.warn("[transcript.partial] 检测到文本异常缩短", {
-        segment_id: event.segment_id,
-        rev: event.rev,
-        prev_len: prevLen,
-        new_len: newLen,
-        prev_preview: previousLine.sourceText.substring(0, 50),
-        new_preview: event.source_text.substring(0, 50),
-        action: "保留旧文本"
-      });
+      if (typeof console !== "undefined") {
+        console.warn(`[caption-store] 文本异常缩短 ${prevLen}→${newLen}，保留旧文本 (segment ${event.segment_id})`);
+      }
       finalSourceText = previousLine.sourceText;
     }
     // 情况4：略短，可能是正常修正 → 使用新文本
@@ -389,17 +330,6 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     endMs: event.end_ms,
     patchCount: previousLine?.patchCount ?? 0
   }, receivedAtMs, { previousLine, source: true });
-
-  // 🔍 记录最终写入 React 状态的数据
-  if (typeof console !== "undefined") {
-    console.log("[transcript.partial] 最终写入状态", {
-      segment_id: nextLine.id,
-      rev: nextLine.rev,
-      final_text_len: nextLine.sourceText.length,
-      final_text_preview: nextLine.sourceText.substring(0, 50),
-      was_protected: finalSourceText !== event.source_text
-    });
-  }
 
   if (previousLine) {
     return replaceLineAt(lines, previousIndex, nextLine);
@@ -633,14 +563,9 @@ function selectCaptionUpdateSourceText(previousLine: CaptionLine | undefined, ev
   // 修复：即使 state === "final"，也要保护已有的更长文本
   // 后端翻译服务在 interim → stable 切换时可能发送截断的文本
   if (previousLine.sourceText.length > newText.length + 5) {
-    console.warn("[caption_update] 检测到文本异常缩短", {
-      segment_id: event.segment_id,
-      state: event.state,
-      prev_len: previousLine.sourceText.length,
-      new_len: newText.length,
-      shrink: previousLine.sourceText.length - newText.length,
-      action: "保留旧文本"
-    });
+    if (typeof console !== "undefined") {
+      console.warn(`[caption-store] caption_update 文本异常缩短 ${previousLine.sourceText.length}→${newText.length}，保留旧文本 (segment ${event.segment_id})`);
+    }
     return previousLine.sourceText;
   }
 
