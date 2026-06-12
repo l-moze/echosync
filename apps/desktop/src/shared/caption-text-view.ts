@@ -1,3 +1,26 @@
+/**
+ * 字幕文本视图 - 逐行动画和断行逻辑
+ *
+ * 【核心设计理念】：
+ * 1. 原文持续流畅显示（打字机效果），不因标点符号或译文延迟而停顿
+ * 2. 达到阈值（~118字符，约3行）后，在自然边界（句号、逗号）自然断行
+ * 3. 断行后，前面内容上移/淡出，当前文本继续在底部累积
+ * 4. 所有内容完整显示，不使用 "..." 省略
+ *
+ * 【关键常量】：
+ * - SOURCE_PENDING_CHARS = 118：原文开始考虑断行的字符数
+ * - TARGET_PENDING_CHARS = 68：译文开始考虑断行的字符数
+ * - SOFT_SPLIT_GRACE_MS = 380ms：断行延迟，给用户阅读时间
+ *
+ * 【数据结构】：
+ * - CaptionTextBlockLaneState.committedBreaks：记录所有断行位置
+ * - 用于将长文本分成多个"块"（block），每个块一行显示
+ *
+ * 【为什么不能"遇到句号就断行"】：
+ * - 短句子（<118字符）不应该断行，否则每句话都是新行，造成闪烁
+ * - 原文必须持续显示，不能等待译文
+ * - 断行是为了避免单行过长，不是为了"分句"
+ */
 import type { CaptionLine } from "./caption-store";
 import { normalizeSubtitleDisplayMode, type SubtitleStyleState } from "./subtitle-style-state";
 
@@ -220,6 +243,27 @@ function buildBlocksFromEntry(line: CaptionLine, entry: CaptionTextBlockEntry): 
   return blocks;
 }
 
+/**
+ * 更新文本块的断行状态（核心逻辑）
+ *
+ * 【逐行动画的完整流程】：
+ * 1. ASR 持续输出打字机效果的文本（reconcileLaneState 控制打字速度）
+ * 2. 文本累积到 SOURCE_PENDING_CHARS (118字符) 后，开始"考虑"断行
+ * 3. 等待 graceMs 延迟（380ms），给用户阅读时间
+ * 4. 在自然边界（句号、逗号等）断行，将前面部分"提交"
+ * 5. 后续文本继续在当前位置累积显示
+ *
+ * 【关键设计原则】：
+ * - 原文必须持续流畅显示，不能因为等待译文而停顿
+ * - 不在短文本时断行（避免"遇到句号就断"）
+ * - 断行后的内容完整显示（committedBreaks 记录所有断行位置）
+ * - 不使用 "..." 省略，所有字符都呈现
+ *
+ * @param previous 上一次的状态（包含已提交的断行位置）
+ * @param text 当前完整文本
+ * @param lane "source" 原文 | "target" 译文
+ * @param nowMs 当前时间戳（用于计算延迟）
+ */
 function updateBlockLane(
   previous: CaptionTextBlockLaneState | undefined,
   text: string,
@@ -231,26 +275,36 @@ function updateBlockLane(
     return createLaneState(normalized);
   }
 
+  // 步骤1：调和状态（处理文本更新、RESET、EXTEND、REVISE）
   const base = reconcileLaneState(previous, normalized);
   const lastCommittedBreak = base.committedBreaks.at(-1) ?? 0;
   const tail = normalized.slice(lastCommittedBreak).trimStart();
+
+  // 步骤2：检查是否达到断行阈值（118字符）
   if (!shouldStartPendingSplit(tail, lane)) {
     return { ...base, pendingSinceMs: null };
   }
 
+  // 步骤3：延迟断行，给用户阅读时间（380ms）
   const pendingSinceMs = base.pendingSinceMs ?? nowMs;
   const graceMs = shouldHardSplit(tail, lane) ? HARD_SPLIT_GRACE_MS : SOFT_SPLIT_GRACE_MS;
   if (nowMs - pendingSinceMs < graceMs) {
     return { ...base, pendingSinceMs };
   }
 
+  // 步骤4：在自然边界（句号、逗号等）找到断行位置
   const nextBreak = findNextCommittedBreak(normalized, lastCommittedBreak, lane);
   if (nextBreak <= lastCommittedBreak || nextBreak >= normalized.length) {
+    // 没有找到合适的断行位置，继续等待
     return { ...base, pendingSinceMs };
   }
 
+  // 步骤5：提交断行位置，将前面的文本"固化"
+  // committedBreaks 记录所有断行位置，用于 selectBlocksForBreaks 分块显示
   const committedBreaks = [...base.committedBreaks, nextBreak];
   const remainingTail = normalized.slice(nextBreak).trimStart();
+
+  // 步骤6：检查剩余文本是否需要继续断行
   return {
     text: normalized,
     committedBreaks,
@@ -401,6 +455,17 @@ function selectBlocksForBreaks(text: string, breaks: number[]): string[] {
   return parts.length > 0 ? parts : [normalized];
 }
 
+/**
+ * 判断是否应该开始考虑断行（Pending Split）
+ *
+ * 重要：只有文本累积到一定长度（118 字符）后才触发断行
+ * 这样可以避免"遇到句号就立即断行"导致的闪烁
+ *
+ * 设计原则：
+ * - 原文应该持续流畅显示（打字机效果）
+ * - 不因为标点符号就强制分段
+ * - 达到阈值后，自然地将前面内容上移，当前文本继续显示
+ */
 function shouldStartPendingSplit(text: string, lane: "source" | "target"): boolean {
   const limit = lane === "source" ? SOURCE_PENDING_CHARS : TARGET_PENDING_CHARS;
   return visibleLength(text) > limit && findNextCommittedBreak(text, 0, lane) < text.length;
@@ -411,6 +476,16 @@ function shouldHardSplit(text: string, lane: "source" | "target"): boolean {
   return visibleLength(text) > limit;
 }
 
+/**
+ * 查找下一个可以断行的位置
+ *
+ * 断行策略：
+ * 1. 优先在自然边界断行（句号、逗号、连词等）
+ * 2. 选择第一个合适的边界（不等待多个句子累积）
+ * 3. 如果没有自然边界，返回文本末尾（不强制断行）
+ *
+ * 注意：这个函数只是"查找"断行位置，真正是否断行由 shouldStartPendingSplit 控制
+ */
 function findNextCommittedBreak(text: string, offset: number, lane: "source" | "target"): number {
   const rawTail = text.slice(offset);
   const tail = rawTail.trimStart();
@@ -422,6 +497,17 @@ function findNextCommittedBreak(text: string, offset: number, lane: "source" | "
   return offset + skippedWhitespace + candidateBlocks[0].length;
 }
 
+/**
+ * 将文本分割成多个显示块（用于断行）
+ *
+ * 分割优先级（从高到低）：
+ * 1. 强边界：句号、感叹号、问号后（splitByStrongBoundaries）
+ * 2. 话语边界：连词、转折词（splitByDiscourseBoundary）
+ * 3. 长块强制分割：超过硬限制时按字符数切分（splitLongBlock）
+ *
+ * 重要：这个函数只是"准备"分割点，不会立即应用
+ * 真正的断行时机由 advanceLaneBreaks 中的 graceMs 延迟控制
+ */
 function splitDisplayBlocks(text: string, lane: "source" | "target"): string[] {
   const normalized = text.trim();
   if (!normalized) {
@@ -435,8 +521,20 @@ function splitDisplayBlocks(text: string, lane: "source" | "target"): string[] {
   return boundaryParts.flatMap((part) => splitLongBlock(part, softLimit, hardLimit));
 }
 
-function splitByStrongBoundaries(text: string, lane: "source" | "target"): string[] {
-  const pattern = lane === "source" ? /[.!?]+["')\]]?\s+/g : /[。！？!?]+["'”’）\]]?\s*/g;
+/**
+ * 按强边界分割文本（句号、感叹号、问号）
+ *
+ * 英文：/[.!?]+[“’)\]]?\s+/g  - 句号后必须有空格
+ * 中文：/[。！？!?]+[“’”’）\]]?\s* /g - 句号后可以没有空格
+ *
+ * 注意：这个函数不会”立即断行”！
+ * 它只是标记出可能的断行位置，真正断行需要满足：
+ * 1. 文本长度 > SOURCE_PENDING_CHARS (118字符)
+ * 2. 经过 graceMs 延迟（SOFT_SPLIT_GRACE_MS = 380ms）
+ * 3. 选择第一个自然边界
+ */
+function splitByStrongBoundaries(text: string, lane: “source” | “target”): string[] {
+  const pattern = lane === “source” ? /[.!?]+[“’)\]]?\s+/g : /[。！？!?]+[“’”’）\]]?\s*/g;
   return splitAfterPattern(text, pattern);
 }
 
