@@ -389,6 +389,17 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     patchCount: previousLine?.patchCount ?? 0
   }, receivedAtMs, { previousLine, source: true });
 
+  // 🔍 记录最终写入 React 状态的数据
+  if (typeof console !== "undefined") {
+    console.log("[transcript.partial] 最终写入状态", {
+      segment_id: nextLine.id,
+      rev: nextLine.rev,
+      final_text_len: nextLine.sourceText.length,
+      final_text_preview: nextLine.sourceText.substring(0, 50),
+      was_protected: finalSourceText !== event.source_text
+    });
+  }
+
   if (previousLine) {
     return replaceLineAt(lines, previousIndex, nextLine);
   }
