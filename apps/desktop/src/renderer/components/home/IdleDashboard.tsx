@@ -20,7 +20,6 @@ import type { TtsProviderSelection } from "../../../shared/tts-provider-catalog"
 import { languageDirectionOptions } from "../../constants/language";
 import type { LanguageDirectionId, LanguageDirectionOption } from "../../types/language";
 import { PreferenceSettingsPanel } from "../preferences/PreferenceSettingsPanel";
-import { SessionRecordsWindow } from "../records/SessionRecordsWindow";
 import { PreflightAudioVisualizer } from "../session/PreflightAudioVisualizer";
 import { LauncherRow } from "./LauncherRow";
 
@@ -40,6 +39,7 @@ export function IdleDashboard({
   onTranslationProviderSelect,
   onTtsProviderSelect,
   onSessionRecordsChanged,
+  onRecordsOpen,
   onStart,
   sessionRecords,
   sessionUi,
@@ -62,6 +62,7 @@ export function IdleDashboard({
   onTranslationProviderSelect: (provider: TranslationProviderSelection) => void;
   onTtsProviderSelect: (provider: TtsProviderSelection) => void;
   onSessionRecordsChanged: () => Promise<void>;
+  onRecordsOpen: () => void;
   onStart: () => void;
   sessionRecords: SessionRecordListItem[];
   sessionUi: SessionUiState;
@@ -70,7 +71,6 @@ export function IdleDashboard({
   ttsProvider: TtsProviderSelection;
 }) {
   const [preferencesOpen, setPreferencesOpen] = useState(false);
-  const [recordsOpen, setRecordsOpen] = useState(false);
   const audioActive = sessionUi.audioActivity === "active" || sessionUi.audioActivity === "clipping";
   const serviceReady = Boolean(agentCapabilities) && !agentCapabilitiesError;
   const readinessSummary = buildHomeReadinessSummary({
@@ -141,7 +141,7 @@ export function IdleDashboard({
 
         <div className="launcherStatusLine">
           <span>{readinessSummary}</span>
-          <button onClick={() => setRecordsOpen(true)}>会议记录</button>
+          <button onClick={onRecordsOpen}>会议记录</button>
           <button onClick={() => setPreferencesOpen(true)}>{HOME_LAUNCHER_COPY.preferencesAction}</button>
         </div>
 
@@ -164,12 +164,6 @@ export function IdleDashboard({
         onTtsProviderSelect={onTtsProviderSelect}
         translationProvider={translationProvider}
         ttsProvider={ttsProvider}
-      />
-      <SessionRecordsWindow
-        isOpen={recordsOpen}
-        onClose={() => setRecordsOpen(false)}
-        onRecordsChanged={onSessionRecordsChanged}
-        records={sessionRecords}
       />
     </div>
   );
