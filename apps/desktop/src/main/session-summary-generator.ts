@@ -7,7 +7,8 @@ import {
   type Risk,
   type Decision,
   type TerminologySuggestion,
-  type EvidenceAnchor
+  type EvidenceAnchor,
+  type SummaryValidation
 } from "../shared/session-records";
 
 export type SessionSummaryFetch = (
@@ -232,21 +233,48 @@ export function parseSessionSummaryContent(
     "term"
   );
 
-  // Validate evidence and collect warnings instead of filtering
-  const validation = validateAllEvidence(
-    { actionItems, topics, risks, decisions, terminologySuggestions },
-    segments
-  );
+  // Filter to keep only evidence-backed items, but surface what was dropped via validation
+  const validation: SummaryValidation = {
+    valid: true,
+    invalidItemCount: 0,
+    missingEvidenceItems: [],
+    invalidSegmentIds: [],
+    invalidQuotes: []
+  };
+
+  const keepValid = <T extends ActionItem | Topic | Risk | Decision | TerminologySuggestion>(items: T[]): T[] =>
+    items.filter((item) => validateEvidenceAnchors(item, segments, validation));
+
+  const validActionItems = keepValid(actionItems);
+  const validTopics = keepValid(topics);
+  const validRisks = keepValid(risks);
+  const validDecisions = keepValid(decisions);
+  const validTerms = keepValid(terminologySuggestions);
+
+  validation.invalidItemCount =
+    validation.missingEvidenceItems.length +
+    validation.invalidSegmentIds.length +
+    validation.invalidQuotes.length;
+  validation.valid = validation.invalidItemCount === 0;
+
+  if (validation.invalidItemCount > 0) {
+    console.warn(
+      `摘要校验剔除 ${validation.invalidItemCount} 个无证据结论 ` +
+      `(缺证据:${validation.missingEvidenceItems.length} ` +
+      `无效片段:${validation.invalidSegmentIds.length} ` +
+      `引用不匹配:${validation.invalidQuotes.length})`
+    );
+  }
 
   return {
     status: "ready",
     text: stringValue(readField(parsed, "summary", "text")),
     keywords: stringArray(readField(parsed, "keywords")),
-    actionItems,
-    topics,
-    risks,
-    decisions,
-    terminologySuggestions,
+    actionItems: validActionItems,
+    topics: validTopics,
+    risks: validRisks,
+    decisions: validDecisions,
+    terminologySuggestions: validTerms,
     validation,
     updatedAt
   };
@@ -350,91 +378,30 @@ function parseEvidenceAnchors(value: unknown, segments: SessionRecordSegment[]):
     .filter((anchor) => anchor.segmentId && anchor.quote);
 }
 
-function validateAllEvidence(
-  items: {
-    actionItems: ActionItem[];
-    topics: Topic[];
-    risks: Risk[];
-    decisions: Decision[];
-    terminologySuggestions: TerminologySuggestion[];
-  },
-  segments: SessionRecordSegment[]
-): SummaryValidation {
-  const missingEvidenceItems: string[] = [];
-  const invalidSegmentIds: string[] = [];
-  const invalidQuotes: string[] = [];
-
-  const allItems = [
-    ...items.actionItems,
-    ...items.topics,
-    ...items.risks,
-    ...items.decisions,
-    ...items.terminologySuggestions
-  ];
-
-  for (const item of allItems) {
-    const displayText = "text" in item ? item.text : `${item.sourceText} -> ${item.targetText}`;
-
-    if (!item.evidence || item.evidence.length === 0) {
-      missingEvidenceItems.push(displayText);
-      continue;
-    }
-
-    for (const anchor of item.evidence) {
-      const segment = segments.find((s) => s.id === anchor.segmentId);
-      if (!segment) {
-        invalidSegmentIds.push(`${displayText} -> ${anchor.segmentId}`);
-        continue;
-      }
-
-      const sourceText = segment.sourceEditedText ?? segment.sourceText;
-      const targetText = segment.targetEditedText ?? segment.targetText;
-      const fullText = `${sourceText} ${targetText}`;
-
-      if (!fullText.includes(anchor.quote)) {
-        // Try fuzzy match with 90% similarity threshold
-        if (!fuzzyMatch(fullText, anchor.quote, 0.9)) {
-          invalidQuotes.push(`${displayText} -> "${anchor.quote}"`);
-        }
-      }
-    }
-  }
-
-  const invalidItemCount = missingEvidenceItems.length + invalidSegmentIds.length + invalidQuotes.length;
-
-  if (invalidItemCount > 0) {
-    console.warn(
-      `摘要校验发现 ${invalidItemCount} 个证据问题:\n` +
-      `- 缺少证据: ${missingEvidenceItems.length}\n` +
-      `- 无效片段ID: ${invalidSegmentIds.length}\n` +
-      `- 引用不匹配: ${invalidQuotes.length}`
-    );
-  }
-
-  return {
-    valid: invalidItemCount === 0,
-    invalidItemCount,
-    missingEvidenceItems,
-    invalidSegmentIds,
-    invalidQuotes
-  };
-}
-
 function validateEvidenceAnchors(
   item: ActionItem | Topic | Risk | Decision | TerminologySuggestion,
-  segments: SessionRecordSegment[]
+  segments: SessionRecordSegment[],
+  validation?: SummaryValidation
 ): boolean {
   const displayText = "text" in item ? item.text : `${item.sourceText} -> ${item.targetText}`;
 
   if (!item.evidence || item.evidence.length === 0) {
-    console.warn(`摘要条目 "${displayText}" 缺少证据锚点`);
+    if (validation) {
+      validation.missingEvidenceItems.push(displayText);
+    } else {
+      console.warn(`摘要条目 "${displayText}" 缺少证据锚点`);
+    }
     return false;
   }
 
   for (const anchor of item.evidence) {
     const segment = segments.find((s) => s.id === anchor.segmentId);
     if (!segment) {
-      console.warn(`摘要条目 "${displayText}" 引用不存在的片段 ID: ${anchor.segmentId}`);
+      if (validation) {
+        validation.invalidSegmentIds.push(`${displayText} -> ${anchor.segmentId}`);
+      } else {
+        console.warn(`摘要条目 "${displayText}" 引用不存在的片段 ID: ${anchor.segmentId}`);
+      }
       return false;
     }
 
@@ -445,7 +412,11 @@ function validateEvidenceAnchors(
     if (!fullText.includes(anchor.quote)) {
       // Try fuzzy match with 90% similarity threshold
       if (!fuzzyMatch(fullText, anchor.quote, 0.9)) {
-        console.warn(`摘要条目 "${displayText}" 的引用文本不匹配片段内容: "${anchor.quote}"`);
+        if (validation) {
+          validation.invalidQuotes.push(`${displayText} -> "${anchor.quote}"`);
+        } else {
+          console.warn(`摘要条目 "${displayText}" 的引用文本不匹配片段内容: "${anchor.quote}"`);
+        }
         return false;
       }
     }

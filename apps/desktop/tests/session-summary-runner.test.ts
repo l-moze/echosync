@@ -80,6 +80,7 @@ describe("会议记录摘要后台任务", () => {
       actionItems: [],
       topics: [],
       risks: [],
+      decisions: [],
       terminologySuggestions: [],
       errorMessage: "模型暂不可用",
       updatedAt: "2026-06-07T00:00:00.000Z"
@@ -105,6 +106,7 @@ function recordFixture(): SessionRecord {
       actionItems: [],
       topics: [],
       risks: [],
+      decisions: [],
       terminologySuggestions: []
     },
     metadata: {
