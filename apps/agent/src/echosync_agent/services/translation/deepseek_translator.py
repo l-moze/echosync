@@ -18,6 +18,11 @@ ClientFactory = Callable[..., Any]
 DEEPSEEK_BETA_BASE_URL = "https://api.deepseek.com/beta"
 THINKING_DISABLED = {"thinking": {"type": "disabled"}}
 STREAM_OPTIONS_WITH_USAGE = {"include_usage": True}
+
+# 源文截断保护阈值（与前端 caption-store.ts 对齐）
+# 新文本比历史短超过该字符数时，判定为截断并保留历史文本
+TEXT_SHRINK_THRESHOLD = 8
+
 logger = logging.getLogger(__name__)
 
 
@@ -330,8 +335,9 @@ class DeepSeekTranslator(Translator):
         if current_text.startswith(previous.source_text):
             return current_text
 
-        # Case 3: Significantly shorter (>5 chars) → likely truncation, preserve history
-        if prev_len > curr_len + 5:
+        # Case 3: Significantly shorter (>TEXT_SHRINK_THRESHOLD chars) → likely truncation, preserve history
+        # NOTE: TEXT_SHRINK_THRESHOLD = 8, aligned with frontend protection (caption-store.ts)
+        if prev_len > curr_len + TEXT_SHRINK_THRESHOLD:
             logger.warning(
                 "source_text_truncation_detected segment_id=%s rev=%d "
                 "prev_len=%d curr_len=%d shrink=%d action=preserved",
@@ -349,7 +355,7 @@ class DeepSeekTranslator(Translator):
 
             return previous.source_text
 
-        # Case 4: Slightly shorter (≤5 chars) → likely ASR correction, use current
+        # Case 4: Slightly shorter (≤TEXT_SHRINK_THRESHOLD chars) → likely ASR correction, use current
         return current_text
 
     def _build_segment(
