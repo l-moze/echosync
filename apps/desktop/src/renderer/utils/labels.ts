@@ -56,3 +56,14 @@ export function engineOptionLabel(label: string, id: string) {
   }
   return label;
 }
+
+export function audioActivityLabel(activity: SessionUiState["audioActivity"]) {
+  const labels: Record<SessionUiState["audioActivity"], string> = {
+    active: "有输入",
+    clipping: "过载",
+    device_missing: "设备缺失",
+    permission_denied: "权限拒绝",
+    silent: "静音"
+  };
+  return labels[activity];
+}

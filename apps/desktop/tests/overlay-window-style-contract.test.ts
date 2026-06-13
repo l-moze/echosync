@@ -3,8 +3,16 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const stylesheet = readFileSync(resolve(__dirname, "../src/renderer/styles.css"), "utf8");
-const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
+import { readStylesheetWithImports } from "./helpers/stylesheet";
+
+const stylesheet = readStylesheetWithImports(resolve(__dirname, "../src/renderer/styles.css"));
+const rendererSource = [
+  "../src/renderer/main.tsx",
+  "../src/renderer/components/caption/OverlayWindow.tsx",
+  "../src/renderer/components/caption/OverlayResizeHandles.tsx",
+  "../src/renderer/components/caption/OverlayToolbar.tsx",
+  "../src/renderer/components/caption/OverlaySessionBar.tsx"
+].map((path) => readFileSync(resolve(__dirname, path), "utf8")).join("\n");
 const preOverlayStylesheet = stylesheet.slice(0, stylesheet.indexOf("/* Overlay v2:"));
 const overlayStylesheet = stylesheet.slice(stylesheet.indexOf("/* Overlay v2:"));
 

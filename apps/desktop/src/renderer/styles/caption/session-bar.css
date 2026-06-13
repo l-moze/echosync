@@ -1,0 +1,75 @@
+.overlaySessionBar {
+  position: relative;
+  z-index: 7;
+  display: grid;
+  grid-template-columns: auto auto max-content minmax(96px, max-content) auto max-content;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: min(100%, 760px);
+  max-width: 100%;
+  min-height: 34px;
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.84);
+  transform: none;
+}
+
+.sessionTimer {
+  min-width: 52px;
+  color: #ffffff;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 760;
+  text-align: center;
+}
+
+.sessionPill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  max-width: min(210px, 30vw);
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planPill {
+  max-width: min(190px, 24vw);
+}
+
+.sessionPill span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.actionPill {
+  cursor: pointer;
+}
+
+.actionPill:hover,
+.actionPill:focus-visible {
+  border-color: rgba(120, 196, 255, 0.44);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.languagePill {
+  min-width: 74px;
+  color: #ffffff;
+}
+
+.captionContentSwitch {
+  flex: 0 1 auto;
+  max-width: 100%;
+}

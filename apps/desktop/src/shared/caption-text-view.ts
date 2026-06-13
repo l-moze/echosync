@@ -218,7 +218,8 @@ export function selectCaptionTextBlocks(
     ];
   }
 
-  const sourceBlocks = splitDisplayBlocks(sourceText || "等待音频输入...", "source");
+  const sourceIsPlaceholder = !sourceText;
+  const sourceBlocks = splitDisplayBlocks(sourceIsPlaceholder ? "等待音频输入..." : sourceText, "source");
   const targetBlocks = targetText ? splitDisplayBlocks(targetText, "target") : [];
   const blockCount = Math.max(1, sourceBlocks.length, targetBlocks.length);
 
@@ -230,7 +231,7 @@ export function selectCaptionTextBlocks(
       sourceText: sourceBlock,
       targetText: targetBlock,
       state: line.state,
-      isSourcePlaceholder: !sourceBlock,
+      isSourcePlaceholder: sourceIsPlaceholder || !sourceBlock,
       isTargetPlaceholder: !targetBlock
     };
   });
@@ -562,6 +563,9 @@ function splitDisplayBlocks(text: string, lane: "source" | "target"): string[] {
 
   const softLimit = lane === "source" ? SOURCE_SOFT_BLOCK_CHARS : TARGET_SOFT_BLOCK_CHARS;
   const hardLimit = lane === "source" ? SOURCE_HARD_BLOCK_CHARS : TARGET_HARD_BLOCK_CHARS;
+  if (countVisibleChars(normalized) <= softLimit) {
+    return [normalized];
+  }
   const sentenceParts = splitByStrongBoundaries(normalized, lane);
   const boundaryParts = sentenceParts.flatMap((part) => splitByDiscourseBoundary(part, lane, softLimit));
   return boundaryParts.flatMap((part) => splitLongBlock(part, softLimit, hardLimit));

@@ -1,0 +1,109 @@
+.summaryPanel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.heroStart {
+  min-height: 360px;
+  padding: 34px;
+}
+
+.heroStart h1,
+.summaryPanel h1 {
+  max-width: 620px;
+  margin: 0;
+  color: #202936;
+  font-size: 31px;
+  line-height: 1.18;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.heroStart > p:not(.eyebrow),
+.summaryPanel > p:not(.eyebrow) {
+  max-width: 560px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.dashboardPanel,
+.summaryPanel {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
+  padding: 24px;
+}
+
+.dashboardPanel h2,
+.dashboardPanel h3 {
+  margin: 0;
+  color: var(--text);
+}
+
+.presetGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 22px 0;
+}
+
+.presetCard {
+  display: grid;
+  gap: 8px;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: #fbfcff;
+  text-align: left;
+}
+
+.presetCard span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.presetCard.selected {
+  border-color: rgba(39, 120, 255, 0.36);
+  background: var(--blue-soft);
+  color: #1764f5;
+}
+
+.preflightMeter {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 560px);
+  justify-self: center;
+  margin-top: 0;
+}
+
+.preflightMeter p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.meterTrack {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1f6;
+}
+
+.meterFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success);
+  min-width: 3px;
+}
+
+.sourceTabs.horizontal {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 20px;
+}

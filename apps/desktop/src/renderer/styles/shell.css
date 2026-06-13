@@ -1,0 +1,299 @@
+.controlShell {
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, #fafbfd, rgba(244, 246, 249, 0.96) 220px),
+    var(--page);
+}
+
+.titleBar {
+  -webkit-app-region: drag;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  height: 58px;
+  padding: 0 28px 0 32px;
+  border-bottom: 1px solid rgba(224, 229, 237, 0.92);
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(18px) saturate(1.12);
+}
+
+.titleBar button,
+.featureCard button,
+.startPanel button,
+.confirmDialog button,
+.startupCard button {
+  -webkit-app-region: no-drag;
+}
+
+.titleBarLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.backButton {
+  display: inline-grid;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  place-items: center;
+  padding: 0;
+  border-radius: 999px;
+  color: #3f4652;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.backButton:hover,
+.backButton:focus-visible {
+  background: rgba(40, 120, 255, 0.09);
+  color: var(--blue);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.appBrandMark {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background-color: #ffffff;
+  background-image: url("../assets/icons/app-mark-64.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 22px 22px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.78) inset,
+    0 8px 18px rgba(28, 42, 68, 0.1);
+}
+
+.brand strong {
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.centerPill {
+  min-width: 128px;
+  padding: 8px 24px;
+  border: 1px solid rgba(206, 214, 225, 0.82);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #3f4a5c;
+  font-size: 14px;
+  font-weight: 760;
+  text-align: center;
+  box-shadow: none;
+}
+
+.windowActions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.windowActions button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-color: rgba(214, 222, 233, 0.88);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #3f4652;
+  font-size: 16px;
+  font-weight: 740;
+  line-height: 1;
+}
+
+.windowActions button:hover,
+.windowActions button:focus-visible {
+  border-color: rgba(40, 120, 255, 0.26);
+  background: var(--blue-soft);
+}
+
+.modalScrim,
+.startupScrim {
+  position: fixed;
+  inset: 58px 0 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(33, 40, 52, 0.34);
+  backdrop-filter: blur(6px);
+}
+
+.startupScrim {
+  z-index: 24;
+}
+
+.confirmDialog,
+.startupCard {
+  display: grid;
+  justify-items: center;
+  width: min(100%, 340px);
+  gap: 12px;
+  padding: 24px;
+  border: 1px solid rgba(215, 223, 236, 0.92);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 26px 70px rgba(38, 54, 86, 0.24),
+    0 1px 0 rgba(255, 255, 255, 0.72) inset;
+}
+
+.confirmDialog {
+  justify-items: stretch;
+}
+
+.confirmDialog h2,
+.startupCard h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.confirmDialog p,
+.startupCard p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.confirmDialog p {
+  text-align: left;
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.safeAction,
+.dangerAction,
+.primaryAction,
+.startupCancel {
+  min-width: 96px;
+  padding: 0 16px;
+  border-color: var(--line-strong);
+  background: #ffffff;
+  font-weight: 720;
+}
+
+.safeAction:hover,
+.safeAction:focus-visible,
+.startupCancel:hover,
+.startupCancel:focus-visible {
+  border-color: rgba(40, 120, 255, 0.34);
+  background: var(--blue-soft);
+}
+
+.dangerAction {
+  border-color: rgba(184, 75, 75, 0.28);
+  color: #9a3737;
+  background: #fff7f7;
+}
+
+.dangerAction:hover,
+.dangerAction:focus-visible {
+  border-color: rgba(184, 75, 75, 0.44);
+  color: #872d2d;
+  background: #ffecec;
+}
+
+.primaryAction {
+  border-color: transparent;
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.primaryAction:hover,
+.primaryAction:focus-visible {
+  color: #ffffff;
+  background: #1767ef;
+}
+
+.startupCancel {
+  margin-top: 2px;
+}
+
+.audioLoadingBars {
+  display: grid;
+  grid-auto-flow: column;
+  align-items: center;
+  gap: 5px;
+  height: 38px;
+  color: var(--blue);
+}
+
+.audioLoadingBars span {
+  display: block;
+  width: 5px;
+  height: 18px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.72;
+  transform-origin: center;
+}
+
+.audioLoadingBars.active span {
+  animation: loadingBarPulse 920ms ease-in-out infinite;
+}
+
+.audioLoadingBars span:nth-child(2) {
+  height: 25px;
+  animation-delay: 100ms;
+}
+
+.audioLoadingBars span:nth-child(3) {
+  height: 31px;
+  animation-delay: 200ms;
+}
+
+.audioLoadingBars span:nth-child(4) {
+  height: 31px;
+  animation-delay: 300ms;
+}
+
+.audioLoadingBars span:nth-child(5) {
+  height: 25px;
+  animation-delay: 400ms;
+}
+
+.audioLoadingBars span:nth-child(6) {
+  animation-delay: 500ms;
+}
+
+@keyframes loadingBarPulse {
+  0%,
+  100% {
+    transform: scaleY(0.56);
+    opacity: 0.5;
+  }
+
+  48% {
+    transform: scaleY(1.12);
+    opacity: 1;
+  }
+}

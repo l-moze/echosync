@@ -1,0 +1,91 @@
+.captionText {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  gap: 14px;
+  align-items: start;
+  align-content: start;
+  justify-items: start;
+  text-align: left;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.captionTextBlock {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  align-content: start;
+  align-items: start;
+  overflow: hidden;
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease;
+}
+
+.captionText.mode-sentencePair .captionTextBlock {
+  grid-template-rows:
+    minmax(calc(var(--source-size, 18px) * 1.28), auto)
+    minmax(calc(var(--target-size, 30px) * 1.2), auto);
+}
+
+.captionText.content-source .captionTextBlock,
+.captionText.content-target .captionTextBlock {
+  grid-template-rows: minmax(0, auto);
+}
+
+.captionText.content-source .overlaySource,
+.captionText.content-target h1 {
+  -webkit-line-clamp: 3;
+}
+
+.captionText.mode-sentencePair .captionTextBlock.splitPending .overlaySource {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.captionText.mode-sentencePair .captionTextBlock.splitPending h1 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.captionText.mode-zonedPair {
+  height: 100%;
+  gap: 0;
+  align-content: stretch;
+  align-items: stretch;
+}
+
+.captionText.mode-zonedPair .captionTextBlock {
+  height: 100%;
+  gap: 12px;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  align-content: stretch;
+  align-items: stretch;
+}
+
+.captionText.mode-zonedPair.content-source .captionTextBlock,
+.captionText.mode-zonedPair.content-target .captionTextBlock {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.captionText.mode-zonedPair .overlaySource,
+.captionText.mode-zonedPair h1 {
+  display: block;
+  align-self: start;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  word-break: normal;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}

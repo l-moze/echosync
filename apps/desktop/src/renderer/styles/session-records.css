@@ -1,0 +1,369 @@
+/* 会议记录主窗口 - 使用 grid 布局：header 固定高度 + 内容区自适应 */
+.recordWindow {
+  position: absolute;
+  inset: 12px auto auto 50%;
+  z-index: 9;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);  /* header + 内容滚动区 */
+  width: min(1040px, calc(100vw - 48px));
+  max-height: calc(100vh - 92px);
+  overflow: hidden;  /* 只允许内部容器滚动 */
+  scrollbar-gutter: stable;
+  gap: 14px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid rgba(220, 226, 235, 0.98);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 24px 68px rgba(28, 42, 68, 0.16);
+  transform: translateX(-50%);
+}
+
+/* 记录列表容器 - 包裹表格和分页器，确保分页器不被裁切 */
+.recordListContainer {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;  /* 表格可滚动 + 分页器固定底部 */
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.recordWindow.detail {
+  height: min(820px, calc(100vh - 92px));
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.recordWindow > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.recordWindow > header.detail {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.recordDetailPanel > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.recordDetailPanel > header > div {
+  min-width: 0;
+}
+
+.recordWindow header p,
+.recordWindow header h2,
+.recordDetailPanel header p,
+.recordDetailPanel header h3 {
+  margin: 0;
+}
+
+.recordWindow header p,
+.recordDetailPanel header p {
+  color: var(--quiet);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.recordWindow header h2,
+.recordDetailPanel header h3 {
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.recordTitleEditor {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.recordTitleEditor span {
+  color: var(--quiet);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.recordTitleInput {
+  max-width: 560px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f7f9fc;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.recordTitleInput:focus {
+  border-color: rgba(37, 105, 232, 0.28);
+  outline: 0;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 105, 232, 0.08);
+}
+
+.recordWindow header label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.recordWindow header input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.recordWindow > header > button {
+  min-width: 34px;
+  padding: 0;
+  color: #526070;
+  font-size: 20px;
+}
+
+.recordWindow > header > .recordBackButton {
+  min-width: 34px;
+  padding: 0;
+  border: 1px solid rgba(224, 229, 237, 0.96);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #526070;
+  font-size: 18px;
+  font-weight: 760;
+}
+
+.recordTable {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.recordTableBody {
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.recordPagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.recordPagination button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.recordPagination button:hover:not(:disabled) {
+  border-color: rgba(37, 105, 232, 0.28);
+  background: var(--blue-soft);
+}
+
+.recordPagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.recordTableHead,
+.recordTableRow {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.35fr) minmax(150px, 0.9fr) minmax(70px, 0.45fr) minmax(100px, 0.55fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 14px;
+}
+
+.recordTableHead {
+  border-bottom: 1px solid rgba(226, 231, 238, 0.92);
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.recordTableRow {
+  border-bottom: 1px solid rgba(235, 239, 245, 0.92);
+  color: #2e3542;
+  font-size: 13px;
+}
+
+.recordTableRow:hover {
+  background: #f8fbff;
+}
+
+.recordTableRow:last-child {
+  border-bottom: 0;
+}
+
+.recordTableRow.selected {
+  background: #f3f7ff;
+}
+
+.recordTableRow strong,
+.recordTableRow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recordActions {
+  display: inline-flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.recordActions button,
+.recordDeleteConfirm button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(224, 229, 237, 0.96);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #526070;
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.recordActions button:hover,
+.recordDeleteConfirm button:hover {
+  color: var(--blue);
+  background: #f5f8ff;
+}
+
+.archiveAudioControls button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(224, 229, 237, 0.96);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #526070;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.archiveAudioControls input {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--blue);
+}
+
+.recordAudioStatus {
+  grid-column: 1 / -1;
+  color: var(--muted);
+}
+
+.recordSummaryList {
+  display: grid;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.recordSummaryList strong {
+  color: #26303d;
+  font-size: 12px;
+}
+
+.recordSummaryList ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.recordSummaryList li {
+  color: #5b6674;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 980px) {
+  .recordWindow {
+    width: min(960px, calc(100vw - 32px));
+    max-height: calc(100vh - 68px);
+    padding: 14px;
+  }
+
+  .recordWindow.detail {
+    height: calc(100vh - 68px);
+  }
+
+}
+
+@media (max-width: 720px) {
+  .recordWindow > header,
+  .recordWindow > header.detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recordWindow > header > button,
+  .recordWindow > header > .recordBackButton {
+    justify-self: start;
+  }
+}
+
+.recordDeleteConfirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(184, 75, 75, 0.2);
+  border-radius: 10px;
+  background: #fff8f8;
+  color: #8d3535;
+  font-size: 13px;
+}
+
+.recentRecordsPanel .recordTable {
+  border-radius: 8px;
+}
+
+.recordTable.compact .recordTableHead,
+.recordTable.compact .recordTableRow {
+  grid-template-columns: minmax(120px, 1fr) minmax(90px, 0.75fr) minmax(54px, 0.42fr) minmax(84px, 0.52fr);
+  gap: 8px;
+  padding: 9px 10px;
+  font-size: 12px;
+}
+
+.heroStart,
+.dashboardPanel,

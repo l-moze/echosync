@@ -7,6 +7,7 @@ import type {
 } from "./realtime-events";
 import type { OverlayLayer } from "./overlay-interaction";
 import { countVisibleChars } from "./text-utils";
+import { TEXT_SHRINK_THRESHOLD } from "./text-protection-constants";
 
 export type CaptionLineState = "interim" | "stable" | "revised" | "locked";
 
@@ -51,22 +52,17 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
     const previousIndex = findLineIndexFromTail(lines, event.segment_id);
     const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
 
-    // 修复：commit 时优先使用之前累积的完整文本
-    // 如果 previousLine 的文本更长，说明实时流中累积了更多内容，使用累积的
+    // 源文 commit 仍保留较长历史，避免 ASR 终态事件截断已读文本。
     const finalSourceText = previousLine?.sourceText && previousLine.sourceText.length > event.source_text.length
       ? previousLine.sourceText
       : event.source_text;
-
-    const finalTargetText = previousLine?.targetText && previousLine.targetText.length > event.target_text.length
-      ? previousLine.targetText
-      : event.target_text;
 
     const nextLine: CaptionLine = withReceivedAt({
       id: event.segment_id,
       rev: event.rev,
       state: "locked",
       sourceText: finalSourceText,
-      targetText: finalTargetText,
+      targetText: event.target_text,
       stability: 1,
       startMs: event.start_ms,
       endMs: event.end_ms,
@@ -307,7 +303,7 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
       finalSourceText = event.source_text;
     }
     // 情况3：新文本短很多（可能是错误） → 保留旧文本
-    else if (prevLen > newLen + 10) {
+    else if (prevLen > newLen + TEXT_SHRINK_THRESHOLD) {
       if (typeof console !== "undefined") {
         console.warn(`[caption-store] 文本异常缩短 ${prevLen}→${newLen}，保留旧文本 (segment ${event.segment_id})`);
       }
@@ -562,7 +558,7 @@ function selectCaptionUpdateSourceText(previousLine: CaptionLine | undefined, ev
 
   // 修复：即使 state === "final"，也要保护已有的更长文本
   // 后端翻译服务在 interim → stable 切换时可能发送截断的文本
-  if (previousLine.sourceText.length > newText.length + 5) {
+  if (previousLine.sourceText.length > newText.length + TEXT_SHRINK_THRESHOLD) {
     if (typeof console !== "undefined") {
       console.warn(`[caption-store] caption_update 文本异常缩短 ${previousLine.sourceText.length}→${newText.length}，保留旧文本 (segment ${event.segment_id})`);
     }
