@@ -3,7 +3,35 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
+function readRendererSource(relativePath: string): string {
+  return readFileSync(resolve(__dirname, "../src/renderer", relativePath), "utf8");
+}
+
+const rendererSource = [
+  "main.tsx",
+  "utils/session-record-draft.ts",
+  "utils/session-archive-playback.ts",
+  "utils/session-record-playback.ts",
+  "components/records/SessionRecordTable.tsx",
+  "components/records/SessionRecordListView.tsx",
+  "components/records/SessionRecordsWindow.tsx",
+  "components/records/SessionRecordDetailPanel.tsx",
+  "components/records/RecordDetailHeader.tsx",
+  "components/records/RecordPlayer.tsx",
+  "components/records/TranscriptSegment.tsx",
+  "components/records/TranscriptToolbar.tsx",
+  "components/common/WaveformProgress.tsx",
+  "components/session/FinishedDashboard.tsx",
+  "components/caption/OverlayWindow.tsx",
+  "services/ipc/capture.ts",
+  "services/ipc/session-records.ts",
+  "services/ipc/clipboard.ts"
+].map(readRendererSource).join("\n").replace(/\r\n/g, "\n");
+
+const glassDesignStyleSource = readFileSync(
+  resolve(__dirname, "../src/renderer/styles/glass-design.css"),
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 function sourceAround(marker: string, before = 700, after = 700) {
   const index = rendererSource.indexOf(marker);
@@ -28,16 +56,17 @@ describe("会议记录窗口契约", () => {
     expect(windowSource).toContain("const [searchQuery, setSearchQuery] = useState(\"\");");
     expect(windowSource).toContain("filterSessionRecordsByTitle(records, searchQuery)");
     expect(searchInputSource).toContain("value={searchQuery}");
-    expect(searchInputSource).toContain("onChange={(event) => setSearchQuery(event.target.value)}");
+    expect(searchInputSource).toContain("onChange={(event) => onSearchChange(event.target.value)}");
+    expect(rendererSource).toContain("onSearchChange={setSearchQuery}");
     expect(rendererSource).toContain("records={filteredRecords}");
   });
 
   it("会议记录窗口使用本地持久化记录并在删除后刷新", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 8000);
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 13000);
 
     expect(windowSource).toContain("records: SessionRecordListItem[];");
     expect(windowSource).toContain("onRecordsChanged: () => Promise<void>;");
-    expect(windowSource).toContain("await window.echosyncDesktop?.sessionRecords.delete(recordId)");
+    expect(windowSource).toContain("await deleteSessionRecord(recordId)");
     expect(windowSource).toContain("await onRecordsChanged();");
     expect(rendererSource).not.toContain("const recentSessionRecords");
   });
@@ -51,14 +80,15 @@ describe("会议记录窗口契约", () => {
     expect(stopSource).toContain("const archive = buildSessionArchiveDraft");
     expect(stopSource).toContain("setSessionArchiveDraft(archive);");
     expect(stopSource).toContain("void saveSessionArchiveDraft(archive");
-    expect(rendererSource).toContain("await window.echosyncDesktop?.sessionRecords.saveDraft(input);");
+    expect(rendererSource).toContain("await saveSessionRecordDraft(input);");
   });
 
   it("停止会话保存记录不依赖采集状态快照成功返回", () => {
     const stopSource = sourceAround("async function stopCapture", 0, 5200);
 
     expect(stopSource).toContain("const stoppedSessionId = currentClient?.sessionId ?? activeSessionIdRef.current;");
-    expect(stopSource).toContain("if (nextSnapshot) {\n      setSnapshot(nextSnapshot);\n    }\n    const endedAt");
+    expect(stopSource).toContain("if (nextSnapshot) {\n      setSnapshot(nextSnapshot);\n    }");
+    expect(stopSource).toContain("const endedAt");
     expect(stopSource).toContain("const elapsedDurationMs");
     expect(stopSource).toContain("Math.max(...lines.map((line) => line.endMs), elapsedDurationMs, 0)");
   });
@@ -67,7 +97,7 @@ describe("会议记录窗口契约", () => {
     const stopSource = sourceAround("async function stopCapture", 0, 5600);
     const nativeRecordingSource = sourceAround("async function getPendingNativeCaptureRecording", 0, 1200);
 
-    expect(nativeRecordingSource).toContain("window.echosyncDesktop?.getPendingCaptureRecording(sessionId)");
+    expect(nativeRecordingSource).toContain("getPendingCaptureRecording(sessionId)");
     expect(nativeRecordingSource).toContain("new Blob([recording.data], { type: mimeType })");
     expect(nativeRecordingSource).toContain("activityRanges: recording.activityRanges");
     expect(stopSource).toContain("const nativeRecording = recording ? null : await getPendingNativeCaptureRecording(stoppedSessionId);");
@@ -84,7 +114,8 @@ describe("会议记录窗口契约", () => {
     expect(finishedSource).toContain("applyPendingArchiveSeek(event.currentTarget)");
     expect(finishedSource).toContain("seekAudioElement(audio, pendingSeekMs)");
     expect(finishedSource).toContain("reviewToRawMs(archiveReviewTimeline, nextReviewMs)");
-    expect(finishedSource).toContain("selectAutoSkipTargetRawMs(archiveReviewTimeline, currentMs)");
+    expect(rendererSource).toContain("selectSessionArchivePlaybackUpdate");
+    expect(rendererSource).toContain("selectAutoSkipTargetRawMs(timeline, currentMs)");
     expect(finishedSource).toContain("selectReviewPlaybackMs(archiveReviewTimeline, playbackMs)");
     expect(finishedSource).toContain("audio.readyState === 0");
     expect(finishedSource).toContain("audio.load();");
@@ -99,38 +130,79 @@ describe("会议记录窗口契约", () => {
 
   it("详情页导出按钮会通过主进程导出并复制当前记录", () => {
     const exportSource = sourceAround("async function exportSelectedRecord", 0, 1200);
-    const actionsSource = sourceAround("<button onClick={() => void exportSelectedRecord(\"txt\")}>TXT</button>", 500, 900);
+    const actionsSource = sourceAround("onExport={onExport}", 1200, 1800);
 
-    expect(exportSource).toContain("window.echosyncDesktop?.sessionRecords.export(selectedRecord.id, format)");
+    expect(exportSource).toContain("exportSessionRecord(selectedRecord.id, format)");
     expect(exportSource).toContain("serializeSessionRecordMarkdown(selectedRecord)");
-    expect(exportSource).toContain("await window.echosyncDesktop?.copyText");
+    expect(exportSource).toContain("await copyTextToClipboard");
     expect(exportSource).toContain("format === \"markdown\" ? \"Markdown 已复制\"");
-    expect(actionsSource).toContain("<button className=\"primaryAction\" onClick={() => void exportSelectedRecord()}>导出</button>");
-    expect(actionsSource).toContain("<button onClick={() => void exportSelectedRecord(\"txt\")}>TXT</button>");
-    expect(actionsSource).toContain("<button onClick={() => void exportSelectedRecord(\"srt\")}>SRT</button>");
-    expect(actionsSource).toContain("{exportStatus ? <span className=\"recordExportStatus\"");
+    expect(actionsSource).toContain("onExport={onExport}");
+    expect(rendererSource).toContain("onExport={(format) => void exportSelectedRecord(format)}");
+    expect(rendererSource).toContain("exportStatus ? (");
   });
 
   it("详情页读取完整记录，支持重命名、音频 URL、片段跳转和播放高亮", () => {
     const windowSource = sourceAround("function SessionRecordsWindow", 0, 22000);
 
     expect(windowSource).toContain("const [selectedRecord, setSelectedRecord] = useState<SessionRecord | null>(null);");
-    expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.get(recordId)");
-    expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.getAudioData(recordId)");
-    expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.getAudioUrl(recordId)");
+    expect(windowSource).toContain("getSessionRecord(recordId)");
+    expect(windowSource).toContain("getSessionRecordAudioData(recordId)");
+    expect(windowSource).toContain("getSessionRecordAudioUrl(recordId)");
     expect(windowSource).toContain("ensureSeekableSessionRecording");
     expect(windowSource).toContain("URL.revokeObjectURL");
-    expect(windowSource).toContain("window.echosyncDesktop?.sessionRecords.rename(selectedRecord.id, nextTitle)");
+    expect(windowSource).toContain("renameSessionRecord(selectedRecord.id, nextTitle)");
     expect(windowSource).toContain("seekRecordAudio(segment.startMs);");
     expect(windowSource).toContain("pendingRecordSeekMsRef");
-    expect(windowSource).toContain("applyPendingRecordSeek(event.currentTarget)");
+    expect(rendererSource).toContain("onCanPlay={(event) => onAudioCanPlay(event.currentTarget)}");
+    expect(rendererSource).toContain("onLoadedMetadata={(event) => onAudioLoadedMetadata(event.currentTarget)}");
+    expect(windowSource).toContain("applyPendingRecordSeek(audio)");
     expect(windowSource).toContain("seekAudioElement(audio, pendingSeekMs)");
     expect(windowSource).toContain("audio.readyState === 0");
     expect(windowSource).toContain("audio.load();");
-    expect(windowSource).toContain("selectSessionRecordPlaybackSegmentId(selectedRecord.segments, boundedMs)");
+    expect(rendererSource).toContain("selectSessionRecordPlaybackSegmentId(segments, playbackMs)");
     expect(windowSource).toContain("node?.scrollIntoView({ block: \"center\", behavior: \"smooth\" });");
-    expect(windowSource).toContain("className=\"recordTitleInput\"");
-    expect(windowSource).toContain("className={segment.id === activeRecordSegmentId ? \"recordSegmentPair active\" : \"recordSegmentPair\"}");
+    expect(rendererSource).toContain("className=\"recordTitle\"");
+    expect(rendererSource).toContain("contentEditable");
+    expect(windowSource).toContain("renameSelectedRecord(newTitle)");
+    expect(rendererSource).toContain("isActive={segment.id === activeSegmentId || segment.id === activeMatchSegmentId}");
+  });
+
+  it("详情页搜索、标签页、音量和倍速是真实状态，不保留占位日志", () => {
+    const windowSource = sourceAround("function SessionRecordsWindow", 0, 26000);
+    const detailSource = sourceAround("function SessionRecordDetailPanel", 0, 9000);
+    const playerSource = sourceAround("function RecordPlayer", 0, 2200);
+    const segmentSource = sourceAround("function TranscriptSegment", 0, 2600);
+
+    expect(windowSource).toContain("const [recordTranscriptTab, setRecordTranscriptTab]");
+    expect(windowSource).toContain("const [recordSearchQuery, setRecordSearchQuery]");
+    expect(windowSource).toContain("const [recordAudioVolume, setRecordAudioVolume]");
+    expect(windowSource).toContain("const [recordAudioSpeed, setRecordAudioSpeed]");
+    expect(windowSource).toContain("recordSearchMatchIds");
+    expect(windowSource).toContain("selectedRecordSegmentSourceText(segment)");
+    expect(windowSource).toContain("selectedRecordSegmentTargetText(segment)");
+    expect(windowSource).toContain("focusRecordSearchMatch(activeRecordMatchIndex + 1)");
+    expect(windowSource).toContain("recordAudioRef.current.volume = boundedVolume / 100");
+    expect(windowSource).toContain("recordAudioRef.current.playbackRate = nextSpeed");
+    expect(detailSource).toContain("activeTab={activeTab}");
+    expect(detailSource).toContain("searchValue={searchQuery}");
+    expect(detailSource).toContain("onPrevMatch={onPrevSearchMatch}");
+    expect(detailSource).toContain("onNextMatch={onNextSearchMatch}");
+    expect(detailSource).toContain("audioStatus === \"missing\"");
+    expect(detailSource).toContain("displayMode={activeTab}");
+    expect(detailSource).toContain("highlightQuery={searchQuery}");
+    expect(playerSource).toContain("aria-label=\"音量\"");
+    expect(playerSource).toContain("onChange={(event) => onVolumeChange?.(Number(event.target.value))}");
+    expect(segmentSource).toContain("escapeRegExp(query)");
+    expect(rendererSource).not.toContain("console.log(");
+    expect(rendererSource).not.toContain("TODO:");
+  });
+
+  it("详情页搜索无匹配时禁用上下导航，避免无声空操作", () => {
+    const toolbarSource = sourceAround("function TranscriptToolbar", 0, 2200);
+
+    expect(toolbarSource).toContain("const hasSearchMatches = Boolean(searchValue.trim() && searchResultCount && searchResultCount > 0);");
+    expect(toolbarSource).toContain("disabled={!hasSearchMatches}");
+    expect(glassDesignStyleSource).toContain(".iconBtn:disabled");
   });
 
   it("详情页音频回放使用记录时长自绘进度，避免 WebM 原生时长误导", () => {
@@ -142,16 +214,23 @@ describe("会议记录窗口契约", () => {
     expect(windowSource).toContain("reviewTimelineFromSessionTimeline(selectedRecord?.timeline)");
     expect(windowSource).toContain("selectReviewPlaybackMs(selectedReviewTimeline, playbackMs)");
     expect(windowSource).toContain("reviewToRawMs(selectedReviewTimeline, nextReviewMs)");
-    expect(windowSource).toContain("selectAutoSkipTargetRawMs(selectedReviewTimeline, currentMs)");
+    expect(rendererSource).toContain("selectSessionRecordPlaybackUpdate");
+    expect(rendererSource).toContain("selectAutoSkipTargetRawMs(timeline, currentMs)");
     expect(windowSource).toContain("function seekRecordAudio(nextMs: number)");
     expect(windowSource).toContain("function toggleRecordAudioPlayback()");
-    expect(windowSource).toContain("recordAudioStatus === \"loading\"");
+    expect(rendererSource).toContain("audioStatus={recordAudioStatus}");
+    expect(rendererSource).toContain("audioStatus === \"loading\"");
     expect(windowSource).toContain("setRecordAudioStatus(\"ready\")");
     expect(windowSource).toContain("pendingRecordSeekMsRef.current = playbackMs");
-    expect(windowSource).toContain("className=\"recordAudioControls\"");
-    expect(progressSource).toContain("max={reviewDurationMs}");
-    expect(progressSource).toContain("value={Math.min(reviewPlaybackMs, reviewDurationMs)}");
-    expect(progressSource).toContain("onChange={(event) => scrubRecordAudio(Number(event.target.value))}");
+    expect(rendererSource).toContain("currentPlaybackMs={reviewPlaybackMs}");
+    expect(rendererSource).toContain("currentMs={currentPlaybackMs}");
+    expect(rendererSource).toContain("durationMs={reviewDurationMs}");
+    expect(windowSource).toContain("audio.volume = recordAudioVolume / 100");
+    expect(windowSource).toContain("audio.playbackRate = recordAudioSpeed");
+    expect(rendererSource).toContain("className=\"recordPlayer\"");
+    expect(progressSource).toContain("max={durationMs}");
+    expect(progressSource).toContain("value={boundedCurrentMs}");
+    expect(progressSource).toContain("onChange={(event) => onSeek(Number(event.target.value))}");
     expect(windowSource).not.toContain("<audio\n                controls");
   });
 
@@ -159,16 +238,15 @@ describe("会议记录窗口契约", () => {
     const finishedSource = sourceAround("function updateArchivePlayback", 0, 1200);
     const recordSource = sourceAround("function updateRecordPlayback", 0, 1800);
 
-    expect(finishedSource).toContain("const skipTargetRawMs = archiveReviewTimeline");
-    expect(finishedSource).toContain("selectAutoSkipTargetRawMs(archiveReviewTimeline, currentMs)");
+    expect(finishedSource).toContain("const playbackUpdate = selectSessionArchivePlaybackUpdate");
+    expect(rendererSource).toContain("selectAutoSkipTargetRawMs(timeline, currentMs)");
     expect(rendererSource).toContain("selectReviewPlaybackMs(archiveReviewTimeline, playbackMs)");
-    expect(finishedSource).toContain("if (skipTargetRawMs !== null && archiveAudioPlaying)");
+    expect(finishedSource).toContain("if (playbackUpdate.skipTargetRawMs !== null)");
     expect(finishedSource).not.toContain("pendingArchiveSeekMsRef.current = compressedSilence.rawEndMs");
-    expect(recordSource).toContain("const skipTargetRawMs = selectedReviewTimeline");
-    expect(recordSource).toContain("selectAutoSkipTargetRawMs(selectedReviewTimeline, currentMs)");
+    expect(recordSource).toContain("const playbackUpdate = selectSessionRecordPlaybackUpdate");
+    expect(rendererSource).toContain("selectAutoSkipTargetRawMs(timeline, currentMs)");
     expect(rendererSource).toContain("selectReviewPlaybackMs(selectedReviewTimeline, playbackMs)");
-    expect(recordSource).toContain("const segmentId = selectSessionRecordPlaybackSegmentId(selectedRecord.segments, skipTargetRawMs)");
-    expect(recordSource).toContain("setActiveRecordSegmentId(segmentId);");
+    expect(recordSource).toContain("setActiveRecordSegmentId(playbackUpdate.activeSegmentId);");
     expect(recordSource).not.toContain("pendingRecordSeekMsRef.current = compressedSilence.rawEndMs");
   });
 
@@ -183,20 +261,19 @@ describe("会议记录窗口契约", () => {
   });
 
   it("详情页片段使用非 button 卡片，避免原生按钮布局把双语文本压扁", () => {
-    const windowSource = sourceAround("function SessionRecordsWindow", 0, 23000);
+    const segmentSource = sourceAround("function TranscriptSegment", 0, 2200);
 
-    expect(windowSource).toContain("function handleRecordSegmentKeyDown");
-    expect(windowSource).toContain("<article");
-    expect(windowSource).toContain("role=\"button\"");
-    expect(windowSource).toContain("tabIndex={0}");
-    expect(windowSource).toContain("onKeyDown={(event) => handleRecordSegmentKeyDown(segment, event)}");
-    expect(windowSource).not.toContain("<button\n                    className={segment.id === activeRecordSegmentId ? \"recordSegmentPair active\" : \"recordSegmentPair\"}");
+    expect(segmentSource).toContain("<article");
+    expect(segmentSource).toContain("className={`recordSegment");
+    expect(segmentSource).toContain("<button className=\"recordSegmentPlay\"");
+    expect(segmentSource).toContain("onClick={onPlay}");
+    expect(segmentSource).not.toContain("<button\n                    className={segment.id === activeRecordSegmentId ? \"recordSegmentPair active\" : \"recordSegmentPair\"}");
   });
 });
 
 describe("采集资源生命周期契约", () => {
   it("收到新的监听会话时清空当前窗口的旧字幕状态", () => {
-    const listenerSource = sourceAround("const removeCaptureListener = window.echosyncDesktop?.onCaptureState", 0, 2600);
+    const listenerSource = sourceAround("const removeCaptureListener = onCaptureState", 0, 2600);
 
     expect(listenerSource).toContain("const newListeningSession");
     expect(listenerSource).toContain("setLines(createInitialCaptionLines());");

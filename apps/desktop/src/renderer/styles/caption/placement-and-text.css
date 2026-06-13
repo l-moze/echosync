@@ -1,0 +1,261 @@
+.floatingCaption > .zonedCaptionRail {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.floatingCaption.withChrome > .zonedCaptionRail {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  padding: 9px 28px 10px;
+}
+
+.floatingCaption.mode-zonedPair {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.floatingCaption > .captionText {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.floatingCaption.hasHistory > .captionText {
+  grid-row: 2;
+}
+
+.floatingCaption.withChrome > .captionText {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: center;
+  padding: 10px 28px;
+}
+
+.floatingCaption.withChrome.hasHistory > .captionText {
+  grid-row: 3;
+  padding: 8px 28px 10px;
+}
+
+.floatingCaption > .focusMeter {
+  display: none;
+}
+
+.floatingCaption.hasHistory > .focusMeter {
+  grid-row: 2;
+}
+
+.floatingCaption.withChrome > .focusMeter {
+  display: none;
+}
+
+.floatingCaption > .overlayError {
+  grid-column: 1 / -1;
+}
+
+.floatingCaption > .overlayCaptionHistory {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.floatingCaption.hasHistory > .overlayCaptionHistory {
+  grid-row: 1;
+}
+
+.floatingCaption.withChrome > .overlayCaptionHistory {
+  grid-row: 2;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 28px 10px;
+}
+
+.floatingCaption.withChrome.hasHistory > .overlayCaptionHistory {
+  grid-row: 2;
+}
+
+.captionTopChrome,
+.captionBottomChrome {
+  position: relative;
+  z-index: 8;
+  display: flex;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(18px) saturate(1.08);
+  opacity: 1;
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(0.22, 1, 0.36, 1), background 180ms ease;
+}
+
+.captionTopChrome {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-content: stretch;
+  padding: 7px 10px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.captionBottomChrome {
+  grid-column: 1 / -1;
+  justify-content: center;
+  padding: 6px 10px 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.overlayStage.layer-controls .captionTopChrome,
+.overlayStage.layer-settings .captionTopChrome,
+.overlayStage.layer-pinned .captionTopChrome {
+  animation: chromeSlideIn 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.overlayStage.layer-controls .captionBottomChrome,
+.overlayStage.layer-settings .captionBottomChrome,
+.overlayStage.layer-pinned .captionBottomChrome {
+  animation: chromeLiftIn 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.floatingCaption > .overlaySessionBar {
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
+.floatingCaption.hasHistory > .overlaySessionBar {
+  grid-row: 3;
+}
+
+.floatingCaption.withChrome > .captionText {
+  grid-row: 2;
+}
+
+.floatingCaption.withChrome > .captionBottomChrome {
+  grid-row: 3;
+}
+
+.floatingCaption.withChrome.hasHistory > .overlaySessionBar {
+  grid-row: 4;
+}
+
+.floatingCaption.withChrome.hasHistory > .captionBottomChrome {
+  grid-row: 4;
+}
+
+.floatingCaption.withChrome.hasBottomMenu > .captionBottomChrome {
+  grid-row: 4;
+}
+
+.floatingCaption.withChrome > .overlayMeta {
+  display: none;
+}
+
+.overlaySource,
+.floatingCaption h1,
+.overlayTarget {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+  letter-spacing: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  transition: opacity 160ms ease, color 160ms ease, text-decoration-color 180ms ease;
+  direction: ltr;
+  unicode-bidi: plaintext;
+  contain: layout paint;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.overlaySource {
+  color: var(--source-color, rgba(255, 255, 255, 0.7));
+  font-size: var(--source-size, 18px);
+  line-height: 1.26;
+  min-height: calc(var(--source-size, 18px) * 1.26);
+  opacity: 0.76;
+  -webkit-line-clamp: 2;
+}
+
+.floatingCaption h1 {
+  color: var(--target-color, #ffffff);
+  font-size: var(--target-size, 30px);
+  line-height: 1.18;
+  min-height: calc(var(--target-size, 30px) * 1.18);
+  -webkit-line-clamp: 2;
+}
+
+.floatingCaption:hover .overlaySource,
+.floatingCaption:focus-visible .overlaySource {
+  font-size: var(--source-size, 18px);
+}
+
+.floatingCaption:hover h1,
+.floatingCaption:focus-visible h1 {
+  font-size: var(--target-size, 30px);
+}
+
+.placeholderText {
+  visibility: hidden;
+}
+
+.overlayError {
+  margin: 0;
+  max-width: min(100%, 760px);
+  overflow: hidden;
+  color: #ffb4a8;
+  font-size: 13px;
+  font-weight: 680;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floatingCaption.outline-shadow .overlaySource,
+.floatingCaption.outline-shadow h1,
+.floatingCaption.outline-shadow .overlayTarget {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.98),
+    0 0 12px rgba(0, 0, 0, 0.84),
+    0 6px 24px rgba(0, 0, 0, 0.62);
+}
+
+.floatingCaption.outline-outline .overlaySource,
+.floatingCaption.outline-outline h1,
+.floatingCaption.outline-outline .overlayTarget {
+  -webkit-text-stroke: 0.6px rgba(0, 0, 0, 0.82);
+  text-shadow: 0 2px 9px rgba(0, 0, 0, 0.8);
+}
+
+.overlayStage.layer-default .floatingCaption h1 {
+  color: var(--target-color, rgba(255, 255, 255, 0.96));
+  font-size: var(--target-size, 30px);
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.94),
+    0 0 8px rgba(0, 0, 0, 0.76),
+    0 3px 16px rgba(0, 0, 0, 0.54);
+}
+
+.overlayStage.layer-default .overlaySource {
+  display: -webkit-box;
+  color: var(--source-color, rgba(255, 255, 255, 0.72));
+  opacity: 0.76;
+}
+
+.floatingCaption .interim {
+  opacity: 0.58;
+}
+
+.floatingCaption .stable {
+  opacity: 0.96;
+}
+
+.floatingCaption .revised {
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 212, 112, 0.78);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.floatingCaption .locked {
+  opacity: 0.74;
+}

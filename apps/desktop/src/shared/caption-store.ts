@@ -6,6 +6,8 @@ import type {
   SubtitlePatchEvent
 } from "./realtime-events";
 import type { OverlayLayer } from "./overlay-interaction";
+import { countVisibleChars } from "./text-utils";
+import { TEXT_SHRINK_THRESHOLD } from "./text-protection-constants";
 
 export type CaptionLineState = "interim" | "stable" | "revised" | "locked";
 
@@ -29,6 +31,7 @@ export const OVERLAY_DISPLAY_WINDOW_LINE_LIMIT = 60;
 
 export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): CaptionLine[] {
   const receivedAtMs = Date.now();
+
   if (event.type === "transcript.partial") {
     return upsertTranscriptDraft(lines, event, receivedAtMs);
   }
@@ -48,11 +51,17 @@ export function applyRealtimeEvent(lines: CaptionLine[], event: RealtimeEvent): 
   if (event.type === "segment.commit") {
     const previousIndex = findLineIndexFromTail(lines, event.segment_id);
     const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
+
+    // 源文 commit 仍保留较长历史，避免 ASR 终态事件截断已读文本。
+    const finalSourceText = previousLine?.sourceText && previousLine.sourceText.length > event.source_text.length
+      ? previousLine.sourceText
+      : event.source_text;
+
     const nextLine: CaptionLine = withReceivedAt({
       id: event.segment_id,
       rev: event.rev,
       state: "locked",
-      sourceText: event.source_text,
+      sourceText: finalSourceText,
       targetText: event.target_text,
       stability: 1,
       startMs: event.start_ms,
@@ -267,6 +276,7 @@ function upsertPartial(lines: CaptionLine[], event: SubtitleEvent, receivedAtMs:
 function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, receivedAtMs: number): CaptionLine[] {
   const previousIndex = findLineIndexFromTail(lines, event.segment_id);
   const previousLine = previousIndex === -1 ? undefined : lines[previousIndex];
+
   if (!previousLine && !event.source_text.trim()) {
     return lines;
   }
@@ -277,11 +287,39 @@ function upsertTranscriptDraft(lines: CaptionLine[], event: CaptionTextEvent, re
     return lines;
   }
 
+  // 修复：保护已有的更长文本，防止短文本或错误文本覆盖
+  let finalSourceText = event.source_text;
+  if (previousLine && previousLine.sourceText.length > 0) {
+    // 如果新文本明显比旧文本短，且旧文本不是新文本的前缀，保留旧文本
+    const prevLen = previousLine.sourceText.length;
+    const newLen = event.source_text.length;
+
+    // 情况1：新文本是旧文本的扩展 → 使用新文本
+    if (event.source_text.startsWith(previousLine.sourceText)) {
+      finalSourceText = event.source_text;
+    }
+    // 情况2：新文本更长 → 使用新文本
+    else if (newLen >= prevLen) {
+      finalSourceText = event.source_text;
+    }
+    // 情况3：新文本短很多（可能是错误） → 保留旧文本
+    else if (prevLen > newLen + TEXT_SHRINK_THRESHOLD) {
+      if (typeof console !== "undefined") {
+        console.warn(`[caption-store] 文本异常缩短 ${prevLen}→${newLen}，保留旧文本 (segment ${event.segment_id})`);
+      }
+      finalSourceText = previousLine.sourceText;
+    }
+    // 情况4：略短，可能是正常修正 → 使用新文本
+    else {
+      finalSourceText = event.source_text;
+    }
+  }
+
   const nextLine: CaptionLine = withReceivedAt({
     id: event.segment_id,
     rev: event.rev,
     state: mapStatus(event.status),
-    sourceText: event.source_text,
+    sourceText: finalSourceText,
     targetText: previousLine?.targetText ?? "",
     stability: event.stability,
     startMs: event.start_ms,
@@ -311,7 +349,7 @@ function upsertCaptionUpdate(lines: CaptionLine[], event: CaptionUpdateEvent, re
   }
 
   if (previousLine && event.revision < previousLine.rev) {
-    if (previousLine.targetText.trim() === "" && targetText.trim() !== "" && countVisibleCharacters(sourceText) >= 8) {
+    if (previousLine.targetText.trim() === "" && targetText.trim() !== "" && countVisibleChars(sourceText) >= 8) {
       const nextLine = withReceivedAt(
         {
           ...previousLine,
@@ -367,7 +405,7 @@ function canFillEmptyTargetFromStaleTranslation(
   return (
     previousLine.targetText.trim() === "" &&
     event.target_text.trim() !== "" &&
-    countVisibleCharacters(event.source_text) >= 8
+    countVisibleChars(event.source_text) >= 8
   );
 }
 
@@ -499,16 +537,12 @@ function captionUpdateStability(event: CaptionUpdateEvent): number {
   return 0.5;
 }
 
-function countVisibleCharacters(text: string): number {
-  return Array.from(text).filter((char) => char.trim() !== "").length;
-}
-
 function selectTranslationSourceText(previousLine: CaptionLine | undefined, sourceText: string): string {
   if (!previousLine) {
     return sourceText;
   }
 
-  if (countVisibleCharacters(sourceText) < countVisibleCharacters(previousLine.sourceText)) {
+  if (countVisibleChars(sourceText) < countVisibleChars(previousLine.sourceText)) {
     return previousLine.sourceText;
   }
 
@@ -516,11 +550,22 @@ function selectTranslationSourceText(previousLine: CaptionLine | undefined, sour
 }
 
 function selectCaptionUpdateSourceText(previousLine: CaptionLine | undefined, event: CaptionUpdateEvent): string {
-  if (event.state === "final" || !previousLine) {
-    return event.source.full_text;
+  const newText = event.source.full_text;
+
+  if (!previousLine) {
+    return newText;
   }
 
-  return selectTranslationSourceText(previousLine, event.source.full_text);
+  // 修复：即使 state === "final"，也要保护已有的更长文本
+  // 后端翻译服务在 interim → stable 切换时可能发送截断的文本
+  if (previousLine.sourceText.length > newText.length + TEXT_SHRINK_THRESHOLD) {
+    if (typeof console !== "undefined") {
+      console.warn(`[caption-store] caption_update 文本异常缩短 ${previousLine.sourceText.length}→${newText.length}，保留旧文本 (segment ${event.segment_id})`);
+    }
+    return previousLine.sourceText;
+  }
+
+  return newText;
 }
 
 function selectTranslationTargetText(
@@ -572,7 +617,7 @@ function shouldHoldTransientTargetShrink(
     return false;
   }
 
-  const previousLength = countVisibleCharacters(previousTarget);
-  const nextLength = countVisibleCharacters(nextTarget);
+  const previousLength = countVisibleChars(previousTarget);
+  const nextLength = countVisibleChars(nextTarget);
   return nextLength < previousLength;
 }

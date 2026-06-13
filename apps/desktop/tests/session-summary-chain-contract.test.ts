@@ -6,7 +6,13 @@ import { describe, expect, it } from "vitest";
 const mainSource = readFileSync(resolve(__dirname, "../src/main/main.ts"), "utf8");
 const preloadSource = readFileSync(resolve(__dirname, "../src/preload/index.ts"), "utf8");
 const desktopApiSource = readFileSync(resolve(__dirname, "../src/shared/desktop-api.ts"), "utf8");
-const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
+const rendererSource = [
+  "../src/renderer/main.tsx",
+  "../src/renderer/components/records/SessionRecordsWindow.tsx",
+  "../src/renderer/components/records/SessionRecordDetailPanel.tsx",
+  "../src/renderer/components/records/SummaryPanel.tsx",
+  "../src/renderer/services/ipc/session-records.ts"
+].map((path) => readFileSync(resolve(__dirname, path), "utf8")).join("\n");
 
 describe("会议记录 AI 摘要链路契约", () => {
   it("主进程在保存会议记录后异步生成摘要并广播刷新事件", () => {
@@ -29,14 +35,13 @@ describe("会议记录 AI 摘要链路契约", () => {
   });
 
   it("Renderer 收到记录变更后刷新列表和当前详情，并展示结构化摘要字段", () => {
-    expect(rendererSource).toContain("window.echosyncDesktop?.onSessionRecordChanged");
+    expect(rendererSource).toContain("onSessionRecordChanged");
     expect(rendererSource).toContain("await refreshSessionRecords();");
     expect(rendererSource).toContain("setSelectedRecord(normalizeSessionRecordForReview(record));");
-    expect(rendererSource).toContain("selectedRecord.summary.actionItems");
-    expect(rendererSource).toContain("selectedRecord.summary.topics");
-    expect(rendererSource).toContain("selectedRecord.summary.risks");
-    expect(rendererSource).toContain("selectedRecord.summary.terminologySuggestions");
+    expect(rendererSource).toContain("summary={record.summary.text");
+    expect(rendererSource).toContain("tags={record.summary.keywords}");
+    expect(rendererSource).toContain("keywords={record.summary.keywords.map");
     expect(rendererSource).toContain("regenerateSelectedSummary");
-    expect(rendererSource).toContain("window.echosyncDesktop?.sessionRecords.generateSummary(selectedRecord.id)");
+    expect(rendererSource).toContain("generateSessionRecordSummary(selectedRecord.id)");
   });
 });

@@ -1,0 +1,101 @@
+.preExportDetails {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 231, 238, 0.92);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.preExportDetails summary {
+  cursor: pointer;
+}
+
+.exportStatus {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.termForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.termForm input {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fbfcff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.termForm input:focus-visible {
+  outline: 2px solid rgba(40, 120, 255, 0.22);
+  border-color: rgba(40, 120, 255, 0.42);
+}
+
+.termForm button {
+  min-width: 58px;
+  padding: 0 12px;
+  border: 0;
+  color: white;
+  background: var(--blue);
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.termList {
+  display: grid;
+  gap: 8px;
+}
+
+.termItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #f5f8fe;
+}
+
+.termItem span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.termStatus {
+  min-width: 52px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.termStatus.syncing {
+  color: #8b6a2a;
+  background: #fff4d8;
+}
+
+.termStatus.active {
+  color: #0b7c5c;
+  background: #dcfbf0;
+}
+
+.termStatus.failed {
+  color: #af3434;
+  background: #ffe3e3;
+}

@@ -18,6 +18,11 @@ ClientFactory = Callable[..., Any]
 DEEPSEEK_BETA_BASE_URL = "https://api.deepseek.com/beta"
 THINKING_DISABLED = {"thinking": {"type": "disabled"}}
 STREAM_OPTIONS_WITH_USAGE = {"include_usage": True}
+
+# 源文截断保护阈值（与前端 caption-store.ts 对齐）
+# 新文本比历史短超过该字符数时，判定为截断并保留历史文本
+TEXT_SHRINK_THRESHOLD = 8
+
 logger = logging.getLogger(__name__)
 
 
@@ -283,6 +288,76 @@ class DeepSeekTranslator(Translator):
 
         return previous_target
 
+    def _protect_source_text(
+        self,
+        segment: TranscriptSegment,
+        context: CorrectionContext | None,
+        metrics: dict[str, float] | None,
+    ) -> str:
+        """Prevent source_text from shrinking due to ASR or splitting artifacts.
+
+        When ASR transitions from PARTIAL to COMMITTED, it may return shorter text
+        (dropping uncertain trailing words). This method checks revision history
+        and preserves the longest text when significant shrinkage is detected.
+
+        Args:
+            segment: Current transcript segment
+            context: Correction context with revision history
+            metrics: Metrics dict to record protection events
+
+        Returns:
+            Protected source text (current or historical, whichever is appropriate)
+        """
+        current_text = segment.text
+
+        # No history available - use current text
+        if context is None or not context.current_segment_revisions:
+            return current_text
+
+        # Find the longest previous source_text in revision history
+        previous = max(
+            context.current_segment_revisions,
+            key=lambda r: len(r.source_text),
+            default=None,
+        )
+
+        if previous is None:
+            return current_text
+
+        prev_len = len(previous.source_text)
+        curr_len = len(current_text)
+
+        # Case 1: Current is longer or equal → use current
+        if curr_len >= prev_len:
+            return current_text
+
+        # Case 2: Current extends previous → use current (legitimate growth)
+        if current_text.startswith(previous.source_text):
+            return current_text
+
+        # Case 3: Significantly shorter (>TEXT_SHRINK_THRESHOLD chars) → likely truncation, preserve history
+        # NOTE: TEXT_SHRINK_THRESHOLD = 8, aligned with frontend protection (caption-store.ts)
+        if prev_len > curr_len + TEXT_SHRINK_THRESHOLD:
+            logger.warning(
+                "source_text_truncation_detected segment_id=%s rev=%d "
+                "prev_len=%d curr_len=%d shrink=%d action=preserved",
+                segment.segment_id,
+                segment.rev,
+                prev_len,
+                curr_len,
+                prev_len - curr_len,
+            )
+
+            # Record metrics for observability
+            if metrics is not None:
+                metrics["source_text_protected"] = 1.0
+                metrics["source_text_shrink_chars"] = float(prev_len - curr_len)
+
+            return previous.source_text
+
+        # Case 4: Slightly shorter (≤TEXT_SHRINK_THRESHOLD chars) → likely ASR correction, use current
+        return current_text
+
     def _build_segment(
         self,
         segment: TranscriptSegment,
@@ -291,13 +366,16 @@ class DeepSeekTranslator(Translator):
         metrics: dict[str, float] | None = None,
         context: CorrectionContext | None = None,
     ) -> TranslationSegment:
+        # Protect source_text from ASR truncation artifacts
+        source_text = self._protect_source_text(segment, context, metrics)
+
         target_text, glossary_metrics = _repair_required_glossary_copies(
             target_text,
             context,
         )
         target_text, target_cleanup_metrics = _postprocess_target_text(
             target_text,
-            source_text=segment.text,
+            source_text=source_text,
             target_lang=self.target_lang,
         )
         return TranslationSegment(
@@ -309,7 +387,7 @@ class DeepSeekTranslator(Translator):
             end_ms=segment.end_ms,
             source_lang=segment.source_lang,
             target_lang=self.target_lang,
-            source_text=segment.text,
+            source_text=source_text,
             target_text=target_text,
             status=segment.status,
             stability=segment.stability,

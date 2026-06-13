@@ -1,0 +1,246 @@
+.subtitleStyleWindowShell {
+  display: grid;
+  width: 100%;
+  height: 100vh;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+.subtitleStylePanel {
+  position: relative;
+  z-index: 8;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(26, 30, 39, 0.94), rgba(9, 11, 16, 0.92)),
+    rgba(12, 14, 18, 0.9);
+  box-shadow:
+    0 28px 78px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  resize: none;
+  user-select: none;
+  backdrop-filter: blur(26px) saturate(1.16);
+}
+
+.subtitleStylePanel header {
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 42px;
+  padding: 2px 2px 10px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: grab;
+  touch-action: none;
+}
+
+.subtitleStylePanel header:active {
+  cursor: grabbing;
+}
+
+.subtitleStylePanel header div {
+  display: grid;
+  gap: 3px;
+}
+
+.subtitleStylePanel header strong {
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.subtitleStylePanel header span {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 12px;
+}
+
+.subtitleStylePanel header button,
+.subtitleStylePanelBody,
+.settingRow,
+.stepper,
+.swatchGroup,
+.selectValue {
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+.subtitleStylePanelBody {
+  display: grid;
+  min-height: 0;
+  gap: 14px;
+  padding: 0 4px 4px 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.subtitleStylePanelBody::-webkit-scrollbar {
+  width: 8px;
+}
+
+.subtitleStylePanelBody::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: content-box;
+}
+
+.styleSection {
+  display: grid;
+  gap: 10px;
+}
+
+.styleSection h2 {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.56);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.styleSection > div {
+  display: grid;
+  gap: 8px;
+}
+
+.settingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.settingRow > span {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.actionSettingRow > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.actionSettingRow button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.78);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.actionSettingRow button:hover,
+.actionSettingRow button:focus-visible {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: 28px 52px 28px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.stepper button {
+  min-width: 28px;
+  min-height: 28px;
+  border: 0;
+  border-radius: 0;
+  color: rgba(255, 255, 255, 0.86);
+  background: transparent;
+  font-size: 17px;
+}
+
+.stepper output {
+  color: #ffffff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 760;
+  text-align: center;
+}
+
+.switchControl {
+  position: relative;
+  width: 42px;
+  min-width: 42px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.switchControl span {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  transition: transform 150ms ease;
+}
+
+.switchControl.on {
+  background: linear-gradient(135deg, #55f0c8, #7dd6ff);
+}
+
+.switchControl.on span {
+  background: #07100f;
+  transform: translateX(18px);
+}
+
+.swatchGroup {
+  display: flex;
+  gap: 6px;
+}
+
+.colorSwatch {
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+}
+
+.colorSwatch.selected {
+  border-color: #55f0c8;
+  box-shadow: 0 0 0 3px rgba(85, 240, 200, 0.18);
+}
+
+.selectValue {
+  width: 148px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(0, 0, 0, 0.24);
+  font: inherit;
+  font-size: 12px;
+}
+
+.selectValue option {
+  color: #1e2530;
+}

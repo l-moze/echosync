@@ -1,0 +1,214 @@
+.focusMeter {
+  width: 62px;
+  opacity: 0.72;
+}
+
+.overlayStage.layer-default .focusMeter,
+.overlayStage.layer-default .overlayMeta {
+  display: none;
+}
+
+.overlayMeta {
+  right: 28px;
+  bottom: -24px;
+  color: rgba(255, 255, 255, 0.66);
+  opacity: 1;
+}
+
+.overlayCaptionHistory {
+  display: grid;
+  align-content: start;
+  width: 100%;
+  min-height: 0;
+  max-height: 172px;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 4px 10px 2px 0;
+  overflow-y: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.overlayStage.layer-default .overlayCaptionHistory {
+  height: 100%;
+  max-height: none;
+  margin: 0 0 5px;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0.66;
+}
+
+.overlayStage.layer-controls .overlayCaptionHistory,
+.overlayStage.layer-settings .overlayCaptionHistory {
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 7px 24px 5px;
+}
+
+.overlayStage.layer-pinned .overlayCaptionHistory {
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  padding: 12px 24px 8px;
+}
+
+.overlayCaptionHistory::-webkit-scrollbar {
+  width: 8px;
+}
+
+.overlayCaptionHistory::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: content-box;
+}
+
+.historyLine {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.historyLine.clipped,
+.zonedCaptionStream.clipped,
+.zonedCaptionLine.clipped {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.overlayStage.layer-default .historyLine {
+  padding: 0 0 5px;
+  border-top: 0;
+}
+
+.historyLine .captionText {
+  gap: 4px;
+}
+
+.historyLine .captionTextBlock {
+  gap: 4px;
+}
+
+.historyLine .overlaySource,
+.historyLine h1,
+.historyLine .overlayTarget {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.historyLine .overlaySource {
+  font-size: clamp(12px, calc(var(--source-size, 18px) - 4px), 14px);
+  line-height: 1.35;
+  -webkit-line-clamp: 1;
+}
+
+.historyLine h1 {
+  font-size: clamp(17px, calc(var(--target-size, 30px) - 10px), 21px);
+  line-height: 1.24;
+  -webkit-line-clamp: 1;
+}
+
+.historyLine:not(.current) {
+  opacity: 0.56;
+}
+
+.historyLine.revised h1 {
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 212, 112, 0.78);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.historyLine.locked {
+  opacity: 0.62;
+}
+
+.historyLine.current {
+  opacity: 0.96;
+}
+
+@media (max-width: 760px) {
+  .overlayStage {
+    min-height: 300px;
+  }
+
+  .floatingCaption,
+  .overlayStage.layer-default .floatingCaption {
+    width: 100%;
+  }
+
+  .overlayToolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .overlayIconGroup {
+    grid-column: 2;
+    justify-content: end;
+  }
+
+  .overlayMenuTrigger {
+    max-width: 136px;
+  }
+
+  .captionContentSwitch {
+    grid-column: 1 / -1;
+    justify-content: center;
+    justify-self: center;
+  }
+
+  .overlaySessionBar {
+    grid-template-columns: auto auto max-content minmax(92px, 1fr) auto;
+  }
+
+  .captionContentSwitch {
+    width: auto;
+  }
+
+  .planPill {
+    max-width: 138px;
+  }
+
+  .languagePill {
+    min-width: 68px;
+  }
+}
+
+@media (max-width: 560px) {
+  .overlaySessionBar {
+    grid-template-columns: auto auto max-content auto;
+  }
+
+  .planMenuWrap {
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
+
+  .planPill {
+    max-width: min(220px, 74vw);
+  }
+
+  .languageMenuWrap {
+    justify-self: center;
+  }
+
+  .languageMenu {
+    right: 0;
+    left: auto;
+  }
+
+  .captionContentSwitch {
+    grid-column: 1 / -1;
+  }
+}

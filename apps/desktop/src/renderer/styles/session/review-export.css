@@ -1,0 +1,86 @@
+.preExportEditor {
+  width: 100%;
+  min-height: 160px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.preExportEditor:focus-visible {
+  outline: 2px solid rgba(40, 120, 255, 0.2);
+  border-color: rgba(40, 120, 255, 0.42);
+}
+
+.archivePlaybackPanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(218, 224, 233, 0.98);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 -8px 24px rgba(28, 42, 68, 0.06);
+}
+
+.archivePlaybackPanel audio {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+}
+
+.archiveAudioControls {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 10px 12px;
+  min-width: 0;
+}
+
+.archiveAudioTime {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.archiveAudioStatus,
+.archiveAudioError {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.archiveMissing,
+.preExportDetails summary {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.archiveAudioError {
+  color: #b94a48;
+}
+
+.archiveMissing {
+  margin: 0;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(226, 231, 238, 0.92);
+  border-radius: 10px;
+  background: #f8fafc;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,195 @@
+/* Overlay v2: detached caption stage, toolbar, session bar, and subtitle settings. */
+.overlayShell {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: stretch;
+  padding: 0;
+  background: transparent;
+  pointer-events: none;
+}
+
+.overlayStage {
+  -webkit-app-region: drag;
+  position: relative;
+  display: grid;
+  grid-template-rows: auto;
+  gap: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  align-content: stretch;
+  align-items: stretch;
+  justify-items: stretch;
+  pointer-events: none;
+}
+
+.overlayStage.layer-default {
+  grid-template-rows: 1fr;
+  min-height: 96px;
+}
+
+.overlayStage button,
+.overlayStage select,
+.overlayStage input,
+.overlayStage label,
+.overlayDropdown,
+.overlaySegmentedControl,
+.captionContentSwitch,
+.subtitleStylePanel {
+  -webkit-app-region: no-drag;
+}
+
+.floatingCaption {
+  -webkit-app-region: drag;
+  --caption-radius: 18px;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 106px;
+  padding: 18px 30px 18px 34px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--caption-radius);
+  background:
+    linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
+    rgba(12, 14, 18, 0.72);
+  box-shadow:
+    0 24px 72px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.56)),
+    0 8px 24px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.32)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(var(--subtitle-blur, 24px)) saturate(1.18);
+  opacity: 1;
+  pointer-events: auto;
+  -webkit-user-select: none;
+  user-select: none;
+  transition:
+    width 180ms ease,
+    min-height 180ms ease,
+    border-color 180ms ease,
+    background 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 180ms ease,
+    box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    backdrop-filter 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease;
+}
+
+.floatingCaption.withChrome {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  align-items: stretch;
+}
+
+.floatingCaption.hasHistory {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.floatingCaption.withChrome.hasHistory {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+.floatingCaption.withChrome.hasBottomMenu {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
+.floatingCaption:hover,
+.floatingCaption:focus-visible {
+  min-height: 106px;
+  border-color: rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
+    rgba(12, 14, 18, 0.72);
+  box-shadow:
+    0 24px 72px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.56)),
+    0 8px 24px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.32)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(var(--subtitle-blur, 24px)) saturate(1.18);
+  opacity: 1;
+  transform: none;
+}
+
+.overlayStage.layer-default .floatingCaption {
+  min-height: 0;
+  width: 100%;
+  padding: 8px 24px 10px;
+  border-color: rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(31, 35, 43, calc(var(--subtitle-bg-opacity, 0.76) * 0.78)), rgba(10, 12, 16, calc(var(--subtitle-bg-opacity, 0.76) * 0.78))),
+    rgba(12, 14, 18, 0.52);
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.44)),
+    0 6px 18px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.24)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(calc(var(--subtitle-blur, 24px) * 0.62)) saturate(1.08);
+}
+
+.overlayStage.layer-default .floatingCaption:hover,
+.overlayStage.layer-default .floatingCaption:focus-visible {
+  min-height: 0;
+  border-color: rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(180deg, rgba(31, 35, 43, calc(var(--subtitle-bg-opacity, 0.76) * 0.78)), rgba(10, 12, 16, calc(var(--subtitle-bg-opacity, 0.76) * 0.78))),
+    rgba(12, 14, 18, 0.52);
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.44)),
+    0 6px 18px rgba(0, 0, 0, calc(var(--caption-shadow-alpha, 0.72) * 0.24)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(calc(var(--subtitle-blur, 24px) * 0.62)) saturate(1.08);
+}
+
+.overlayStage.layer-controls .floatingCaption,
+.overlayStage.layer-settings .floatingCaption {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: stretch;
+  background:
+    linear-gradient(180deg, rgba(31, 35, 43, var(--subtitle-bg-opacity, 0.76)), rgba(10, 12, 16, var(--subtitle-bg-opacity, 0.76))),
+    rgba(12, 14, 18, 0.74);
+  transform: none;
+}
+
+.overlayStage.layer-controls .floatingCaption .overlaySource,
+.overlayStage.layer-settings .floatingCaption .overlaySource {
+  font-size: min(var(--source-size, 18px), 16px);
+  line-height: 1.24;
+  min-height: calc(min(var(--source-size, 18px), 16px) * 1.24);
+}
+
+.overlayStage.layer-controls .floatingCaption h1,
+.overlayStage.layer-settings .floatingCaption h1 {
+  font-size: min(var(--target-size, 30px), 26px);
+  line-height: 1.16;
+  min-height: calc(min(var(--target-size, 30px), 26px) * 1.16);
+}
+
+.overlayStage.layer-settings .floatingCaption {
+  border-color: rgba(125, 214, 255, 0.24);
+  background:
+    linear-gradient(180deg, rgba(34, 40, 51, calc(var(--subtitle-bg-opacity, 0.76) + 0.08)), rgba(9, 11, 16, calc(var(--subtitle-bg-opacity, 0.76) + 0.04))),
+    rgba(12, 14, 18, 0.82);
+}
+
+.overlayStage.layer-controls .floatingCaption:hover,
+.overlayStage.layer-controls .floatingCaption:focus-visible,
+.overlayStage.layer-settings .floatingCaption:hover,
+.overlayStage.layer-settings .floatingCaption:focus-visible,
+.overlayStage.layer-pinned .floatingCaption:hover,
+.overlayStage.layer-pinned .floatingCaption:focus-visible {
+  transform: none;
+}
+
+.overlayStage.layer-pinned .floatingCaption {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: stretch;
+  align-items: stretch;
+  width: 100%;
+  min-height: 0;
+  transform: none;
+}

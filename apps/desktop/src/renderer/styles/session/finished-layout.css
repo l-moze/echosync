@@ -1,0 +1,93 @@
+.controlCenter.lifecycle-finished .dashboardGrid {
+  grid-template-columns: minmax(0, 1fr) 260px;
+  align-items: stretch;
+  gap: 18px;
+  min-height: 0;
+}
+
+.controlCenter.lifecycle-finished .summaryPanel {
+  gap: 14px;
+  min-height: 0;
+  padding: 26px;
+  border-color: rgba(224, 229, 237, 0.98);
+  overflow: hidden;
+  box-shadow: none;
+}
+
+.controlCenter.lifecycle-finished .summaryPanel h1 {
+  max-width: none;
+  font-size: 24px;
+  line-height: 1.24;
+}
+
+.controlCenter.lifecycle-finished .summaryMetrics {
+  order: 1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  padding: 1px;
+  border: 1px solid rgba(226, 231, 238, 0.92);
+  border-radius: 12px;
+  background: rgba(226, 231, 238, 0.92);
+}
+
+.controlCenter.lifecycle-finished .summaryMetrics .healthMetric {
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.controlCenter.lifecycle-finished .transcriptReviewGrid {
+  order: 2;
+  height: clamp(240px, 38vh, 430px);
+  min-height: 0;
+  max-height: none;
+}
+
+.controlCenter.lifecycle-finished .preExportDetails {
+  order: 3;
+}
+
+.controlCenter.lifecycle-finished .archivePlaybackPanel,
+.controlCenter.lifecycle-finished .archiveMissing {
+  order: 1;
+}
+
+.controlCenter.lifecycle-finished .startActions {
+  order: 5;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.controlCenter.lifecycle-finished .exportStatus {
+  order: 6;
+}
+
+.controlCenter.lifecycle-finished .startActions button {
+  background: #ffffff;
+}
+
+.controlCenter.lifecycle-finished .startActions .primary {
+  border: 1px solid var(--line);
+  background: #ffffff;
+  color: #526070;
+}
+
+.controlCenter.lifecycle-finished .startActions button:nth-child(2),
+.controlCenter.lifecycle-finished .startActions button:nth-child(3) {
+  border-color: transparent;
+  background: var(--blue);
+  color: #ffffff;
+  box-shadow: 0 10px 20px rgba(37, 105, 232, 0.16);
+}
+
+.controlCenter.lifecycle-finished > .dashboardGrid > .dashboardPanel {
+  box-shadow: none;
+}
+
+.controlCenter.lifecycle-finished > .dashboardGrid > .dashboardPanel .statusBox {
+  min-height: 46px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(226, 231, 238, 0.92);
+  border-radius: 0;
+  background: transparent;
+}

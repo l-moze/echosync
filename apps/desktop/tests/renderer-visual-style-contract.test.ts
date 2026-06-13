@@ -3,12 +3,56 @@ import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const rendererSource = readFileSync(resolve(__dirname, "../src/renderer/main.tsx"), "utf8");
-const stylesheet = readFileSync(resolve(__dirname, "../src/renderer/styles.css"), "utf8").replace(/\r\n/g, "\n");
+import { readStylesheetWithImports } from "./helpers/stylesheet";
+
+function readRendererSource(relativePath: string): string {
+  return readFileSync(resolve(__dirname, "../src/renderer", relativePath), "utf8");
+}
+
+const rendererSource = [
+  "main.tsx",
+  "components/shell/AppTitleBar.tsx",
+  "components/home/IdleDashboard.tsx",
+  "components/session/ActiveDashboard.tsx",
+  "components/session/FinishedDashboard.tsx",
+  "components/records/TranscriptReviewGrid.tsx",
+  "components/records/RecordDetailHeader.tsx",
+  "components/records/RecordPlayer.tsx",
+  "components/records/SessionRecordDetailPanel.tsx",
+  "components/records/TranscriptSegment.tsx",
+  "constants/layout.ts",
+  "utils/session-review-layout.ts",
+  "components/session/PreflightAudioVisualizer.tsx",
+  "components/preferences/PreferenceSettingsPanel.tsx",
+  "components/common/PreferenceRow.tsx",
+  "components/home/PreferenceMiniCard.tsx",
+  "utils/labels.ts",
+  "types/overlay.ts",
+  "components/caption/OverlayWindow.tsx",
+  "components/caption/OverlayToolbar.tsx",
+  "components/caption/OverlaySessionBar.tsx",
+  "components/caption/OverlayBottomMenuDock.tsx",
+  "components/caption/CaptionText.tsx",
+  "components/caption/ZonedCaptionRail.tsx",
+  "components/caption/OverlayCaptionHistory.tsx",
+  "components/style-panel/SubtitleStyleWindow.tsx",
+  "components/caption/OverlayResizeHandles.tsx"
+].map(readRendererSource).join("\n");
+const stylesheet = readStylesheetWithImports(resolve(__dirname, "../src/renderer/styles.css"));
 
 function cssRule(selector: string): string {
+  return cssRules(selector)[0] ?? "";
+}
+
+function cssRuleContaining(selector: string, marker: string): string {
+  return cssRules(selector).find((rule) => rule.includes(marker)) ?? "";
+}
+
+function cssRules(selector: string): string[] {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|\\n|})\\s*${escaped}\\s*\\{([^}]*)\\}`, "g").exec(stylesheet)?.[1] ?? "";
+  return [...stylesheet.matchAll(new RegExp(`(?:^|\\n|})\\s*${escaped}\\s*\\{([^}]*)\\}`, "g"))].map(
+    (match) => match[1]
+  );
 }
 
 describe("renderer visual style contract", () => {
@@ -18,7 +62,7 @@ describe("renderer visual style contract", () => {
     expect(rendererSource).toContain("appBrandMark");
     expect(rendererSource).not.toContain("brandDot");
     expect(stylesheet).not.toContain(".brandDot");
-    expect(cssRule(".appBrandMark")).toContain("background-image: url(\"./assets/icons/app-mark-64.png\")");
+    expect(cssRule(".appBrandMark")).toContain("background-image: url(\"../assets/icons/app-mark-64.png\")");
     expect(existsSync(markPath)).toBe(true);
   });
 
@@ -101,48 +145,45 @@ describe("renderer visual style contract", () => {
 
   it("bounds record detail content so transcript and summary panes scroll independently", () => {
     const detailWindowRule = cssRule(".recordWindow.detail");
-    const detailPanelRule = cssRule(".recordDetailPanel");
-    const detailHeaderRule = cssRule(".recordDetailPanel > header");
-    const detailActionsRule = cssRule(".recordDetailActions");
-    const audioRule = cssRule(".recordAudioPlayer");
-    const audioControlsRule = cssRule(".recordAudioControls");
-    const audioTimeRule = cssRule(".recordAudioPlayer time");
-    const detailLayoutRule = cssRule(".recordDetailLayout");
-    const transcriptRule = cssRule(".recordTranscriptList");
-    const segmentRule = cssRule(".recordSegmentPair");
-    const segmentTextRule = cssRule(".recordSegmentPair p");
-    const summaryRule = cssRule(".recordSummaryAside");
-    const summarySectionRule = cssRule(".recordSummaryAside section");
+    const detailPanelRule = cssRuleContaining(".recordDetailPanel", "gap: 18px");
+    const recordHeaderRule = cssRule(".recordHeaderCard");
+    const headerGridRule = cssRule(".headerGrid");
+    const workspaceRule = cssRuleContaining(".recordWorkspace", "370px");
+    const transcriptPanelRule = cssRule(".recordTranscriptPanel");
+    const contentListRule = cssRule(".recordContentList");
+    const playerRule = cssRule(".recordPlayer");
+    const playerControlsRule = cssRule(".recordPlayerControls");
+    const segmentRule = cssRule(".recordSegment");
+    const sourceRule = cssRule(".recordSegmentSource");
+    const translationRule = cssRule(".recordSegmentTranslation");
+    const summaryPanelRule = cssRuleContaining(".recordSummaryPanel", "position: sticky");
     const summaryListItemRule = cssRule(".recordSummaryList li");
-    const summaryErrorRule = cssRule(".recordSummaryError");
 
     expect(detailWindowRule).toContain("height: min(820px, calc(100vh - 92px))");
     expect(detailWindowRule).toContain("grid-template-rows: auto minmax(0, 1fr)");
-    expect(detailPanelRule).toContain("grid-template-rows: auto auto minmax(0, 1fr)");
-    expect(detailPanelRule).toContain("overflow: hidden");
-    expect(detailHeaderRule).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, auto)");
-    expect(detailActionsRule).toContain("flex-wrap: wrap");
-    expect(detailActionsRule).toContain("min-width: 0");
-    expect(audioRule).toContain("grid-template-columns: minmax(0, 1fr) max-content");
-    expect(audioRule).toContain("overflow: hidden");
-    expect(audioControlsRule).toContain("grid-template-columns: max-content minmax(0, 1fr)");
-    expect(audioTimeRule).toContain("white-space: nowrap");
-    expect(detailLayoutRule).toContain("height: 100%");
-    expect(detailLayoutRule).toContain("min-height: 0");
-    expect(transcriptRule).toContain("min-height: 0");
-    expect(transcriptRule).toContain("overflow-y: auto");
-    expect(segmentRule).toContain("height: auto");
-    expect(segmentRule).toContain("min-height: 112px");
-    expect(segmentRule).toContain("align-content: start");
-    expect(segmentRule).toContain("cursor: pointer");
-    expect(segmentTextRule).toContain("display: block");
-    expect(segmentTextRule).toContain("white-space: normal");
-    expect(summaryRule).toContain("min-height: 0");
-    expect(summaryRule).toContain("overflow-y: auto");
-    expect(summaryRule).toContain("overflow-x: hidden");
-    expect(summarySectionRule).toContain("min-width: 0");
+    expect(detailPanelRule).toContain("gap: 18px");
+    expect(detailPanelRule).toContain("background: transparent");
+    expect(recordHeaderRule).toContain("border-radius: 22px");
+    expect(recordHeaderRule).toContain("padding: 22px 24px");
+    expect(headerGridRule).toContain("grid-template-columns: minmax(0, 1fr) auto");
+    expect(workspaceRule).toContain("grid-template-columns: minmax(0, 1fr) 370px");
+    expect(transcriptPanelRule).toContain("min-height: 668px");
+    expect(contentListRule).toContain("padding: 8px 16px 18px");
+    expect(playerRule).toContain("grid-template-columns: auto minmax(0, 1fr) auto");
+    expect(playerControlsRule).toContain("display: flex");
+    expect(segmentRule).toContain("grid-template-columns: 42px 78px minmax(0, 1fr) 34px");
+    expect(segmentRule).toContain("scroll-margin-top: 92px");
+    expect(sourceRule).toContain("line-height: 1.72");
+    expect(translationRule).toContain("line-height: 1.72");
+    expect(summaryPanelRule).toContain("position: sticky");
+    expect(summaryPanelRule).toContain("top: 18px");
     expect(summaryListItemRule).toContain("overflow-wrap: anywhere");
-    expect(summaryErrorRule).toContain("overflow-wrap: anywhere");
+    expect(rendererSource).toContain("className=\"recordPanel recordHeaderCard\"");
+    expect(rendererSource).toContain("className=\"recordWorkspace\"");
+    expect(rendererSource).toContain("className=\"recordPanel recordTranscriptPanel\"");
+    expect(rendererSource).toContain("className=\"recordContentList\"");
+    expect(rendererSource).toContain("className=\"recordPlayer\"");
+    expect(rendererSource).toContain("className={`recordSegment");
   });
 
   it("keeps finished transcript review segments in readable block flow", () => {

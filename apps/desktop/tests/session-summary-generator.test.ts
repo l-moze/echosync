@@ -12,12 +12,14 @@ describe("会议记录 AI 摘要生成器", () => {
     const prompt = buildSessionSummaryPrompt(recordFixture());
 
     expect(prompt).toContain("标题：实时同传评审");
-    expect(prompt).toContain("[00:00-00:01]");
+    expect(prompt).toContain("[时间戳: 00:00-00:01]");
     expect(prompt).toContain("原文：We need lower latency.");
     expect(prompt).toContain("译文：我们需要更低延迟。");
-    expect(prompt).toContain("[00:01-00:03]");
+    expect(prompt).toContain("[时间戳: 00:01-00:03]");
     expect(prompt).toContain("原文：The fallback path should show source text first.");
     expect(prompt).toContain("译文：备用链路应先显示原文。");
+    expect(prompt).toContain("[片段ID: seg_1]");
+    expect(prompt).toContain("[片段ID: seg_2]");
   });
 
   it("摘要 prompt 同时写入复盘时长和总录制时长", () => {
@@ -27,7 +29,7 @@ describe("会议记录 AI 摘要生成器", () => {
         rawDurationMs: 180_000,
         contentDurationMs: 3_100,
         reviewDurationMs: 3_600,
-        mode: "video",
+        sourceType: "video",
         compressionEnabled: true,
         spans: [
           {
@@ -71,10 +73,73 @@ describe("会议记录 AI 摘要生成器", () => {
                 content: JSON.stringify({
                   summary: "会议聚焦实时同传的低延迟和备用显示策略。",
                   keywords: ["低延迟", "备用链路"],
-                  action_items: ["验证摘要生成链路"],
-                  topics: ["实时同传"],
-                  risks: ["模型响应慢"],
-                  terminology_suggestions: ["fallback path：备用链路"]
+                  action_items: [
+                    {
+                      id: "action-1",
+                      text: "验证摘要生成链路",
+                      confidence: 0.9,
+                      evidence: [
+                        {
+                          segmentId: "seg_1",
+                          startMs: 0,
+                          endMs: 1200,
+                          quote: "We need lower latency.",
+                          relevance: 0.95
+                        }
+                      ]
+                    }
+                  ],
+                  topics: [
+                    {
+                      id: "topic-1",
+                      text: "实时同传",
+                      confidence: 0.85,
+                      evidence: [
+                        {
+                          segmentId: "seg_2",
+                          startMs: 1200,
+                          endMs: 3100,
+                          quote: "fallback path",
+                          relevance: 0.9
+                        }
+                      ]
+                    }
+                  ],
+                  risks: [
+                    {
+                      id: "risk-1",
+                      text: "模型响应慢",
+                      severity: "medium",
+                      confidence: 0.8,
+                      evidence: [
+                        {
+                          segmentId: "seg_1",
+                          startMs: 0,
+                          endMs: 1200,
+                          quote: "lower latency",
+                          relevance: 0.88
+                        }
+                      ]
+                    }
+                  ],
+                  decisions: [],
+                  terminology_suggestions: [
+                    {
+                      id: "term-1",
+                      sourceText: "fallback path",
+                      targetText: "备用链路",
+                      confidence: 0.92,
+                      evidence: [
+                        {
+                          segmentId: "seg_2",
+                          startMs: 1200,
+                          endMs: 3100,
+                          quote: "fallback path",
+                          relevance: 1.0
+                        }
+                      ]
+                    }
+                  ]
                 })
               }
             }
@@ -98,22 +163,61 @@ describe("会议记录 AI 摘要生成器", () => {
       model: "deepseek-chat",
       response_format: { type: "json_object" }
     });
-    expect(summary).toEqual({
+    expect(summary).toMatchObject({
       status: "ready",
       text: "会议聚焦实时同传的低延迟和备用显示策略。",
       keywords: ["低延迟", "备用链路"],
-      actionItems: ["验证摘要生成链路"],
-      topics: ["实时同传"],
-      risks: ["模型响应慢"],
-      terminologySuggestions: ["fallback path：备用链路"],
+      actionItems: [
+        {
+          id: "action-1",
+          text: "验证摘要生成链路",
+          confidence: 0.9
+        }
+      ],
+      topics: [
+        {
+          id: "topic-1",
+          text: "实时同传",
+          confidence: 0.85
+        }
+      ],
+      risks: [
+        {
+          id: "risk-1",
+          text: "模型响应慢",
+          severity: "medium",
+          confidence: 0.8
+        }
+      ],
+      decisions: [],
+      terminologySuggestions: [
+        {
+          id: "term-1",
+          sourceText: "fallback path",
+          targetText: "备用链路",
+          confidence: 0.92
+        }
+      ],
       updatedAt: "2026-06-07T00:00:00.000Z"
     });
   });
 
   it("能解析被代码块包裹的 JSON 内容", () => {
+    const segments = [
+      {
+        id: "seg_1",
+        startMs: 0,
+        endMs: 1000,
+        sourceText: "Test content",
+        targetText: "测试内容",
+        revisionState: "final" as const,
+        patchCount: 0
+      }
+    ];
     expect(
       parseSessionSummaryContent(
-        "```json\n{\"summary\":\"复盘摘要\",\"keywords\":[\"字幕\"],\"action_items\":[],\"topics\":[],\"risks\":[],\"terminology_suggestions\":[]}\n```",
+        "```json\n{\"summary\":\"复盘摘要\",\"keywords\":[\"字幕\"],\"action_items\":[],\"topics\":[],\"risks\":[],\"decisions\":[],\"terminology_suggestions\":[]}\n```",
+        segments,
         "2026-06-07T00:00:00.000Z"
       )
     ).toMatchObject({
@@ -121,6 +225,206 @@ describe("会议记录 AI 摘要生成器", () => {
       text: "复盘摘要",
       keywords: ["字幕"]
     });
+  });
+
+  it("校验 evidence anchor 并过滤无效条目", () => {
+    const segments = [
+      {
+        id: "seg_1",
+        startMs: 0,
+        endMs: 1000,
+        sourceText: "We need lower latency",
+        targetText: "我们需要更低延迟",
+        revisionState: "final" as const,
+        patchCount: 0
+      }
+    ];
+
+    // Valid evidence
+    const validContent = JSON.stringify({
+      summary: "测试摘要",
+      keywords: [],
+      action_items: [
+        {
+          id: "action-1",
+          text: "优化延迟",
+          evidence: [
+            {
+              segmentId: "seg_1",
+              startMs: 0,
+              endMs: 1000,
+              quote: "lower latency",
+              relevance: 0.9
+            }
+          ]
+        }
+      ],
+      topics: [],
+      risks: [],
+      decisions: [],
+      terminology_suggestions: []
+    });
+
+    const result = parseSessionSummaryContent(validContent, segments, "2026-06-07T00:00:00.000Z");
+    expect(result.actionItems).toHaveLength(1);
+    expect(result.actionItems[0]?.evidence[0]?.quote).toBe("lower latency");
+  });
+
+  it("过滤缺少 evidence 的条目", () => {
+    const segments = [
+      {
+        id: "seg_1",
+        startMs: 0,
+        endMs: 1000,
+        sourceText: "Test",
+        targetText: "测试",
+        revisionState: "final" as const,
+        patchCount: 0
+      }
+    ];
+
+    const invalidContent = JSON.stringify({
+      summary: "测试摘要",
+      keywords: [],
+      action_items: [
+        {
+          id: "action-1",
+          text: "无证据条目",
+          evidence: []
+        }
+      ],
+      topics: [],
+      risks: [],
+      decisions: [],
+      terminology_suggestions: []
+    });
+
+    const result = parseSessionSummaryContent(invalidContent, segments, "2026-06-07T00:00:00.000Z");
+    expect(result.actionItems).toHaveLength(0);
+  });
+
+  it("过滤引用不存在 segmentId 的条目", () => {
+    const segments = [
+      {
+        id: "seg_1",
+        startMs: 0,
+        endMs: 1000,
+        sourceText: "Test",
+        targetText: "测试",
+        revisionState: "final" as const,
+        patchCount: 0
+      }
+    ];
+
+    const invalidContent = JSON.stringify({
+      summary: "测试摘要",
+      keywords: [],
+      action_items: [
+        {
+          id: "action-1",
+          text: "引用不存在片段",
+          evidence: [
+            {
+              segmentId: "seg_999",
+              startMs: 0,
+              endMs: 1000,
+              quote: "fake quote",
+              relevance: 0.9
+            }
+          ]
+        }
+      ],
+      topics: [],
+      risks: [],
+      decisions: [],
+      terminology_suggestions: []
+    });
+
+    const result = parseSessionSummaryContent(invalidContent, segments, "2026-06-07T00:00:00.000Z");
+    expect(result.actionItems).toHaveLength(0);
+  });
+
+  it("过滤 quote 不匹配片段内容的条目", () => {
+    const segments = [
+      {
+        id: "seg_1",
+        startMs: 0,
+        endMs: 1000,
+        sourceText: "We need lower latency",
+        targetText: "我们需要更低延迟",
+        revisionState: "final" as const,
+        patchCount: 0
+      }
+    ];
+
+    const invalidContent = JSON.stringify({
+      summary: "测试摘要",
+      keywords: [],
+      action_items: [
+        {
+          id: "action-1",
+          text: "编造引用",
+          evidence: [
+            {
+              segmentId: "seg_1",
+              startMs: 0,
+              endMs: 1000,
+              quote: "completely made up quote that does not exist",
+              relevance: 0.9
+            }
+          ]
+        }
+      ],
+      topics: [],
+      risks: [],
+      decisions: [],
+      terminology_suggestions: []
+    });
+
+    const result = parseSessionSummaryContent(invalidContent, segments, "2026-06-07T00:00:00.000Z");
+    expect(result.actionItems).toHaveLength(0);
+  });
+
+  it("支持模糊匹配 evidence quote", () => {
+    const segments = [
+      {
+        id: "seg_1",
+        startMs: 0,
+        endMs: 1000,
+        sourceText: "We need lower latency for real-time translation",
+        targetText: "我们需要更低延迟的实时翻译",
+        revisionState: "final" as const,
+        patchCount: 0
+      }
+    ];
+
+    // Slightly different but similar quote (90% threshold)
+    const fuzzyContent = JSON.stringify({
+      summary: "测试摘要",
+      keywords: [],
+      action_items: [
+        {
+          id: "action-1",
+          text: "优化延迟",
+          evidence: [
+            {
+              segmentId: "seg_1",
+              startMs: 0,
+              endMs: 1000,
+              quote: "lower latency",
+              relevance: 0.9
+            }
+          ]
+        }
+      ],
+      topics: [],
+      risks: [],
+      decisions: [],
+      terminology_suggestions: []
+    });
+
+    const result = parseSessionSummaryContent(fuzzyContent, segments, "2026-06-07T00:00:00.000Z");
+    expect(result.actionItems).toHaveLength(1);
   });
 });
 
@@ -141,6 +445,7 @@ function recordFixture(): SessionRecord {
       actionItems: [],
       topics: [],
       risks: [],
+      decisions: [],
       terminologySuggestions: []
     },
     metadata: {

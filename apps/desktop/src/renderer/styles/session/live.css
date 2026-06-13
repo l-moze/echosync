@@ -1,0 +1,128 @@
+.activeToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activeToolbar button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(224, 229, 237, 0.96);
+  border-radius: 999px;
+  background: #ffffff;
+  color: #526070;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.activeToolbar button.selected {
+  border-color: rgba(232, 90, 42, 0.22);
+  background: #fff3ee;
+  color: var(--brand-sync);
+}
+
+.activeToolbar .centerPill {
+  min-width: auto;
+}
+
+.transcriptMonitor {
+  display: grid;
+  gap: 0;
+  max-height: 430px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+}
+
+.transcriptMonitor.locked {
+  border-top: 1px solid rgba(202, 160, 77, 0.24);
+  border-bottom: 1px solid rgba(202, 160, 77, 0.24);
+}
+
+.autoScrollState {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 30px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(202, 160, 77, 0.18);
+  background: rgba(255, 250, 235, 0.94);
+  color: #8b6a2a;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.transcriptItem {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.transcriptItem > span {
+  color: var(--quiet);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.transcriptItem .sourceText {
+  margin: 7px 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.transcriptItem .targetText {
+  margin: 0;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 720;
+  line-height: 1.5;
+}
+
+.transcriptItem.revised .targetText {
+  text-decoration: underline;
+  text-decoration-color: rgba(202, 160, 77, 0.55);
+  text-decoration-thickness: 2px;
+}
+
+.transcriptItem.locked {
+  opacity: 0.76;
+}
+
+.newContentButton {
+  position: sticky;
+  bottom: 10px;
+  justify-self: center;
+  z-index: 2;
+  padding: 0 18px;
+  background: var(--blue);
+  color: white;
+  box-shadow: 0 12px 26px rgba(40, 120, 255, 0.24);
+}
+
+.healthGrid,
+.termQuickAdd,
+.summaryMetrics {
+  display: grid;
+  gap: 10px;
+}
+
+.liveStatusGrid {
+  padding-top: 2px;
+}
+
+.liveUtilityDetails {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(226, 231, 238, 0.92);
+}
+
+.liveUtilityDetails summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 780;
+}

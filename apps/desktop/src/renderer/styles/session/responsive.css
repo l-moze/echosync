@@ -1,0 +1,165 @@
+.liveDot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: #b8c1cf;
+}
+
+.liveDot.state-listening {
+  background: #2edaa8;
+  box-shadow: 0 0 0 5px rgba(46, 218, 168, 0.14);
+}
+
+.liveDot.state-error {
+  background: #ff6f6f;
+}
+
+@keyframes meterPulse {
+  0%,
+  100% {
+    transform: scaleY(0.72);
+    opacity: 0.56;
+  }
+
+  48% {
+    transform: scaleY(1.08);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focusMeter.active span,
+  .audioLoadingBars.active span {
+    animation: none;
+  }
+}
+
+@media (max-width: 1120px) {
+  .controlCenter.lifecycle-finished .dashboardGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 980px) {
+  .homeShell {
+    padding: 16px;
+  }
+
+  .bannerRow,
+  .mainGrid,
+  .featureGrid,
+  .dashboardGrid,
+  .controlCenter.lifecycle-finished .dashboardGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .homeLauncher {
+    min-height: auto;
+    padding: 8px 0 20px;
+  }
+
+  .launcherSurface {
+    padding: 28px;
+  }
+
+  .engineSettingsPanel {
+    inset: 12px 16px auto 16px;
+    width: auto;
+  }
+
+  .controlCenter.lifecycle-finished .summaryMetrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .titleBar {
+    grid-template-columns: 1fr auto;
+    padding: 0 16px;
+  }
+
+  .titleBar .centerPill {
+    display: none;
+  }
+
+  .launcherSurface {
+    gap: 18px;
+    padding: 24px 18px;
+  }
+
+  .launcherIntro h1 {
+    font-size: 27px;
+  }
+
+  .launcherRow {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 6px;
+    padding: 12px 14px;
+  }
+
+  .launcherRowControl {
+    justify-self: stretch;
+  }
+
+  .launcherRow .choiceGroup,
+  .engineSettingsGroup .choiceGroup,
+  .engineChoiceRow .choiceGroup {
+    width: 100%;
+    border-radius: 12px;
+  }
+
+  .choiceGroup button {
+    flex: 1 1 auto;
+  }
+
+  .languageDirectionGroup {
+    max-width: none;
+  }
+
+  .terminologyImportPanel {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .preferenceRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+
+  .preferenceRow strong {
+    text-align: left;
+  }
+
+  .transcriptReviewGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .reviewColumn {
+    max-height: 340px;
+  }
+
+  .reviewColumn + .reviewColumn {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .archivePlaybackPanel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .archiveAudioControls {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+
+  .archiveAudioTime {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .controlCenter.lifecycle-finished .summaryMetrics {
+    grid-template-columns: 1fr;
+  }
+}

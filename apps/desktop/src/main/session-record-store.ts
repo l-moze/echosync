@@ -14,6 +14,7 @@ import {
   type SessionRecordExportFormat,
   type SessionRecordExportResult,
   type SessionRecordListItem,
+  type SessionRecordSegmentUpdate,
   type SessionRecordSummary
 } from "../shared/session-records";
 
@@ -22,6 +23,7 @@ export type SessionRecordStore = {
   get: (id: string) => Promise<SessionRecord | null>;
   saveDraft: (input: SessionRecordDraftInput) => Promise<SessionRecord>;
   updateSummary: (id: string, summary: Partial<SessionRecordSummary>) => Promise<SessionRecord>;
+  updateSegment: (id: string, update: SessionRecordSegmentUpdate) => Promise<SessionRecord>;
   rename: (id: string, title: string) => Promise<SessionRecord>;
   delete: (id: string) => Promise<void>;
   exportRecord: (id: string, format: SessionRecordExportFormat) => Promise<SessionRecordExportResult>;
@@ -138,6 +140,35 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
       return nextRecord;
     },
 
+    async updateSegment(id, update) {
+      const record = await readRecord(id);
+      if (!record) {
+        throw new Error(`未找到会议记录：${id}`);
+      }
+      const segmentExists = record.segments.some((segment) => segment.id === update.segmentId);
+      if (!segmentExists) {
+        throw new Error(`未找到会议记录片段：${update.segmentId}`);
+      }
+      const now = new Date().toISOString();
+      const nextRecord = {
+        ...record,
+        segments: record.segments.map((segment) => {
+          if (segment.id !== update.segmentId) {
+            return segment;
+          }
+          return {
+            ...segment,
+            ...(update.sourceEditedText !== undefined ? { sourceEditedText: update.sourceEditedText } : {}),
+            ...(update.targetEditedText !== undefined ? { targetEditedText: update.targetEditedText } : {}),
+            ...(update.revisionState !== undefined ? { revisionState: update.revisionState } : {})
+          };
+        }),
+        updatedAt: now
+      };
+      await writeRecord(nextRecord);
+      return nextRecord;
+    },
+
     async rename(id, title) {
       const record = await readRecord(id);
       if (!record) {
@@ -189,8 +220,20 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
 }
 
 function normalizeStoredRecord(record: SessionRecord): SessionRecord {
+  // Migrate old timeline.mode to timeline.sourceType
+  let timeline = record.timeline;
+  if (timeline && "mode" in timeline) {
+    const oldTimeline = timeline as any;
+    timeline = {
+      ...timeline,
+      sourceType: oldTimeline.mode as any,
+    };
+    delete (timeline as any).mode;
+  }
+
   return {
     ...record,
+    timeline,
     summary: buildDraftSummary(record.summary, record.summary?.updatedAt ?? record.updatedAt)
   };
 }
@@ -215,18 +258,64 @@ async function writeAudioFile(dir: string, audio: NonNullable<SessionRecordDraft
   };
 }
 
+// 构建会议记录摘要的默认结构，并清洗历史数据格式
 function buildDraftSummary(summary: Partial<SessionRecordSummary> | undefined, now: string): SessionRecordSummary {
   return {
     status: summary?.status ?? "pending",
     text: summary?.text ?? "",
-    keywords: summary?.keywords ?? [],
-    actionItems: summary?.actionItems ?? [],
-    topics: summary?.topics ?? [],
-    risks: summary?.risks ?? [],
-    terminologySuggestions: summary?.terminologySuggestions ?? [],
+    keywords: normalizeStringArray(summary?.keywords ?? []),
+    actionItems: normalizeStructuredArray(summary?.actionItems ?? [], "action"),
+    topics: normalizeStructuredArray(summary?.topics ?? [], "topic"),
+    risks: normalizeStructuredArray(summary?.risks ?? [], "risk"),
+    decisions: normalizeStructuredArray(summary?.decisions ?? [], "decision"),
+    terminologySuggestions: normalizeStructuredArray(summary?.terminologySuggestions ?? [], "term"),
     errorMessage: summary?.errorMessage,
     updatedAt: summary?.updatedAt ?? now
   };
+}
+
+// 清洗结构化数组：兼容旧版 string[] 和新版结构化类型
+function normalizeStructuredArray<T extends { id: string; text?: string }>(
+  value: unknown,
+  type: string
+): T[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item, index) => {
+      // 新版结构化数据：直接返回
+      if (typeof item === "object" && item !== null && "id" in item) {
+        return item as T;
+      }
+      // 旧版 string：转换为结构化格式
+      if (typeof item === "string" && item.trim()) {
+        return {
+          id: `${type}-migrated-${index}-${Date.now()}`,
+          text: item.trim(),
+          evidence: []
+        } as unknown as T;
+      }
+      return null;
+    })
+    .filter((item): item is T => item !== null);
+}
+
+// 清洗摘要数组字段：兼容旧版对象格式 {id, text, confidence, evidence} 和新版字符串格式
+// 旧版数据（~2026-06-08）存储了增强格式，提取 text 字段以兼容类型定义
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map(item => {
+    if (typeof item === 'string') {
+      return item;
+    }
+    if (typeof item === 'object' && item !== null && 'text' in item && typeof item.text === 'string') {
+      return item.text;
+    }
+    return '';
+  }).filter(Boolean);
 }
 
 function serializeRecord(record: SessionRecord, format: SessionRecordExportFormat) {
