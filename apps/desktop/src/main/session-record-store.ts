@@ -220,8 +220,20 @@ export function createSessionRecordStore(rootDir: string): SessionRecordStore {
 }
 
 function normalizeStoredRecord(record: SessionRecord): SessionRecord {
+  // Migrate old timeline.mode to timeline.sourceType
+  let timeline = record.timeline;
+  if (timeline && "mode" in timeline) {
+    const oldTimeline = timeline as any;
+    timeline = {
+      ...timeline,
+      sourceType: oldTimeline.mode as any,
+    };
+    delete (timeline as any).mode;
+  }
+
   return {
     ...record,
+    timeline,
     summary: buildDraftSummary(record.summary, record.summary?.updatedAt ?? record.updatedAt)
   };
 }

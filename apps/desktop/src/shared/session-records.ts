@@ -46,7 +46,7 @@ export type SessionRecordSegmentUpdate = {
   segmentId: string;
 } & Partial<Pick<SessionRecordSegment, "sourceEditedText" | "targetEditedText" | "revisionState">>;
 
-export type SessionRecordTimelineMode = "meeting" | "video" | "course";
+export type SessionRecordTimelineSourceType = "meeting" | "video" | "course" | "file" | "microphone";
 
 export type SessionRecordTimelineSpan = {
   kind: "content" | "silence";
@@ -60,7 +60,7 @@ export type SessionRecordTimeline = {
   rawDurationMs: number;
   contentDurationMs: number;
   reviewDurationMs: number;
-  mode: SessionRecordTimelineMode;
+  sourceType: SessionRecordTimelineSourceType;
   compressionEnabled: boolean;
   spans: SessionRecordTimelineSpan[];
 };
