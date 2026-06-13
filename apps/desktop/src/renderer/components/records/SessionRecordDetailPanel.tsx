@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 
-import type { SessionRecord, SessionRecordExportFormat, SessionRecordSegment } from "../../../shared/session-records";
+import type { SessionRecord, SessionRecordExportFormat, SessionRecordSegment, EvidenceAnchor } from "../../../shared/session-records";
 import { formatDurationForRecord } from "../../../shared/session-records";
 import { formatTime } from "../../utils/format";
 import { selectedRecordSegmentSourceText, selectedRecordSegmentTargetText } from "../../utils/session-records";
@@ -9,6 +9,9 @@ import { RecordPlayer } from "./RecordPlayer";
 import { SummaryPanel } from "./SummaryPanel";
 import { TranscriptSegment } from "./TranscriptSegment";
 import { TranscriptToolbar } from "./TranscriptToolbar";
+import { ReviewTimelineRail } from "../../review-timeline-rail";
+import { useReviewPlaybackTimeline } from "../../use-review-playback-timeline";
+import type { ReviewTimeline } from "../../../shared/review-timeline";
 
 type TranscriptTab = "bilingual" | "source" | "translation";
 
@@ -29,6 +32,7 @@ export function SessionRecordDetailPanel({
   onAudioPlay,
   onAudioTimeUpdate,
   onCopySummary,
+  onEvidenceClick,
   onExport,
   onNextSearchMatch,
   onPrevSearchMatch,
@@ -68,6 +72,7 @@ export function SessionRecordDetailPanel({
   onAudioPlay: () => void;
   onAudioTimeUpdate: (currentMs: number) => void;
   onCopySummary: () => void;
+  onEvidenceClick?: (evidence: EvidenceAnchor) => void;
   onExport: (format?: SessionRecordExportFormat) => void;
   onNextSearchMatch: () => void;
   onPrevSearchMatch: () => void;
@@ -93,6 +98,43 @@ export function SessionRecordDetailPanel({
 }) {
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
+  // Timeline integration: convert SessionRecordTimeline to ReviewTimeline
+  const reviewTimeline: ReviewTimeline | null = record.timeline
+    ? {
+        spans: record.timeline.spans.map((span) => {
+          if (span.kind === "silence") {
+            return {
+              type: "long_silence" as const,
+              rawStartMs: span.rawStartMs,
+              rawEndMs: span.rawEndMs,
+              reviewStartMs: span.reviewStartMs,
+              reviewEndMs: span.reviewEndMs,
+              compactMs: span.reviewEndMs - span.reviewStartMs
+            };
+          }
+          return {
+            type: "active_audio" as const,
+            rawStartMs: span.rawStartMs,
+            rawEndMs: span.rawEndMs,
+            reviewStartMs: span.reviewStartMs,
+            reviewEndMs: span.reviewEndMs
+          };
+        }),
+        rawDurationMs: record.timeline.rawDurationMs,
+        contentDurationMs: record.timeline.contentDurationMs,
+        reviewDurationMs: record.timeline.reviewDurationMs
+      }
+    : null;
+
+  const recordTimelinePlayback = useReviewPlaybackTimeline({
+    timeline: reviewTimeline,
+    rawMs: currentPlaybackMs,
+    rawDurationMs: durationMs,
+    onSeek
+  });
+
+  const reviewDurationMs = reviewTimeline?.reviewDurationMs ?? durationMs;
+
   return (
     <section className="recordDetailPanel" aria-label="记录详情">
       <RecordDetailHeader
@@ -100,7 +142,9 @@ export function SessionRecordDetailPanel({
         onTitleChange={(newTitle) => onTitleChange(newTitle)}
         onExport={onExport}
         metadata={{
-          duration: formatDurationForRecord(record.durationMs),
+          duration: reviewTimeline
+            ? `复盘 ${formatDurationForRecord(reviewDurationMs)} / 原始 ${formatDurationForRecord(record.durationMs)}`
+            : formatDurationForRecord(record.durationMs),
           segmentCount: record.segments.length
         }}
         onReadSettings={onReadSettings}
@@ -120,6 +164,32 @@ export function SessionRecordDetailPanel({
               onTimeUpdate={(event) => onAudioTimeUpdate(Math.round(event.currentTarget.currentTime * 1000))}
               style={{ display: "none" }}
             />
+            {recordTimelinePlayback.displayTimeline && recordTimelinePlayback.displayTimeline.spans.length > 0 && (
+              <div className="timeline-stats">
+                <span>复盘时长: {formatDurationForRecord(recordTimelinePlayback.reviewDurationMs)}</span>
+                <span className="dot" />
+                <span>原始录制: {formatDurationForRecord(record.timeline?.rawDurationMs ?? durationMs)}</span>
+                <span className="dot" />
+                <span>有效内容: {formatDurationForRecord(record.timeline?.contentDurationMs ?? durationMs)}</span>
+                {record.timeline && record.timeline.spans.length > 0 && (
+                  <>
+                    <span className="dot" />
+                    <button onClick={recordTimelinePlayback.toggleCompressionMode}>
+                      {recordTimelinePlayback.compressionEnabled ? "压缩长静音" : "保留原始停顿"}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {recordTimelinePlayback.displayTimeline && (
+              <ReviewTimelineRail
+                timeline={recordTimelinePlayback.displayTimeline}
+                reviewMs={recordTimelinePlayback.reviewMs}
+                reviewDurationMs={recordTimelinePlayback.reviewDurationMs}
+                onChange={recordTimelinePlayback.scrubToReview}
+                ariaLabel="音频回放进度"
+              />
+            )}
             <RecordPlayer
               isPlaying={isAudioPlaying}
               currentMs={currentPlaybackMs}
@@ -202,6 +272,12 @@ export function SessionRecordDetailPanel({
             percentage: Math.max(10, 30 - i * 5)
           }))}
           onCopy={onCopySummary}
+          onEvidenceClick={onEvidenceClick}
+          actionItems={record.summary.actionItems}
+          topics={record.summary.topics}
+          risks={record.summary.risks}
+          decisions={record.summary.decisions}
+          terminologySuggestions={record.summary.terminologySuggestions}
         />
       </div>
     </section>

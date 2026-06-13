@@ -378,6 +378,26 @@ export function SessionRecordsWindow({
     seekRecordAudio(segment.startMs);
   }
 
+  function handleEvidenceClick(evidence: import("../../../shared/session-records").EvidenceAnchor) {
+    if (!selectedRecord) {
+      return;
+    }
+
+    // 1. Seek audio to evidence start time
+    scrubRecordAudio(evidence.startMs);
+
+    // 2. Highlight the segment
+    setActiveRecordSegmentId(evidence.segmentId);
+
+    // 3. Scroll to segment after a short delay
+    setTimeout(() => {
+      const element = recordSegmentRefs.current[evidence.segmentId];
+      if (element) {
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 100);
+  }
+
   function setRecordAudioPlaybackUrl(nextUrl: string | null, ownsObjectUrl = false) {
     const currentObjectUrl = recordAudioObjectUrlRef.current;
     if (currentObjectUrl && currentObjectUrl !== nextUrl) {
@@ -606,6 +626,7 @@ export function SessionRecordsWindow({
           onCopySummary={() => {
             void copyTextToClipboard(selectedRecord.summary.text || "");
           }}
+          onEvidenceClick={handleEvidenceClick}
           onExport={(format) => void exportSelectedRecord(format)}
           onNextSearchMatch={() => focusRecordSearchMatch(activeRecordMatchIndex + 1)}
           onPrevSearchMatch={() => focusRecordSearchMatch(activeRecordMatchIndex - 1)}
