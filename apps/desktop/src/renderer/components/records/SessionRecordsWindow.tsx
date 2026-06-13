@@ -250,20 +250,26 @@ export function SessionRecordsWindow({
       return;
     }
 
-    // 计算目标位置
+    // 计算目标位置：让当前字幕落在容器上方约 38% 处（而非正中），更符合阅读视线
     const containerRect = scrollContainer.getBoundingClientRect();
     const nodeRect = node.getBoundingClientRect();
     const currentScrollTop = scrollContainer.scrollTop;
-    const targetScrollTop = currentScrollTop + (nodeRect.top - containerRect.top) - (containerRect.height / 2) + (nodeRect.height / 2);
+    const anchorRatio = 0.38;
+    const targetScrollTop = currentScrollTop
+      + (nodeRect.top - containerRect.top)
+      - (containerRect.height * anchorRatio)
+      + (nodeRect.height / 2);
 
-    // 使用 framer-motion 的流畅动画
-    animate(currentScrollTop, targetScrollTop, {
-      duration: 0.5,
-      ease: "easeInOut",
+    // 使用 framer-motion 的流畅动画；保存控制器以便在下次切换时打断上一段动画，避免叠加导致卡顿
+    const controls = animate(currentScrollTop, targetScrollTop, {
+      duration: 0.45,
+      ease: [0.22, 1, 0.36, 1],
       onUpdate: (value) => {
         scrollContainer.scrollTop = value;
       }
     });
+
+    return () => controls.stop();
   }, [activeRecordSegmentId]);
 
   useEffect(() => {
@@ -477,30 +483,8 @@ export function SessionRecordsWindow({
     const normalizedIndex = ((nextIndex % matchCount) + matchCount) % matchCount;
     const matchId = recordSearchMatchIds[normalizedIndex];
     setActiveRecordMatchIndex(normalizedIndex);
+    // 只更新 activeRecordSegmentId，滚动交由上方的 useEffect 统一处理，避免重复动画相互打断
     setActiveRecordSegmentId(matchId);
-
-    // 使用 framer-motion 实现流畅滚动动画
-    const node = recordSegmentRefs.current[matchId];
-    if (!node) {
-      return;
-    }
-    const scrollContainer = node.closest('.recordContentList') as HTMLElement;
-    if (!scrollContainer) {
-      return;
-    }
-
-    const containerRect = scrollContainer.getBoundingClientRect();
-    const nodeRect = node.getBoundingClientRect();
-    const currentScrollTop = scrollContainer.scrollTop;
-    const targetScrollTop = currentScrollTop + (nodeRect.top - containerRect.top) - (containerRect.height / 2) + (nodeRect.height / 2);
-
-    animate(currentScrollTop, targetScrollTop, {
-      duration: 0.5,
-      ease: "easeInOut",
-      onUpdate: (value) => {
-        scrollContainer.scrollTop = value;
-      }
-    });
   }
 
   function changeRecordAudioVolume(nextVolume: number) {
