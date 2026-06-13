@@ -405,6 +405,26 @@
   color: #64748b;
 }
 
+.metaChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--blue);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.metaChip:hover {
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.metaChip:active {
+  background: rgba(37, 99, 235, 0.20);
+}
+
 .headerActions {
   display: flex;
   justify-content: flex-end;

@@ -146,7 +146,16 @@ export function SessionRecordDetailPanel({
         onExport={onExport}
         metadata={{
           duration: formatDurationForRecord(rawDurationMs),
-          segmentCount: record.segments.length
+          segmentCount: record.segments.length,
+          timeline: hasTimeline
+            ? {
+                reviewDurationMs,
+                rawDurationMs,
+                contentDurationMs,
+                compressionEnabled: recordTimelinePlayback.compressionEnabled,
+                onToggleCompression: recordTimelinePlayback.toggleCompressionMode
+              }
+            : undefined
         }}
         onReadSettings={onReadSettings}
       >
@@ -165,19 +174,6 @@ export function SessionRecordDetailPanel({
               onTimeUpdate={(event) => onAudioTimeUpdate(Math.round(event.currentTarget.currentTime * 1000))}
               style={{ display: "none" }}
             />
-            {hasTimeline && (
-              <div className="timeline-stats">
-                <span>复盘时长: {formatDurationForRecord(reviewDurationMs)}</span>
-                <span className="dot" />
-                <span>原始录制: {formatDurationForRecord(rawDurationMs)}</span>
-                <span className="dot" />
-                <span>有效内容: {formatDurationForRecord(contentDurationMs)}</span>
-                <span className="dot" />
-                <button onClick={recordTimelinePlayback.toggleCompressionMode}>
-                  {recordTimelinePlayback.compressionEnabled ? "压缩长静音" : "保留原始停顿"}
-                </button>
-              </div>
-            )}
             <RecordPlayer
               isPlaying={isAudioPlaying}
               currentMs={hasTimeline ? recordTimelinePlayback.reviewMs : currentPlaybackMs}

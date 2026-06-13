@@ -2,6 +2,20 @@ import { useRef, type ReactNode } from "react";
 
 import { GradientButton } from "../common/GradientButton";
 
+function formatDurationCompact(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}小时${minutes.toString().padStart(2, "0")}分${seconds.toString().padStart(2, "0")}秒`;
+  }
+  if (minutes > 0) {
+    return `${minutes}分${seconds.toString().padStart(2, "0")}秒`;
+  }
+  return `${seconds}秒`;
+}
+
 export function RecordDetailHeader({
   title,
   onTitleChange,
@@ -16,6 +30,13 @@ export function RecordDetailHeader({
   metadata: {
     duration: string;
     segmentCount: number;
+    timeline?: {
+      reviewDurationMs: number;
+      rawDurationMs: number;
+      contentDurationMs: number;
+      compressionEnabled: boolean;
+      onToggleCompression: () => void;
+    };
   };
   onReadSettings?: () => void;
   children?: ReactNode;
@@ -70,9 +91,41 @@ export function RecordDetailHeader({
             <span className="dot" />
             <span>译文由 AI 生成</span>
             <span className="dot" />
-            <span>{metadata.duration}</span>
-            <span className="dot" />
+            {metadata.timeline ? (
+              <>
+                <span>复盘 {formatDurationCompact(metadata.timeline.reviewDurationMs)}</span>
+                <span className="dot" />
+                <span>原始 {formatDurationCompact(metadata.timeline.rawDurationMs)}</span>
+                <span className="dot" />
+                <span>有效 {formatDurationCompact(metadata.timeline.contentDurationMs)}</span>
+                <span className="dot" />
+              </>
+            ) : (
+              <>
+                <span>{metadata.duration}</span>
+                <span className="dot" />
+              </>
+            )}
             <span>{metadata.segmentCount} 段字幕</span>
+            {metadata.timeline && (
+              <>
+                <span className="dot" />
+                <span
+                  className="metaChip"
+                  onClick={metadata.timeline.onToggleCompression}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      metadata.timeline?.onToggleCompression();
+                    }
+                  }}
+                >
+                  {metadata.timeline.compressionEnabled ? "压缩长静音" : "保留原始停顿"}
+                </span>
+              </>
+            )}
           </div>
         </div>
         <div className="headerActions">
