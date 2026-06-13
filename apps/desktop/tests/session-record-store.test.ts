@@ -105,18 +105,19 @@ describe("主进程会议记录持久化", () => {
         status: "ready",
         text: "会议讨论了低延迟识别链路的优化方向。",
         keywords: ["低延迟", "识别链路"],
-        actionItems: ["评估 FunASR 低延迟模式"],
-        topics: ["ASR 优化"],
-        risks: ["云端模型响应波动"],
-        terminologySuggestions: ["ASR：语音识别"]
+        actionItems: [{ id: "act-1", text: "评估 FunASR 低延迟模式", evidence: [] }],
+        topics: [{ id: "topic-1", text: "ASR 优化", evidence: [] }],
+        risks: [{ id: "risk-1", text: "云端模型响应波动", evidence: [] }],
+        decisions: [],
+        terminologySuggestions: [{ id: "term-1", sourceText: "ASR", targetText: "语音识别", evidence: [] }]
       });
 
       expect(updated.summary).toMatchObject({
         status: "ready",
         text: "会议讨论了低延迟识别链路的优化方向。",
         keywords: ["低延迟", "识别链路"],
-        actionItems: ["评估 FunASR 低延迟模式"],
-        topics: ["ASR 优化"],
+        actionItems: [{ id: "act-1", text: "评估 FunASR 低延迟模式" }],
+        topics: [{ id: "topic-1", text: "ASR 优化" }],
         risks: ["云端模型响应波动"],
         terminologySuggestions: ["ASR：语音识别"]
       });
@@ -152,7 +153,7 @@ describe("主进程会议记录持久化", () => {
           rawDurationMs: 240_000,
           contentDurationMs: 2_000,
           reviewDurationMs: 2_500,
-          mode: "video",
+          sourceType: "video",
           compressionEnabled: true,
           spans: [
             {

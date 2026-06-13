@@ -13,10 +13,11 @@ describe("会议记录摘要后台任务", () => {
       status: "ready",
       text: "会议讨论了低延迟字幕和备用链路。",
       keywords: ["低延迟", "备用链路"],
-      actionItems: ["补齐摘要链路"],
-      topics: ["会议复盘"],
-      risks: ["模型响应慢"],
-      terminologySuggestions: ["fallback：备用链路"],
+      actionItems: [{ id: "act-1", text: "补齐摘要链路", evidence: [] }],
+      topics: [{ id: "topic-1", text: "会议复盘", evidence: [] }],
+      risks: [{ id: "risk-1", text: "模型响应慢", evidence: [] }],
+      decisions: [],
+      terminologySuggestions: [{ id: "term-1", sourceText: "fallback", targetText: "备用链路", evidence: [] }],
       updatedAt: "2026-06-07T00:00:00.000Z"
     };
     const store = {

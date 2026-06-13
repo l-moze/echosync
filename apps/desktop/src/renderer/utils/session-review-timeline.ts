@@ -35,7 +35,7 @@ export function buildSessionRecordTimeline({
   return {
     compressionEnabled,
     contentDurationMs: timeline.contentDurationMs,
-    mode,
+    sourceType: mode,
     rawDurationMs: timeline.rawDurationMs,
     reviewDurationMs: timeline.reviewDurationMs,
     spans: timeline.spans.map((span) => ({

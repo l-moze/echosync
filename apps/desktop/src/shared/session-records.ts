@@ -167,9 +167,7 @@ export type SessionRecordDraftInput = {
 
 export type SessionRecordSegmentUpdate = {
   segmentId: string;
-  sourceText?: string;
-  targetText?: string;
-};
+} & Partial<Pick<SessionRecordSegment, "sourceEditedText" | "targetEditedText" | "revisionState">>;
 
 export type SessionRecordExportFormat = "markdown" | "srt" | "txt";
 

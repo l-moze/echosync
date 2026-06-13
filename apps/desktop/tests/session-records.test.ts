@@ -140,6 +140,7 @@ function createRecord(overrides: Partial<SessionRecord> = {}): SessionRecord {
       actionItems: [],
       topics: [],
       risks: [],
+      decisions: [],
       terminologySuggestions: []
     },
     metadata: {
@@ -177,7 +178,7 @@ function createTimeline({
     rawDurationMs,
     contentDurationMs,
     reviewDurationMs,
-    mode: "video" as const,
+    sourceType: "video" as const,
     compressionEnabled: true,
     spans: [
       {

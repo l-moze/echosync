@@ -264,13 +264,41 @@ function buildDraftSummary(summary: Partial<SessionRecordSummary> | undefined, n
     status: summary?.status ?? "pending",
     text: summary?.text ?? "",
     keywords: normalizeStringArray(summary?.keywords ?? []),
-    actionItems: normalizeStringArray(summary?.actionItems ?? []),
-    topics: normalizeStringArray(summary?.topics ?? []),
-    risks: normalizeStringArray(summary?.risks ?? []),
-    terminologySuggestions: normalizeStringArray(summary?.terminologySuggestions ?? []),
+    actionItems: normalizeStructuredArray(summary?.actionItems ?? [], "action"),
+    topics: normalizeStructuredArray(summary?.topics ?? [], "topic"),
+    risks: normalizeStructuredArray(summary?.risks ?? [], "risk"),
+    decisions: normalizeStructuredArray(summary?.decisions ?? [], "decision"),
+    terminologySuggestions: normalizeStructuredArray(summary?.terminologySuggestions ?? [], "term"),
     errorMessage: summary?.errorMessage,
     updatedAt: summary?.updatedAt ?? now
   };
+}
+
+// 清洗结构化数组：兼容旧版 string[] 和新版结构化类型
+function normalizeStructuredArray<T extends { id: string; text?: string }>(
+  value: unknown,
+  type: string
+): T[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item, index) => {
+      // 新版结构化数据：直接返回
+      if (typeof item === "object" && item !== null && "id" in item) {
+        return item as T;
+      }
+      // 旧版 string：转换为结构化格式
+      if (typeof item === "string" && item.trim()) {
+        return {
+          id: `${type}-migrated-${index}-${Date.now()}`,
+          text: item.trim(),
+          evidence: []
+        } as unknown as T;
+      }
+      return null;
+    })
+    .filter((item): item is T => item !== null);
 }
 
 // 清洗摘要数组字段：兼容旧版对象格式 {id, text, confidence, evidence} 和新版字符串格式

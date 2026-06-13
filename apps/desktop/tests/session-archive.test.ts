@@ -107,7 +107,7 @@ describe("会话归档模型", () => {
         rawDurationMs: 12000,
         contentDurationMs: 2600,
         reviewDurationMs: 3100,
-        mode: "video",
+        sourceType: "video",
         compressionEnabled: true,
         spans: [
           {
