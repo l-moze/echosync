@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import type { ReviewTimeline } from "../../../shared/review-timeline";
 
 export function WaveformProgress({
@@ -11,13 +13,46 @@ export function WaveformProgress({
   onSeek: (ms: number) => void;
   timeline?: ReviewTimeline;
 }) {
-  const progress = durationMs > 0 ? (currentMs / durationMs) * 100 : 0;
-  const boundedCurrentMs = Math.min(currentMs, durationMs);
+  // 拖动中维护本地进度，让视觉跟手；松手或外部播放时回落到 currentMs
+  const [scrubMs, setScrubMs] = useState<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const pendingSeekMsRef = useRef<number | null>(null);
+
+  // 通过 rAF 节流 seek 调用：mousemove 可达 120Hz，但每帧最多 seek 一次
+  const scheduleSeek = (ms: number) => {
+    pendingSeekMsRef.current = ms;
+    setScrubMs(ms);
+    if (rafRef.current !== null) {
+      return;
+    }
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      if (pendingSeekMsRef.current !== null) {
+        onSeek(pendingSeekMsRef.current);
+        pendingSeekMsRef.current = null;
+      }
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, []);
+
+  const effectiveMs = scrubMs ?? currentMs;
+  const progress = durationMs > 0 ? (effectiveMs / durationMs) * 100 : 0;
+  const boundedCurrentMs = Math.min(effectiveMs, durationMs);
+
+  const seekFromClientX = (clientX: number, rect: DOMRect) => {
+    const percent = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    scheduleSeek(percent * durationMs);
+  };
 
   const handleInteraction = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    onSeek(percent * durationMs);
+    seekFromClientX(e.clientX, e.currentTarget.getBoundingClientRect());
   };
 
   // Timeline segments rendering (content/silence visualization)
@@ -58,17 +93,25 @@ export function WaveformProgress({
         onClick={handleInteraction}
         onMouseDown={(e) => {
           e.preventDefault();
-          handleInteraction(e);
+          const rect = e.currentTarget.getBoundingClientRect();
+          seekFromClientX(e.clientX, rect);
 
           const handleMouseMove = (moveEvent: MouseEvent) => {
-            const rect = (e.target as HTMLElement).getBoundingClientRect();
-            const percent = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / rect.width));
-            onSeek(percent * durationMs);
+            seekFromClientX(moveEvent.clientX, rect);
           };
 
-          const handleMouseUp = () => {
+          const handleMouseUp = (upEvent: MouseEvent) => {
             document.removeEventListener("mousemove", handleMouseMove);
             document.removeEventListener("mouseup", handleMouseUp);
+            // 松手时立即 commit 最终位置，并清除本地 scrub，回落到外部播放进度
+            if (rafRef.current !== null) {
+              cancelAnimationFrame(rafRef.current);
+              rafRef.current = null;
+            }
+            const percent = Math.max(0, Math.min(1, (upEvent.clientX - rect.left) / rect.width));
+            onSeek(percent * durationMs);
+            pendingSeekMsRef.current = null;
+            setScrubMs(null);
           };
 
           document.addEventListener("mousemove", handleMouseMove);
