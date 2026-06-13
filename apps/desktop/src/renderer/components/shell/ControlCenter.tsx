@@ -12,7 +12,6 @@ import type { SessionArchiveSaveStatus } from "../../types/session";
 import { IdleDashboard } from "../home/IdleDashboard";
 import { ActiveDashboard } from "../session/ActiveDashboard";
 import { FinishedDashboard } from "../session/FinishedDashboard";
-import { SessionRecordsWindow } from "../records/SessionRecordsWindow";
 
 export function ControlCenter({
   activeLine,
@@ -37,8 +36,6 @@ export function ControlCenter({
   onStop,
   overlayLocked,
   dispatchSessionUi,
-  recordsOpen,
-  onRecordsOpenChange,
   sessionArchive,
   sessionArchiveSaveStatus,
   sessionRecords,
@@ -70,8 +67,6 @@ export function ControlCenter({
   onStop: () => void;
   overlayLocked: boolean;
   dispatchSessionUi: (event: SessionUiEvent) => void;
-  recordsOpen: boolean;
-  onRecordsOpenChange: (open: boolean) => void;
   sessionArchive: SessionArchiveDraft | null;
   sessionArchiveSaveStatus: SessionArchiveSaveStatus;
   sessionRecords: SessionRecordListItem[];
@@ -100,7 +95,6 @@ export function ControlCenter({
           onTranslationProviderSelect={onTranslationProviderSelect}
           onTtsProviderSelect={onTtsProviderSelect}
           onSessionRecordsChanged={onSessionRecordsChanged}
-          onRecordsOpen={() => onRecordsOpenChange(true)}
           onStart={onStart}
           sessionRecords={sessionRecords}
           sessionUi={sessionUi}
@@ -136,13 +130,6 @@ export function ControlCenter({
           sessionUi={sessionUi}
         />
       ) : null}
-      {/* 会议记录窗口提升到 ControlCenter 顶层，跨 lifecycle 共享，避免在 active/finished 状态下点击空白 */}
-      <SessionRecordsWindow
-        isOpen={recordsOpen}
-        onClose={() => onRecordsOpenChange(false)}
-        onRecordsChanged={onSessionRecordsChanged}
-        records={sessionRecords}
-      />
     </section>
   );
 }

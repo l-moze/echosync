@@ -162,7 +162,6 @@ function App() {
   const [hasRealEvents, setHasRealEvents] = useState(false);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
   const [sessionRecords, setSessionRecords] = useState<SessionRecordListItem[]>([]);
-  const [recordsOpen, setRecordsOpen] = useState(false);
   const [sessionArchive, setSessionArchive] = useState<SessionArchiveDraft | null>(null);
   const [sessionArchiveSaveStatus, setSessionArchiveSaveStatus] = useState<SessionArchiveSaveStatus>({
     message: "等待会话结束后保存",
@@ -806,8 +805,6 @@ function App() {
           onStop={() => void stopCapture()}
           overlayLocked={overlayLocked}
           dispatchSessionUi={dispatchSessionUi}
-          recordsOpen={recordsOpen}
-          onRecordsOpenChange={setRecordsOpen}
           sessionArchive={sessionArchive}
           sessionArchiveSaveStatus={sessionArchiveSaveStatus}
           sessionRecords={sessionRecords}
