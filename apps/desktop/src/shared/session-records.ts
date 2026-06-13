@@ -1,11 +1,72 @@
+export type EvidenceAnchor = {
+  segmentId: string;
+  startMs: number;
+  endMs: number;
+  quote: string;
+  relevance: number;
+};
+
+export type ActionItem = {
+  id: string;
+  text: string;
+  owner?: string;
+  dueDate?: string;
+  priority?: "low" | "medium" | "high";
+  status?: "pending" | "in_progress" | "done";
+  confidence?: number;
+  evidence: EvidenceAnchor[];
+};
+
+export type Topic = {
+  id: string;
+  text: string;
+  confidence?: number;
+  evidence: EvidenceAnchor[];
+};
+
+export type Risk = {
+  id: string;
+  text: string;
+  severity?: "low" | "medium" | "high";
+  confidence?: number;
+  evidence: EvidenceAnchor[];
+};
+
+export type Decision = {
+  id: string;
+  text: string;
+  rationale?: string;
+  confidence?: number;
+  evidence: EvidenceAnchor[];
+};
+
+export type TerminologySuggestion = {
+  id: string;
+  sourceText: string;
+  targetText: string;
+  context?: string;
+  confidence?: number;
+  evidence: EvidenceAnchor[];
+};
+
+export type SummaryValidation = {
+  valid: boolean;
+  invalidItemCount: number;
+  missingEvidenceItems: string[];
+  invalidSegmentIds: string[];
+  invalidQuotes: string[];
+};
+
 export type SessionRecordSummary = {
   status: "pending" | "ready" | "failed";
   text: string;
   keywords: string[];
-  actionItems: string[];
-  topics: string[];
-  risks: string[];
-  terminologySuggestions: string[];
+  actionItems: ActionItem[];
+  topics: Topic[];
+  risks: Risk[];
+  decisions: Decision[];
+  terminologySuggestions: TerminologySuggestion[];
+  validation?: SummaryValidation;
   errorMessage?: string;
   updatedAt?: string;
 };
@@ -42,11 +103,8 @@ export type SessionRecordSegment = {
   patchCount: number;
 };
 
-export type SessionRecordSegmentUpdate = {
-  segmentId: string;
-} & Partial<Pick<SessionRecordSegment, "sourceEditedText" | "targetEditedText" | "revisionState">>;
-
-export type SessionRecordTimelineSourceType = "meeting" | "video" | "course" | "file" | "microphone";
+export type SessionRecordTimelineMode = "meeting" | "video" | "course";
+export type SessionRecordTimelineSourceType = SessionRecordTimelineMode | "file" | "microphone";
 
 export type SessionRecordTimelineSpan = {
   kind: "content" | "silence";
@@ -99,10 +157,18 @@ export type SessionRecordDraftInput = {
   targetLang?: string;
   averageCaptionLagMs?: number;
   audio?: SessionRecordDraftAudio;
+  audioSource?: string;
+  activityRanges?: Array<{ startMs: number; endMs: number }>;
   timeline?: SessionRecordTimeline;
   summary?: Partial<SessionRecordSummary>;
   diagnostics?: Partial<SessionRecordDiagnostics>;
   segments: SessionRecordSegment[];
+};
+
+export type SessionRecordSegmentUpdate = {
+  segmentId: string;
+  sourceText?: string;
+  targetText?: string;
 };
 
 export type SessionRecordExportFormat = "markdown" | "srt" | "txt";

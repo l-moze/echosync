@@ -40,6 +40,7 @@ function failedSummary(error: unknown, updatedAt: string): SessionRecordSummary 
     actionItems: [],
     topics: [],
     risks: [],
+    decisions: [],
     terminologySuggestions: [],
     errorMessage: error instanceof Error ? error.message : String(error),
     updatedAt
