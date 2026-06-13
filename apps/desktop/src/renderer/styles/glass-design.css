@@ -403,7 +403,7 @@
   align-items: start;
   padding: 20px 12px;
   border-bottom: 1px solid var(--glass-line);
-  scroll-margin-top: 92px;
+  scroll-margin-top: 20px;
   transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -618,8 +618,8 @@ mark {
 /* Workspace - Two Column Layout */
 .recordWorkspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 370px;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 20px;
   align-items: start;
 }
 
@@ -635,11 +635,37 @@ mark {
 /* Transcript Panel */
 .recordTranscriptPanel {
   min-height: 668px;
+  max-height: calc(100vh - 120px);
+  display: flex;
+  flex-direction: column;
+  position: relative;
 }
 
 /* Content List */
 .recordContentList {
   padding: 8px 16px 18px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex: 1;
+  position: relative;
+}
+
+.recordContentList::-webkit-scrollbar {
+  width: 8px;
+}
+
+.recordContentList::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 4px;
+}
+
+.recordContentList::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+
+.recordContentList::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }
 
 /* Record Header Card */
@@ -649,7 +675,8 @@ mark {
   box-shadow: 0 24px 70px rgba(31, 42, 68, 0.08), 0 2px 10px rgba(31, 42, 68, 0.04);
   border: 1px solid rgba(30, 42, 62, 0.09);
   border-radius: 22px;
-  padding: 22px 24px;
+  padding: 24px 28px;
+  overflow: visible;
 }
 
 .recordHeaderInner {
@@ -659,19 +686,31 @@ mark {
   align-items: start;
 }
 
-/* Workspace */
-.recordWorkspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 370px;
-  gap: 18px;
-  align-items: start;
-}
-
 /* Summary Panel */
 .recordSummaryPanel {
-  padding: 24px;
+  padding: 28px;
   position: sticky;
   top: 18px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.recordSummaryPanel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.recordSummaryPanel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.recordSummaryPanel::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.recordSummaryPanel::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }
 
 /* Player */

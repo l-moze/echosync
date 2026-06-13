@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import log from "electron-log/renderer";
+import { animate } from "framer-motion";
 
 import {
   filterSessionRecordsByTitle,
@@ -240,7 +241,29 @@ export function SessionRecordsWindow({
       return;
     }
     const node = recordSegmentRefs.current[activeRecordSegmentId];
-    node?.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (!node) {
+      return;
+    }
+    // 找到滚动容器
+    const scrollContainer = node.closest('.recordContentList') as HTMLElement;
+    if (!scrollContainer) {
+      return;
+    }
+
+    // 计算目标位置
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    const currentScrollTop = scrollContainer.scrollTop;
+    const targetScrollTop = currentScrollTop + (nodeRect.top - containerRect.top) - (containerRect.height / 2) + (nodeRect.height / 2);
+
+    // 使用 framer-motion 的流畅动画
+    animate(currentScrollTop, targetScrollTop, {
+      duration: 0.5,
+      ease: "easeInOut",
+      onUpdate: (value) => {
+        scrollContainer.scrollTop = value;
+      }
+    });
   }, [activeRecordSegmentId]);
 
   useEffect(() => {
@@ -455,7 +478,29 @@ export function SessionRecordsWindow({
     const matchId = recordSearchMatchIds[normalizedIndex];
     setActiveRecordMatchIndex(normalizedIndex);
     setActiveRecordSegmentId(matchId);
-    recordSegmentRefs.current[matchId]?.scrollIntoView({ block: "center", behavior: "smooth" });
+
+    // 使用 framer-motion 实现流畅滚动动画
+    const node = recordSegmentRefs.current[matchId];
+    if (!node) {
+      return;
+    }
+    const scrollContainer = node.closest('.recordContentList') as HTMLElement;
+    if (!scrollContainer) {
+      return;
+    }
+
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const nodeRect = node.getBoundingClientRect();
+    const currentScrollTop = scrollContainer.scrollTop;
+    const targetScrollTop = currentScrollTop + (nodeRect.top - containerRect.top) - (containerRect.height / 2) + (nodeRect.height / 2);
+
+    animate(currentScrollTop, targetScrollTop, {
+      duration: 0.5,
+      ease: "easeInOut",
+      onUpdate: (value) => {
+        scrollContainer.scrollTop = value;
+      }
+    });
   }
 
   function changeRecordAudioVolume(nextVolume: number) {
