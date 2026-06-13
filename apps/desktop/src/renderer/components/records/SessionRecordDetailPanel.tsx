@@ -132,7 +132,11 @@ export function SessionRecordDetailPanel({
     onSeek
   });
 
-  const reviewDurationMs = reviewTimeline?.reviewDurationMs ?? durationMs;
+  // 时长口径统一：所有展示都从这几个变量取值，避免 header 与 timeline-stats 数据源不一致
+  const hasTimeline = Boolean(recordTimelinePlayback.displayTimeline);
+  const rawDurationMs = record.timeline?.rawDurationMs ?? record.durationMs;
+  const reviewDurationMs = recordTimelinePlayback.reviewDurationMs;
+  const contentDurationMs = record.timeline?.contentDurationMs ?? rawDurationMs;
 
   return (
     <section className="recordDetailPanel" aria-label="记录详情">
@@ -141,9 +145,7 @@ export function SessionRecordDetailPanel({
         onTitleChange={(newTitle) => onTitleChange(newTitle)}
         onExport={onExport}
         metadata={{
-          duration: reviewTimeline
-            ? `复盘 ${formatDurationForRecord(reviewDurationMs)} / 原始 ${formatDurationForRecord(record.durationMs)}`
-            : formatDurationForRecord(record.durationMs),
+          duration: formatDurationForRecord(rawDurationMs),
           segmentCount: record.segments.length
         }}
         onReadSettings={onReadSettings}
@@ -163,29 +165,25 @@ export function SessionRecordDetailPanel({
               onTimeUpdate={(event) => onAudioTimeUpdate(Math.round(event.currentTarget.currentTime * 1000))}
               style={{ display: "none" }}
             />
-            {recordTimelinePlayback.displayTimeline && recordTimelinePlayback.displayTimeline.spans.length > 0 && (
+            {hasTimeline && (
               <div className="timeline-stats">
-                <span>复盘时长: {formatDurationForRecord(recordTimelinePlayback.reviewDurationMs)}</span>
+                <span>复盘时长: {formatDurationForRecord(reviewDurationMs)}</span>
                 <span className="dot" />
-                <span>原始录制: {formatDurationForRecord(record.timeline?.rawDurationMs ?? durationMs)}</span>
+                <span>原始录制: {formatDurationForRecord(rawDurationMs)}</span>
                 <span className="dot" />
-                <span>有效内容: {formatDurationForRecord(record.timeline?.contentDurationMs ?? durationMs)}</span>
-                {record.timeline && record.timeline.spans.length > 0 && (
-                  <>
-                    <span className="dot" />
-                    <button onClick={recordTimelinePlayback.toggleCompressionMode}>
-                      {recordTimelinePlayback.compressionEnabled ? "压缩长静音" : "保留原始停顿"}
-                    </button>
-                  </>
-                )}
+                <span>有效内容: {formatDurationForRecord(contentDurationMs)}</span>
+                <span className="dot" />
+                <button onClick={recordTimelinePlayback.toggleCompressionMode}>
+                  {recordTimelinePlayback.compressionEnabled ? "压缩长静音" : "保留原始停顿"}
+                </button>
               </div>
             )}
             <RecordPlayer
               isPlaying={isAudioPlaying}
-              currentMs={currentPlaybackMs}
-              durationMs={durationMs}
+              currentMs={hasTimeline ? recordTimelinePlayback.reviewMs : currentPlaybackMs}
+              durationMs={hasTimeline ? reviewDurationMs : durationMs}
               onPlayPause={onToggleAudioPlayback}
-              onSeek={onSeek}
+              onSeek={hasTimeline ? recordTimelinePlayback.scrubToReview : onSeek}
               volume={volume}
               speed={speed}
               onVolumeChange={onVolumeChange}
