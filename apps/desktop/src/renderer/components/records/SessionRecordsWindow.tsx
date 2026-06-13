@@ -383,19 +383,13 @@ export function SessionRecordsWindow({
       return;
     }
 
-    // 1. Seek audio to evidence start time
-    scrubRecordAudio(evidence.startMs);
+    const segment = selectedRecord.segments.find((s) => s.id === evidence.segmentId);
+    if (!segment) {
+      log.warn(`[session-records] Evidence references unknown segment: ${evidence.segmentId}`);
+      return;
+    }
 
-    // 2. Highlight the segment
-    setActiveRecordSegmentId(evidence.segmentId);
-
-    // 3. Scroll to segment after a short delay
-    setTimeout(() => {
-      const element = recordSegmentRefs.current[evidence.segmentId];
-      if (element) {
-        element.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
-    }, 100);
+    seekToRecordSegment(segment);
   }
 
   function setRecordAudioPlaybackUrl(nextUrl: string | null, ownsObjectUrl = false) {
