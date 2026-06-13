@@ -14,14 +14,15 @@ from echosync_agent.runtime.settings import (
     with_session_translation_overrides,
     with_session_tts_overrides,
 )
+from echosync_agent.transport import caption_ws as caption_ws_module
 from echosync_agent.transport.caption_ws import CaptionEventHub, create_caption_app
 from echosync_agent.transport.realtime_ws import (
     AUDIO_FRAME_HEADER,
     AUDIO_FRAME_MAGIC,
+    _realtime_transport_metrics_log_level,
     _RealtimeTransportMetrics,
     _RealtimeTransportMetricsSnapshot,
     _RealtimeWebSocketSession,
-    _realtime_transport_metrics_log_level,
     _transport_latency_ms_from_low32,
 )
 
@@ -150,6 +151,89 @@ def test_caption_app_exposes_realtime_capabilities() -> None:
     assert payload["defaults"]["translation_provider"] == "mock"
     assert payload["asr_latency_modes"] == ["low_latency", "balanced", "accuracy"]
     assert any(provider["id"] == "funasr" for provider in payload["asr_providers"])
+    mock_translation = next(
+        provider
+        for provider in payload["translation_providers"]
+        if provider["id"] == "mock"
+    )
+    assert mock_translation["validation"]["status"] == "not_requested"
+
+
+def test_caption_app_capabilities_include_preflight_from_query() -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="mock",
+        translator_provider="mock",
+        tts_provider="edge-tts",
+        glossary_enabled=False,
+    )
+    app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
+    client = TestClient(app)
+
+    response = client.get(
+        "/v1/realtime/capabilities",
+        params={
+            "source_kind": "windows_system",
+            "device_id": "wasapi:exclude-process-tree:123",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["preflight"]["status"] == "ready"
+    assert payload["preflight"]["warnings"] == []
+
+
+def test_caption_app_reuses_validation_cache_between_capability_requests(
+    monkeypatch: Any,
+) -> None:
+    settings = replace(
+        Settings.from_env(),
+        asr_provider="mock",
+        translator_provider="mock",
+        tts_provider="disabled",
+        glossary_enabled=False,
+    )
+    observed_caches: list[object] = []
+    observed_modes: list[str] = []
+
+    def fake_build_realtime_capabilities(
+        _settings: Settings,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        observed_caches.append(kwargs["validation_cache"])
+        observed_modes.append(str(kwargs["validation_mode"]))
+        return {
+            "service": "echosync-agent",
+            "defaults": {},
+            "asr_providers": [],
+            "translation_providers": [],
+            "tts_providers": [],
+        }
+
+    monkeypatch.setattr(
+        caption_ws_module,
+        "build_realtime_capabilities",
+        fake_build_realtime_capabilities,
+    )
+    app = create_caption_app(hub=CaptionEventHub(), settings_factory=lambda: settings)
+    client = TestClient(app)
+
+    first = client.get(
+        "/v1/realtime/capabilities",
+        params={"validation": "probe", "probe": "tts:elevenlabs"},
+    )
+    second = client.get(
+        "/v1/realtime/capabilities",
+        params={"validation": "probe", "probe": "tts:elevenlabs"},
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(observed_caches) == 2
+    assert observed_caches[0] is observed_caches[1]
+    assert isinstance(observed_caches[0], dict)
+    assert observed_modes == ["probe", "probe"]
 
 
 def test_caption_app_exposes_health_check() -> None:

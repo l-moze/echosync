@@ -14,12 +14,13 @@ from contextlib import suppress
 from dataclasses import replace
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
 
 from echosync_agent.domain import AudioFrame
 from echosync_agent.runtime.capabilities import build_realtime_capabilities
 from echosync_agent.runtime.env import load_project_dotenv
+from echosync_agent.runtime.provider_validation import ValidationCache
 from echosync_agent.runtime.settings import Settings
 from echosync_agent.transport.realtime_ws import create_realtime_router
 
@@ -153,6 +154,7 @@ def create_caption_app(
     resolved_hub = hub or CaptionEventHub()
     app = FastAPI(title="EchoSync Caption Event Service")
     producer_task: asyncio.Task[None] | None = None
+    provider_validation_cache: ValidationCache = {}
 
     # 允许 Desktop 端跨域连接
     app.add_middleware(
@@ -173,9 +175,35 @@ def create_caption_app(
         return {"ok": True, "service": "echosync-agent"}
 
     @app.get("/v1/realtime/capabilities")
-    async def realtime_capabilities() -> dict[str, Any]:
+    async def realtime_capabilities(
+        validation: str = Query(
+            "none",
+            description=(
+                "none=零供应商探针；cached=只读缓存；probe=仅探测 probe 指定的 provider"
+            ),
+        ),
+        probe: str = Query(
+            "",
+            description="逗号分隔 provider id，例如 translation:deepl,tts:elevenlabs。",
+        ),
+        source_kind: str = Query(
+            "windows_system",
+            description="用于预检回声保护的音频来源类型。",
+        ),
+        device_id: str = Query(
+            "",
+            description="用于预检回声保护的采集设备 id。",
+        ),
+    ) -> dict[str, Any]:
         settings = (settings_factory or Settings.from_env)()
-        return build_realtime_capabilities(settings)
+        return build_realtime_capabilities(
+            settings,
+            validation_mode=validation,
+            validation_provider_ids=_provider_ids_from_query(probe),
+            validation_cache=provider_validation_cache,
+            source_kind=source_kind,
+            device_id=device_id,
+        )
 
     @app.websocket("/v1/caption/events")
     async def caption_events(websocket: WebSocket) -> None:
@@ -208,6 +236,7 @@ def create_caption_app(
 
     # 暴露 hub 以便外部发布事件
     app.state.hub = resolved_hub
+    app.state.provider_validation_cache = provider_validation_cache
     return app
 
 
@@ -226,6 +255,10 @@ def _metric(metrics: dict[object, object], key: str) -> float:
         return float(value)
     except (TypeError, ValueError):
         return -1.0
+
+
+def _provider_ids_from_query(value: str) -> set[str]:
+    return {item.strip().lower() for item in value.split(",") if item.strip()}
 
 
 async def _run_producer(producer: CaptionProducer, hub: CaptionEventHub) -> None:
