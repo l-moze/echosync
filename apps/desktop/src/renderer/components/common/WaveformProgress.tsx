@@ -1,11 +1,15 @@
+import type { ReviewTimeline } from "../../../shared/review-timeline";
+
 export function WaveformProgress({
   currentMs,
   durationMs,
-  onSeek
+  onSeek,
+  timeline
 }: {
   currentMs: number;
   durationMs: number;
   onSeek: (ms: number) => void;
+  timeline?: ReviewTimeline;
 }) {
   const progress = durationMs > 0 ? (currentMs / durationMs) * 100 : 0;
   const boundedCurrentMs = Math.min(currentMs, durationMs);
@@ -15,6 +19,24 @@ export function WaveformProgress({
     const percent = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onSeek(percent * durationMs);
   };
+
+  // Timeline segments rendering (content/silence visualization)
+  const timelineSegments = timeline?.spans.map((span, index) => {
+    const left = durationMs > 0 ? (span.reviewStartMs / durationMs) * 100 : 0;
+    const width = durationMs > 0 ? ((span.reviewEndMs - span.reviewStartMs) / durationMs) * 100 : 0;
+    const className = span.type === "long_silence" ? "timelineSegment silence" : "timelineSegment content";
+
+    return (
+      <div
+        key={`${span.rawStartMs}-${span.rawEndMs}-${index}`}
+        className={className}
+        style={{
+          left: `${left}%`,
+          width: `${width}%`
+        }}
+      />
+    );
+  });
 
   return (
     <div className="waveformProgress">
@@ -53,6 +75,7 @@ export function WaveformProgress({
           document.addEventListener("mouseup", handleMouseUp);
         }}
       >
+        {timelineSegments}
         <div className="waveFill" style={{ width: `${progress}%` }} />
         <span className="knob" style={{ left: `${progress}%` }} />
       </div>

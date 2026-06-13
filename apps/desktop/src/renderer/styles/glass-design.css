@@ -240,11 +240,28 @@
   cursor: pointer;
 }
 
+.timelineSegment {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.timelineSegment.content {
+  background: rgba(37, 99, 235, 0.25);
+}
+
+.timelineSegment.silence {
+  background: rgba(148, 163, 184, 0.18);
+}
+
 .waveFill {
   position: absolute;
   inset: 0;
   background: linear-gradient(90deg, rgba(37, 99, 235, 0.55), rgba(37, 99, 235, 0.13));
   pointer-events: none;
+  z-index: 1;
 }
 
 .wave::after {

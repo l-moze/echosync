@@ -9,7 +9,6 @@ import { RecordPlayer } from "./RecordPlayer";
 import { SummaryPanel } from "./SummaryPanel";
 import { TranscriptSegment } from "./TranscriptSegment";
 import { TranscriptToolbar } from "./TranscriptToolbar";
-import { ReviewTimelineRail } from "../../review-timeline-rail";
 import { useReviewPlaybackTimeline } from "../../use-review-playback-timeline";
 import type { ReviewTimeline } from "../../../shared/review-timeline";
 
@@ -181,15 +180,6 @@ export function SessionRecordDetailPanel({
                 )}
               </div>
             )}
-            {recordTimelinePlayback.displayTimeline && (
-              <ReviewTimelineRail
-                timeline={recordTimelinePlayback.displayTimeline}
-                reviewMs={recordTimelinePlayback.reviewMs}
-                reviewDurationMs={recordTimelinePlayback.reviewDurationMs}
-                onChange={recordTimelinePlayback.scrubToReview}
-                ariaLabel="音频回放进度"
-              />
-            )}
             <RecordPlayer
               isPlaying={isAudioPlaying}
               currentMs={currentPlaybackMs}
@@ -200,6 +190,7 @@ export function SessionRecordDetailPanel({
               speed={speed}
               onVolumeChange={onVolumeChange}
               onSpeedChange={onSpeedChange}
+              timeline={recordTimelinePlayback.displayTimeline ?? undefined}
             />
           </>
         ) : null}
@@ -223,9 +214,9 @@ export function SessionRecordDetailPanel({
             onPrevMatch={onPrevSearchMatch}
             onNextMatch={onNextSearchMatch}
             tabs={[
-              { id: "bilingual", label: "双语对照" },
-              { id: "source", label: "原文字幕" },
-              { id: "translation", label: "译文字幕" }
+              { id: "bilingual", label: "双语" },
+              { id: "source", label: "原文" },
+              { id: "translation", label: "译文" }
             ]}
           />
           <div className="recordContentList" style={{ fontSize: `${reviewScale}em` }} aria-label="双语片段">

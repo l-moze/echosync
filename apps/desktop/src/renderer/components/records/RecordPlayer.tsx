@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 
+import type { ReviewTimeline } from "../../../shared/review-timeline";
 import { WaveformProgress } from "../common/WaveformProgress";
 
 function formatPlaybackSpeed(speed: number) {
@@ -15,7 +16,8 @@ export function RecordPlayer({
   volume = 72,
   speed = 1.0,
   onVolumeChange,
-  onSpeedChange
+  onSpeedChange,
+  timeline
 }: {
   isPlaying: boolean;
   currentMs: number;
@@ -26,6 +28,7 @@ export function RecordPlayer({
   speed?: number;
   onVolumeChange?: (volume: number) => void;
   onSpeedChange?: () => void;
+  timeline?: ReviewTimeline;
 }) {
   return (
     <div className="recordPlayer">
@@ -40,7 +43,7 @@ export function RecordPlayer({
           </svg>
         )}
       </button>
-      <WaveformProgress currentMs={currentMs} durationMs={durationMs} onSeek={onSeek} />
+      <WaveformProgress currentMs={currentMs} durationMs={durationMs} onSeek={onSeek} timeline={timeline} />
       <div className="recordPlayerControls">
         <label className="recordVolumeControl">
           <span>音量</span>
